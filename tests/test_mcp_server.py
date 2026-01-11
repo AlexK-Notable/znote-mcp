@@ -392,3 +392,27 @@ Some content here.
 
         assert "Error:" in result
         assert "not found" in result
+
+    def test_get_metrics_tool(self):
+        """Test the zk_get_metrics tool."""
+        assert 'zk_get_metrics' in self.registered_tools
+
+        get_metrics_func = self.registered_tools['zk_get_metrics']
+        result = get_metrics_func(include_details=False)
+
+        # Verify result contains health info
+        assert "Zettelkasten Server Health" in result
+        assert "Uptime:" in result
+        assert "Total Operations:" in result
+        assert "Success Rate:" in result
+
+    def test_get_metrics_with_details(self):
+        """Test zk_get_metrics with include_details=True."""
+        assert 'zk_get_metrics' in self.registered_tools
+
+        get_metrics_func = self.registered_tools['zk_get_metrics']
+        result = get_metrics_func(include_details=True)
+
+        # Verify result contains health info
+        assert "Zettelkasten Server Health" in result
+        assert "Uptime:" in result

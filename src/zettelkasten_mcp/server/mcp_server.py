@@ -1,4 +1,5 @@
 """MCP server implementation for the Zettelkasten."""
+import json
 import logging
 import uuid
 from datetime import datetime
@@ -7,10 +8,12 @@ from sqlalchemy import exc as sqlalchemy_exc
 from mcp.server.fastmcp import Context, FastMCP
 from zettelkasten_mcp.config import config
 from zettelkasten_mcp.models.schema import LinkType, Note, NoteType, Tag
+from zettelkasten_mcp.observability import metrics, timed_operation, get_logger
 from zettelkasten_mcp.services.search_service import SearchService
 from zettelkasten_mcp.services.zettel_service import ZettelService
 
 logger = logging.getLogger(__name__)
+obs_logger = get_logger("mcp_server")
 
 class ZettelkastenMcpServer:
     """MCP server for Zettelkasten."""
@@ -82,29 +85,31 @@ class ZettelkastenMcpServer:
                 project: Project this note belongs to (used for Obsidian subdirectory organization)
                 tags: Comma-separated list of tags (optional)
             """
-            try:
-                # Convert note_type string to enum
+            with timed_operation("zk_create_note", title=title[:30]) as op:
                 try:
-                    note_type_enum = NoteType(note_type.lower())
-                except ValueError:
-                    return f"Invalid note type: {note_type}. Valid types are: {', '.join(t.value for t in NoteType)}"
+                    # Convert note_type string to enum
+                    try:
+                        note_type_enum = NoteType(note_type.lower())
+                    except ValueError:
+                        return f"Invalid note type: {note_type}. Valid types are: {', '.join(t.value for t in NoteType)}"
 
-                # Convert tags string to list
-                tag_list = []
-                if tags:
-                    tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+                    # Convert tags string to list
+                    tag_list = []
+                    if tags:
+                        tag_list = [t.strip() for t in tags.split(",") if t.strip()]
 
-                # Create the note
-                note = self.zettel_service.create_note(
-                    title=title,
-                    content=content,
-                    note_type=note_type_enum,
-                    project=project,
-                    tags=tag_list,
-                )
-                return f"Note created successfully with ID: {note.id} (project: {note.project})"
-            except Exception as e:
-                return self.format_error_response(e)
+                    # Create the note
+                    note = self.zettel_service.create_note(
+                        title=title,
+                        content=content,
+                        note_type=note_type_enum,
+                        project=project,
+                        tags=tag_list,
+                    )
+                    op["note_id"] = note.id
+                    return f"Note created successfully with ID: {note.id} (project: {note.project})"
+                except Exception as e:
+                    return self.format_error_response(e)
 
         # Get a note by ID or title
         @self.mcp.tool(name="zk_get_note")
@@ -113,29 +118,33 @@ class ZettelkastenMcpServer:
             Args:
                 identifier: The ID or title of the note
             """
-            try:
-                identifier = str(identifier)
-                # Try to get by ID first
-                note = self.zettel_service.get_note(identifier)
-                # If not found, try by title
-                if not note:
-                    note = self.zettel_service.get_note_by_title(identifier)
-                if not note:
-                    return f"Note not found: {identifier}"
-                
-                # Format the note
-                result = f"# {note.title}\n"
-                result += f"ID: {note.id}\n"
-                result += f"Type: {note.note_type.value}\n"
-                result += f"Created: {note.created_at.isoformat()}\n"
-                result += f"Updated: {note.updated_at.isoformat()}\n"
-                if note.tags:
-                    result += f"Tags: {', '.join(tag.name for tag in note.tags)}\n"
-                # Add note content, including the Links section added by _note_to_markdown()
-                result += f"\n{note.content}\n"
-                return result
-            except Exception as e:
-                return self.format_error_response(e)
+            with timed_operation("zk_get_note", identifier=identifier[:30]) as op:
+                try:
+                    identifier = str(identifier)
+                    # Try to get by ID first
+                    note = self.zettel_service.get_note(identifier)
+                    # If not found, try by title
+                    if not note:
+                        note = self.zettel_service.get_note_by_title(identifier)
+                    if not note:
+                        op["found"] = False
+                        return f"Note not found: {identifier}"
+
+                    op["found"] = True
+                    op["note_id"] = note.id
+                    # Format the note
+                    result = f"# {note.title}\n"
+                    result += f"ID: {note.id}\n"
+                    result += f"Type: {note.note_type.value}\n"
+                    result += f"Created: {note.created_at.isoformat()}\n"
+                    result += f"Updated: {note.updated_at.isoformat()}\n"
+                    if note.tags:
+                        result += f"Tags: {', '.join(tag.name for tag in note.tags)}\n"
+                    # Add note content, including the Links section added by _note_to_markdown()
+                    result += f"\n{note.content}\n"
+                    return result
+                except Exception as e:
+                    return self.format_error_response(e)
 
         # Update a note
         @self.mcp.tool(name="zk_update_note")
@@ -293,48 +302,50 @@ class ZettelkastenMcpServer:
                 note_type: Type of note to filter by
                 limit: Maximum number of results to return
             """
-            try:
-                # Convert tags string to list if provided
-                tag_list = None
-                if tags:
-                    tag_list = [t.strip() for t in tags.split(",") if t.strip()]
-                
-                # Convert note_type string to enum if provided
-                note_type_enum = None
-                if note_type:
-                    try:
-                        note_type_enum = NoteType(note_type.lower())
-                    except ValueError:
-                        return f"Invalid note type: {note_type}. Valid types are: {', '.join(t.value for t in NoteType)}"
-                
-                # Perform search
-                results = self.search_service.search_combined(
-                    text=query,
-                    tags=tag_list,
-                    note_type=note_type_enum
-                )
-                
-                # Limit results
-                results = results[:limit]
-                if not results:
-                    return "No matching notes found."
-                
-                # Format results
-                output = f"Found {len(results)} matching notes:\n\n"
-                for i, result in enumerate(results, 1):
-                    note = result.note
-                    output += f"{i}. {note.title} (ID: {note.id})\n"
-                    if note.tags:
-                        output += f"   Tags: {', '.join(tag.name for tag in note.tags)}\n"
-                    output += f"   Created: {note.created_at.strftime('%Y-%m-%d')}\n"
-                    # Add a snippet of content (first 150 chars)
-                    content_preview = note.content[:150].replace("\n", " ")
-                    if len(note.content) > 150:
-                        content_preview += "..."
-                    output += f"   Preview: {content_preview}\n\n"
-                return output
-            except Exception as e:
-                return self.format_error_response(e)
+            with timed_operation("zk_search_notes", query=query[:30] if query else None) as op:
+                try:
+                    # Convert tags string to list if provided
+                    tag_list = None
+                    if tags:
+                        tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+
+                    # Convert note_type string to enum if provided
+                    note_type_enum = None
+                    if note_type:
+                        try:
+                            note_type_enum = NoteType(note_type.lower())
+                        except ValueError:
+                            return f"Invalid note type: {note_type}. Valid types are: {', '.join(t.value for t in NoteType)}"
+
+                    # Perform search
+                    results = self.search_service.search_combined(
+                        text=query,
+                        tags=tag_list,
+                        note_type=note_type_enum
+                    )
+
+                    # Limit results
+                    results = results[:limit]
+                    op["result_count"] = len(results)
+                    if not results:
+                        return "No matching notes found."
+
+                    # Format results
+                    output = f"Found {len(results)} matching notes:\n\n"
+                    for i, result in enumerate(results, 1):
+                        note = result.note
+                        output += f"{i}. {note.title} (ID: {note.id})\n"
+                        if note.tags:
+                            output += f"   Tags: {', '.join(tag.name for tag in note.tags)}\n"
+                        output += f"   Created: {note.created_at.strftime('%Y-%m-%d')}\n"
+                        # Add a snippet of content (first 150 chars)
+                        content_preview = note.content[:150].replace("\n", " ")
+                        if len(note.content) > 150:
+                            content_preview += "..."
+                        output += f"   Preview: {content_preview}\n\n"
+                    return output
+                except Exception as e:
+                    return self.format_error_response(e)
 
         # Get linked notes
         @self.mcp.tool(name="zk_get_linked_notes")
@@ -729,6 +740,44 @@ class ZettelkastenMcpServer:
                 return str(e)
             except Exception as e:
                 logger.error(f"Failed to sync to Obsidian: {e}", exc_info=True)
+                return self.format_error_response(e)
+
+        # Get server metrics and health status
+        @self.mcp.tool(name="zk_get_metrics")
+        def zk_get_metrics(include_details: bool = False) -> str:
+            """Get server metrics and health status.
+
+            Returns operation counts, timing statistics, and error rates
+            for monitoring server performance.
+
+            Args:
+                include_details: Include per-operation breakdown (default: False)
+            """
+            try:
+                summary = metrics.get_summary()
+
+                output = "## Zettelkasten Server Health\n\n"
+                output += f"**Uptime:** {summary['uptime_seconds']:.1f} seconds\n"
+                output += f"**Total Operations:** {summary['total_operations']}\n"
+                output += f"**Success Rate:** {summary['overall_success_rate']:.1%}\n"
+                output += f"**Errors:** {summary['total_errors']}\n"
+
+                if include_details and summary['operations_tracked']:
+                    output += "\n### Operation Details\n\n"
+                    op_metrics = metrics.get_metrics()
+
+                    for op_name in sorted(op_metrics.keys()):
+                        m = op_metrics[op_name]
+                        output += f"**{op_name}**\n"
+                        output += f"  - Count: {m['count']} ({m['success_count']} success, {m['error_count']} errors)\n"
+                        output += f"  - Avg Duration: {m['avg_duration_ms']:.2f}ms\n"
+                        output += f"  - Range: {m['min_duration_ms']:.2f}ms - {m['max_duration_ms']:.2f}ms\n"
+                        if m['last_error']:
+                            output += f"  - Last Error: {m['last_error']} at {m['last_error_time']}\n"
+                        output += "\n"
+
+                return output
+            except Exception as e:
                 return self.format_error_response(e)
 
     def _register_resources(self) -> None:
