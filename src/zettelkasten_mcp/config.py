@@ -26,6 +26,15 @@ class ZettelkastenConfig(BaseModel):
             os.getenv("ZETTELKASTEN_DATABASE_PATH", "data/db/zettelkasten.db")
         )
     )
+    # Obsidian mirror configuration (optional)
+    # When set, notes will be copied to this directory as well
+    obsidian_vault_path: Optional[Path] = Field(
+        default_factory=lambda: (
+            Path(os.getenv("ZETTELKASTEN_OBSIDIAN_VAULT"))
+            if os.getenv("ZETTELKASTEN_OBSIDIAN_VAULT")
+            else None
+        )
+    )
     # Server configuration
     server_name: str = Field(
         default=os.getenv("ZETTELKASTEN_SERVER_NAME", "zettelkasten-mcp")
@@ -58,6 +67,17 @@ class ZettelkastenConfig(BaseModel):
         db_path = self.get_absolute_path(self.database_path)
         db_path.parent.mkdir(parents=True, exist_ok=True)
         return f"sqlite:///{db_path}"
+
+    def get_obsidian_vault_path(self) -> Optional[Path]:
+        """Get the absolute path to the Obsidian vault mirror directory.
+
+        Returns None if not configured. When configured, ensures the directory exists.
+        """
+        if self.obsidian_vault_path is None:
+            return None
+        vault_path = self.get_absolute_path(self.obsidian_vault_path)
+        vault_path.mkdir(parents=True, exist_ok=True)
+        return vault_path
 
 # Create a global config instance
 config = ZettelkastenConfig()

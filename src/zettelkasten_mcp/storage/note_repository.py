@@ -33,17 +33,22 @@ class NoteRepository(Repository[Note]):
             if notes_dir
             else config.get_absolute_path(config.notes_dir)
         )
-        
+
         # Ensure directories exist
         self.notes_dir.mkdir(parents=True, exist_ok=True)
-        
+
+        # Initialize Obsidian vault mirror (optional)
+        self.obsidian_vault_path = config.get_obsidian_vault_path()
+        if self.obsidian_vault_path:
+            logger.info(f"Obsidian vault mirror enabled: {self.obsidian_vault_path}")
+
         # Initialize database
         self.engine = init_db()
         self.session_factory = get_session_factory(self.engine)
-        
+
         # File access lock
         self.file_lock = threading.RLock()
-        
+
         # Initialize by rebuilding index if needed
         self.rebuild_index_if_needed()
     
@@ -125,6 +130,9 @@ class NoteRepository(Repository[Note]):
             note_type = NoteType(note_type_str)
         except ValueError:
             note_type = NoteType.PERMANENT
+
+        # Extract project (default to "general" for backwards compatibility)
+        project = metadata.get("project", "general")
         
         # Extract tags
         tags_str = metadata.get("tags", "")
@@ -206,12 +214,13 @@ class NoteRepository(Repository[Note]):
             title=title,
             content=post.content,
             note_type=note_type,
+            project=project,
             tags=tags,
             links=links,
             created_at=created_at,
             updated_at=updated_at,
-            metadata={k: v for k, v in metadata.items() 
-                     if k not in ["id", "title", "type", "tags", "created", "updated"]}
+            metadata={k: v for k, v in metadata.items()
+                     if k not in ["id", "title", "type", "project", "tags", "created", "updated"]}
         )
     
     def _index_note(self, note: Note) -> None:
@@ -285,6 +294,7 @@ class NoteRepository(Repository[Note]):
             "id": note.id,
             "title": note.title,
             "type": note.note_type.value,
+            "project": note.project,
             "tags": [tag.name for tag in note.tags],
             "created": note.created_at.isoformat(),
             "updated": note.updated_at.isoformat()
@@ -330,16 +340,103 @@ class NoteRepository(Repository[Note]):
         post = frontmatter.Post(content, **metadata)
         return frontmatter.dumps(post)
 
+    def _mirror_to_obsidian(self, note: Note, markdown: str) -> None:
+        """Mirror a note to the Obsidian vault if configured.
+
+        Creates a copy of the note in the Obsidian vault using the note's project
+        as subdirectory and the note's title as the filename (sanitized for
+        filesystem compatibility).
+        """
+        if not self.obsidian_vault_path:
+            return
+
+        # Sanitize the project name for use as a directory
+        safe_project = "".join(
+            c if c.isalnum() or c in " -_" else "_"
+            for c in note.project
+        ).strip() or "general"
+
+        # Sanitize the title for use as a filename
+        safe_title = "".join(
+            c if c.isalnum() or c in " -_" else "_"
+            for c in note.title
+        ).strip()
+
+        # Ensure we have a valid filename
+        if not safe_title:
+            safe_title = note.id
+
+        # Create project subdirectory
+        project_dir = self.obsidian_vault_path / safe_project
+        project_dir.mkdir(parents=True, exist_ok=True)
+
+        obsidian_file_path = project_dir / f"{safe_title}.md"
+
+        try:
+            with open(obsidian_file_path, "w", encoding="utf-8") as f:
+                f.write(markdown)
+            logger.debug(f"Mirrored note to Obsidian: {obsidian_file_path}")
+        except IOError as e:
+            # Log but don't fail - Obsidian mirror is secondary
+            logger.warning(f"Failed to mirror note to Obsidian vault: {e}")
+
+    def _delete_from_obsidian(self, note_id: str, title: Optional[str] = None,
+                               project: Optional[str] = None) -> None:
+        """Delete a note's mirror from the Obsidian vault if configured.
+
+        Tries to delete by project/title (primary) and searches all subdirs (fallback).
+        """
+        if not self.obsidian_vault_path:
+            return
+
+        files_to_try = []
+
+        # Sanitize title for filename matching
+        safe_title = None
+        if title:
+            safe_title = "".join(
+                c if c.isalnum() or c in " -_" else "_"
+                for c in title
+            ).strip()
+
+        # If we know the project, look there first
+        if project and safe_title:
+            safe_project = "".join(
+                c if c.isalnum() or c in " -_" else "_"
+                for c in project
+            ).strip() or "general"
+            files_to_try.append(self.obsidian_vault_path / safe_project / f"{safe_title}.md")
+
+        # Search all project subdirectories for the file
+        if safe_title:
+            for subdir in self.obsidian_vault_path.iterdir():
+                if subdir.is_dir():
+                    files_to_try.append(subdir / f"{safe_title}.md")
+
+        # Also try ID-based filename in all subdirectories
+        for subdir in self.obsidian_vault_path.iterdir():
+            if subdir.is_dir():
+                files_to_try.append(subdir / f"{note_id}.md")
+
+        for file_path in files_to_try:
+            if file_path.exists():
+                try:
+                    os.remove(file_path)
+                    logger.debug(f"Deleted Obsidian mirror: {file_path}")
+                    return
+                except IOError as e:
+                    logger.warning(f"Failed to delete Obsidian mirror {file_path}: {e}")
+
     def create(self, note: Note) -> Note:
         """Create a new note."""
         # Ensure the note has an ID
         if not note.id:
             from zettelkasten_mcp.models.schema import generate_id
             note.id = generate_id()
-        
+
         # Convert note to markdown
         markdown = self._note_to_markdown(note)
-        
+
         # Write to file
         file_path = self.notes_dir / f"{note.id}.md"
         try:
@@ -348,7 +445,10 @@ class NoteRepository(Repository[Note]):
                     f.write(markdown)
         except IOError as e:
             raise IOError(f"Failed to write note to {file_path}: {e}")
-        
+
+        # Mirror to Obsidian vault if configured
+        self._mirror_to_obsidian(note, markdown)
+
         # Index in database
         self._index_note(note)
         return note
@@ -420,13 +520,17 @@ class NoteRepository(Repository[Note]):
         existing_note = self.get(note.id)
         if not existing_note:
             raise ValueError(f"Note with ID {note.id} does not exist")
-        
+
+        # If title or project changed, delete old Obsidian mirror (will be recreated)
+        if existing_note.title != note.title or existing_note.project != note.project:
+            self._delete_from_obsidian(note.id, existing_note.title, existing_note.project)
+
         # Update timestamp
         note.updated_at = datetime.datetime.now()
-        
+
         # Convert note to markdown
         markdown = self._note_to_markdown(note)
-        
+
         # Write to file
         file_path = self.notes_dir / f"{note.id}.md"
         try:
@@ -435,6 +539,9 @@ class NoteRepository(Repository[Note]):
                     f.write(markdown)
         except IOError as e:
             raise IOError(f"Failed to write note to {file_path}: {e}")
+
+        # Mirror to Obsidian vault if configured
+        self._mirror_to_obsidian(note, markdown)
         
         try:
             # Re-index in database
@@ -490,18 +597,32 @@ class NoteRepository(Repository[Note]):
     
     def delete(self, id: str) -> None:
         """Delete a note by ID."""
-        # Check if note exists
+        # Check if note exists and get its title for Obsidian mirror deletion
         file_path = self.notes_dir / f"{id}.md"
         if not file_path.exists():
             raise ValueError(f"Note with ID {id} does not exist")
-        
+
+        # Get the note's title and project before deleting (for Obsidian mirror)
+        note_title = None
+        note_project = None
+        try:
+            note = self.get(id)
+            if note:
+                note_title = note.title
+                note_project = note.project
+        except Exception:
+            pass  # If we can't read the note, we'll still try to delete by ID
+
         # Delete from file system
         try:
             with self.file_lock:
                 os.remove(file_path)
         except IOError as e:
             raise IOError(f"Failed to delete note {id}: {e}")
-        
+
+        # Delete from Obsidian vault if configured
+        self._delete_from_obsidian(id, note_title, note_project)
+
         # Delete from database
         with self.session_factory() as session:
             # Delete note and its relationships
@@ -642,3 +763,39 @@ class NoteRepository(Repository[Note]):
             result = session.execute(select(DBTag))
             db_tags = result.scalars().all()
         return [Tag(name=tag.name) for tag in db_tags]
+
+    def sync_to_obsidian(self) -> int:
+        """Sync all notes to the Obsidian vault.
+
+        Re-mirrors all existing notes to the configured Obsidian vault directory.
+        Uses note titles as filenames, so existing files are overwritten (no duplicates).
+
+        Returns:
+            Number of notes synced, or 0 if Obsidian vault is not configured.
+
+        Raises:
+            ValueError: If Obsidian vault is not configured.
+        """
+        if not self.obsidian_vault_path:
+            raise ValueError(
+                "Obsidian vault not configured. "
+                "Set ZETTELKASTEN_OBSIDIAN_VAULT in your .env file."
+            )
+
+        # Get all notes from the file system
+        note_files = list(self.notes_dir.glob("*.md"))
+        synced_count = 0
+
+        for file_path in note_files:
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                note = self._parse_note_from_markdown(content)
+                markdown = self._note_to_markdown(note)
+                self._mirror_to_obsidian(note, markdown)
+                synced_count += 1
+            except Exception as e:
+                logger.warning(f"Failed to sync note {file_path.name}: {e}")
+
+        logger.info(f"Synced {synced_count} notes to Obsidian vault")
+        return synced_count

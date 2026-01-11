@@ -28,6 +28,7 @@ class ZettelService:
         title: str,
         content: str,
         note_type: NoteType = NoteType.PERMANENT,
+        project: str = "general",
         tags: Optional[List[str]] = None,
         metadata: Optional[Dict[str, Any]] = None
     ) -> Note:
@@ -36,16 +37,17 @@ class ZettelService:
             raise ValueError("Title is required")
         if not content:
             raise ValueError("Content is required")
-        
+
         # Create note object
         note = Note(
             title=title,
             content=content,
             note_type=note_type,
+            project=project,
             tags=[Tag(name=tag) for tag in (tags or [])],
             metadata=metadata or {}
         )
-        
+
         # Save to repository
         return self.repository.create(note)
     
@@ -63,6 +65,7 @@ class ZettelService:
         title: Optional[str] = None,
         content: Optional[str] = None,
         note_type: Optional[NoteType] = None,
+        project: Optional[str] = None,
         tags: Optional[List[str]] = None,
         metadata: Optional[Dict[str, Any]] = None
     ) -> Note:
@@ -70,7 +73,7 @@ class ZettelService:
         note = self.repository.get(note_id)
         if not note:
             raise ValueError(f"Note with ID {note_id} not found")
-        
+
         # Update fields
         if title is not None:
             note.title = title
@@ -78,13 +81,15 @@ class ZettelService:
             note.content = content
         if note_type is not None:
             note.note_type = note_type
+        if project is not None:
+            note.project = project
         if tags is not None:
             note.tags = [Tag(name=tag) for tag in tags]
         if metadata is not None:
             note.metadata = metadata
-        
+
         note.updated_at = datetime.datetime.now()
-        
+
         # Save to repository
         return self.repository.update(note)
     
@@ -250,6 +255,17 @@ class ZettelService:
         else:
             raise ValueError(f"Unsupported export format: {format}")
     
+    def sync_to_obsidian(self) -> int:
+        """Sync all notes to the Obsidian vault.
+
+        Returns:
+            Number of notes synced.
+
+        Raises:
+            ValueError: If Obsidian vault is not configured.
+        """
+        return self.repository.sync_to_obsidian()
+
     def find_similar_notes(self, note_id: str, threshold: float = 0.5) -> List[Tuple[Note, float]]:
         """Find notes similar to the given note based on shared tags and links."""
         note = self.repository.get(note_id)

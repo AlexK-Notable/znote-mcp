@@ -112,6 +112,7 @@ class Note(BaseModel):
     title: str = Field(..., description="Title of the note")
     content: str = Field(..., description="Content of the note")
     note_type: NoteType = Field(default=NoteType.PERMANENT, description="Type of note")
+    project: str = Field(default="general", description="Project this note belongs to")
     tags: List[Tag] = Field(default_factory=list, description="Tags for categorization")
     links: List[Link] = Field(default_factory=list, description="Links to other notes")
     created_at: datetime.datetime = Field(
@@ -123,7 +124,7 @@ class Note(BaseModel):
         description="When the note was last updated"
     )
     metadata: Dict[str, Any] = Field(
-        default_factory=dict, 
+        default_factory=dict,
         description="Additional metadata for the note"
     )
     

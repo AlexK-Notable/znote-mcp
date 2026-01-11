@@ -68,9 +68,10 @@ class ZettelkastenMcpServer:
         # Create a new note
         @self.mcp.tool(name="zk_create_note")
         def zk_create_note(
-            title: str, 
-            content: str, 
+            title: str,
+            content: str,
             note_type: str = "permanent",
+            project: str = "general",
             tags: Optional[str] = None
         ) -> str:
             """Create a new Zettelkasten note.
@@ -78,6 +79,7 @@ class ZettelkastenMcpServer:
                 title: The title of the note
                 content: The main content of the note
                 note_type: Type of note (fleeting, literature, permanent, structure, hub)
+                project: Project this note belongs to (used for Obsidian subdirectory organization)
                 tags: Comma-separated list of tags (optional)
             """
             try:
@@ -86,20 +88,21 @@ class ZettelkastenMcpServer:
                     note_type_enum = NoteType(note_type.lower())
                 except ValueError:
                     return f"Invalid note type: {note_type}. Valid types are: {', '.join(t.value for t in NoteType)}"
-                
+
                 # Convert tags string to list
                 tag_list = []
                 if tags:
                     tag_list = [t.strip() for t in tags.split(",") if t.strip()]
-                
+
                 # Create the note
                 note = self.zettel_service.create_note(
                     title=title,
                     content=content,
                     note_type=note_type_enum,
+                    project=project,
                     tags=tag_list,
                 )
-                return f"Note created successfully with ID: {note.id}"
+                return f"Note created successfully with ID: {note.id} (project: {note.project})"
             except Exception as e:
                 return self.format_error_response(e)
 
@@ -141,6 +144,7 @@ class ZettelkastenMcpServer:
             title: Optional[str] = None,
             content: Optional[str] = None,
             note_type: Optional[str] = None,
+            project: Optional[str] = None,
             tags: Optional[str] = None
         ) -> str:
             """Update an existing note.
@@ -149,6 +153,7 @@ class ZettelkastenMcpServer:
                 title: New title (optional)
                 content: New content (optional)
                 note_type: New note type (optional)
+                project: New project (optional, moves note to different Obsidian subdirectory)
                 tags: New comma-separated list of tags (optional)
             """
             try:
@@ -156,7 +161,7 @@ class ZettelkastenMcpServer:
                 note = self.zettel_service.get_note(str(note_id))
                 if not note:
                     return f"Note not found: {note_id}"
-                
+
                 # Convert note_type string to enum if provided
                 note_type_enum = None
                 if note_type:
@@ -164,21 +169,22 @@ class ZettelkastenMcpServer:
                         note_type_enum = NoteType(note_type.lower())
                     except ValueError:
                         return f"Invalid note type: {note_type}. Valid types are: {', '.join(t.value for t in NoteType)}"
-                
+
                 # Convert tags string to list if provided
                 tag_list = None
                 if tags is not None:  # Allow empty string to clear tags
                     tag_list = [t.strip() for t in tags.split(",") if t.strip()]
-                
+
                 # Update the note
                 updated_note = self.zettel_service.update_note(
                     note_id=note_id,
                     title=title,
                     content=content,
                     note_type=note_type_enum,
+                    project=project,
                     tags=tag_list
                 )
-                return f"Note updated successfully: {updated_note.id}"
+                return f"Note updated successfully: {updated_note.id} (project: {updated_note.project})"
             except Exception as e:
                 return self.format_error_response(e)
 
@@ -574,13 +580,13 @@ class ZettelkastenMcpServer:
             try:
                 # Get count before rebuild
                 note_count_before = len(self.zettel_service.get_all_notes())
-                
+
                 # Perform the rebuild
                 self.zettel_service.rebuild_index()
-                
+
                 # Get count after rebuild
                 note_count_after = len(self.zettel_service.get_all_notes())
-                
+
                 # Return a detailed success message
                 return (
                     f"Database index rebuilt successfully.\n"
@@ -590,6 +596,28 @@ class ZettelkastenMcpServer:
             except Exception as e:
                 # Provide a detailed error message
                 logger.error(f"Failed to rebuild index: {e}", exc_info=True)
+                return self.format_error_response(e)
+
+        # Sync notes to Obsidian vault
+        @self.mcp.tool(name="zk_sync_to_obsidian")
+        def zk_sync_to_obsidian() -> str:
+            """Sync all notes to the configured Obsidian vault.
+
+            Re-mirrors all existing zettelkasten notes to the Obsidian vault.
+            Uses note titles as filenames, so existing files are overwritten.
+            Requires ZETTELKASTEN_OBSIDIAN_VAULT to be set in the environment.
+            """
+            try:
+                synced_count = self.zettel_service.sync_to_obsidian()
+                return (
+                    f"Successfully synced {synced_count} notes to Obsidian vault.\n"
+                    f"Notes are saved with their titles as filenames."
+                )
+            except ValueError as e:
+                # Configuration error (vault not set)
+                return str(e)
+            except Exception as e:
+                logger.error(f"Failed to sync to Obsidian: {e}", exc_info=True)
                 return self.format_error_response(e)
 
     def _register_resources(self) -> None:

@@ -80,6 +80,7 @@ class TestMcpServer:
             title="Test Note",
             content="Test content",
             note_type=NoteType.PERMANENT,
+            project="general",
             tags=["tag1", "tag2"]
         )
 
