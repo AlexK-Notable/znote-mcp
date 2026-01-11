@@ -9,6 +9,49 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Set, Union
 from pydantic import BaseModel, Field, field_validator
 import threading
+import re
+
+# Regex pattern for valid note IDs (alphanumeric, underscores, hyphens, T separator)
+# Matches format: YYYYMMDDTHHMMSSssssssccc or similar safe patterns
+SAFE_ID_PATTERN = re.compile(r'^[a-zA-Z0-9_\-T]+$')
+
+def validate_safe_path_component(value: str, field_name: str = "value") -> str:
+    """Validate that a value is safe to use as a filesystem path component.
+
+    Prevents path traversal attacks by rejecting:
+    - Path separators (/, \\)
+    - Parent directory references (..)
+    - Current directory references (single .)
+    - Any characters outside alphanumeric, underscore, hyphen, T
+
+    Args:
+        value: The string to validate
+        field_name: Name of the field for error messages
+
+    Returns:
+        The validated value (unchanged)
+
+    Raises:
+        ValueError: If the value contains unsafe characters
+    """
+    if not value:
+        raise ValueError(f"{field_name} cannot be empty")
+
+    # Check for path traversal attempts
+    if '..' in value:
+        raise ValueError(f"{field_name} cannot contain '..' (path traversal)")
+
+    if '/' in value or '\\' in value:
+        raise ValueError(f"{field_name} cannot contain path separators")
+
+    # Validate against safe pattern
+    if not SAFE_ID_PATTERN.match(value):
+        raise ValueError(
+            f"{field_name} contains invalid characters. "
+            "Only alphanumeric characters, underscores, hyphens, and 'T' are allowed."
+        )
+
+    return value
 
 # Thread-safe counter for uniqueness
 _id_lock = threading.Lock()
@@ -133,6 +176,21 @@ class Note(BaseModel):
         "extra": "forbid"
     }
     
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, v: str) -> str:
+        """Validate that the ID is safe for filesystem use."""
+        return validate_safe_path_component(v, "Note ID")
+
+    @field_validator("project")
+    @classmethod
+    def validate_project(cls, v: str) -> str:
+        """Validate that the project name is safe for filesystem use."""
+        # Allow empty string to default to "general"
+        if not v or not v.strip():
+            return "general"
+        return validate_safe_path_component(v, "Project name")
+
     @field_validator("title")
     @classmethod
     def validate_title(cls, v: str) -> str:

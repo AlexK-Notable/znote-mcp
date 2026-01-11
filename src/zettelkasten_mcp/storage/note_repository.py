@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session, joinedload
 from zettelkasten_mcp.config import config
 from zettelkasten_mcp.models.db_models import (Base, DBLink, DBNote, DBTag,
                                             get_session_factory, init_db)
-from zettelkasten_mcp.models.schema import Link, LinkType, Note, NoteType, Tag
+from zettelkasten_mcp.models.schema import Link, LinkType, Note, NoteType, Tag, validate_safe_path_component
 from zettelkasten_mcp.storage.base import Repository
 
 logger = logging.getLogger(__name__)
@@ -234,9 +234,9 @@ class NoteRepository(Repository[Note]):
                 db_note.content = note.content
                 db_note.note_type = note.note_type.value
                 db_note.updated_at = note.updated_at
-                # Clear existing links and tags to rebuild them
-                session.execute(text(f"DELETE FROM links WHERE source_id = '{note.id}'"))
-                session.execute(text(f"DELETE FROM note_tags WHERE note_id = '{note.id}'"))
+                # Clear existing links and tags to rebuild them (parameterized queries)
+                session.execute(text("DELETE FROM links WHERE source_id = :note_id"), {"note_id": note.id})
+                session.execute(text("DELETE FROM note_tags WHERE note_id = :note_id"), {"note_id": note.id})
             else:
                 # Create new note
                 db_note = DBNote(
@@ -455,13 +455,19 @@ class NoteRepository(Repository[Note]):
     
     def get(self, id: str) -> Optional[Note]:
         """Get a note by ID.
-        
+
         Args:
             id: The ISO 8601 formatted identifier of the note
-            
+
         Returns:
             Note object if found, None otherwise
+
+        Raises:
+            ValueError: If the ID contains invalid characters
         """
+        # Validate ID to prevent path traversal attacks
+        validate_safe_path_component(id, "Note ID")
+
         file_path = self.notes_dir / f"{id}.md"
         if not file_path.exists():
             return None
@@ -570,8 +576,8 @@ class NoteRepository(Repository[Note]):
                             session.flush()
                         db_note.tags.append(db_tag)
                     
-                    # For links, we'll delete existing links and add the new ones
-                    session.execute(text(f"DELETE FROM links WHERE source_id = '{note.id}'"))
+                    # For links, we'll delete existing links and add the new ones (parameterized)
+                    session.execute(text("DELETE FROM links WHERE source_id = :note_id"), {"note_id": note.id})
                     
                     # Add new links
                     for link in note.links:
@@ -596,7 +602,14 @@ class NoteRepository(Repository[Note]):
         return note
     
     def delete(self, id: str) -> None:
-        """Delete a note by ID."""
+        """Delete a note by ID.
+
+        Raises:
+            ValueError: If the ID is invalid or the note doesn't exist
+        """
+        # Validate ID to prevent path traversal attacks
+        validate_safe_path_component(id, "Note ID")
+
         # Check if note exists and get its title for Obsidian mirror deletion
         file_path = self.notes_dir / f"{id}.md"
         if not file_path.exists():
@@ -623,12 +636,12 @@ class NoteRepository(Repository[Note]):
         # Delete from Obsidian vault if configured
         self._delete_from_obsidian(id, note_title, note_project)
 
-        # Delete from database
+        # Delete from database (using parameterized queries to prevent SQL injection)
         with self.session_factory() as session:
             # Delete note and its relationships
-            session.execute(text(f"DELETE FROM links WHERE source_id = '{id}' OR target_id = '{id}'"))
-            session.execute(text(f"DELETE FROM note_tags WHERE note_id = '{id}'"))
-            session.execute(text(f"DELETE FROM notes WHERE id = '{id}'"))
+            session.execute(text("DELETE FROM links WHERE source_id = :note_id OR target_id = :note_id"), {"note_id": id})
+            session.execute(text("DELETE FROM note_tags WHERE note_id = :note_id"), {"note_id": id})
+            session.execute(text("DELETE FROM notes WHERE id = :note_id"), {"note_id": id})
             session.commit()
     
     def search(self, **kwargs: Any) -> List[Note]:

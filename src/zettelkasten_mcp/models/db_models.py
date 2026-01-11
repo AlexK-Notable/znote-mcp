@@ -71,8 +71,8 @@ class DBLink(Base):
     """Database model for a link between notes."""
     __tablename__ = "links"
     id = Column(Integer, primary_key=True, autoincrement=True)
-    source_id = Column(String(255), ForeignKey("notes.id"), nullable=False)
-    target_id = Column(String(255), ForeignKey("notes.id"), nullable=False)
+    source_id = Column(String(255), ForeignKey("notes.id"), nullable=False, index=True)
+    target_id = Column(String(255), ForeignKey("notes.id"), nullable=False, index=True)
     link_type = Column(String(50), default=LinkType.REFERENCE.value, nullable=False)
     description = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.now, nullable=False)
