@@ -1,5 +1,6 @@
 # tests/test_mcp_server.py
 """Tests for the MCP server implementation."""
+import datetime
 import pytest
 from unittest.mock import patch, MagicMock, call
 
@@ -219,13 +220,175 @@ class TestMcpServer:
         value_error = ValueError("Invalid input")
         result = self.server.format_error_response(value_error)
         assert "Error: Invalid input" in result
-        
+
         # Test IOError handling
         io_error = IOError("File not found")
         result = self.server.format_error_response(io_error)
         assert "Error: File not found" in result
-        
+
         # Test general exception handling
         general_error = Exception("Something went wrong")
         result = self.server.format_error_response(general_error)
         assert "Error: Something went wrong" in result
+
+    def test_list_all_notes_tool(self):
+        """Test the zk_list_all_notes tool."""
+        # Check the tool is registered
+        assert 'zk_list_all_notes' in self.registered_tools
+
+        # Set up mock notes with actual datetime values for sorting
+        mock_note1 = MagicMock()
+        mock_note1.id = "note1"
+        mock_note1.title = "Alpha Note"
+        mock_note1.note_type.value = "permanent"
+        mock_note1.updated_at = datetime.datetime(2023, 1, 2, 14, 0)
+        mock_note1.created_at = datetime.datetime(2023, 1, 2, 12, 0)
+        mock_note1.tags = []
+
+        mock_note2 = MagicMock()
+        mock_note2.id = "note2"
+        mock_note2.title = "Beta Note"
+        mock_note2.note_type.value = "fleeting"
+        mock_note2.updated_at = datetime.datetime(2023, 1, 1, 10, 0)
+        mock_note2.created_at = datetime.datetime(2023, 1, 1, 9, 0)
+        mock_tag = MagicMock()
+        mock_tag.name = "test"
+        mock_note2.tags = [mock_tag]
+
+        self.mock_zettel_service.get_all_notes.return_value = [mock_note1, mock_note2]
+
+        # Call the tool function directly
+        list_notes_func = self.registered_tools['zk_list_all_notes']
+        result = list_notes_func(limit=50, offset=0, sort_by="updated_at", descending=True)
+
+        # Verify result
+        assert "Notes (1-2 of 2)" in result
+        assert "Alpha Note" in result
+        assert "Beta Note" in result
+        assert "test" in result  # tag
+
+        # Verify service call
+        self.mock_zettel_service.get_all_notes.assert_called_once()
+
+    def test_list_all_notes_pagination(self):
+        """Test pagination in zk_list_all_notes."""
+        assert 'zk_list_all_notes' in self.registered_tools
+
+        # Create 5 mock notes with actual datetime values for sorting
+        mock_notes = []
+        for i in range(5):
+            note = MagicMock()
+            note.id = f"note{i}"
+            note.title = f"Note {i}"
+            note.note_type.value = "permanent"
+            note.updated_at = datetime.datetime(2023, 1, i + 1, 10, 0)
+            note.created_at = datetime.datetime(2023, 1, i + 1, 9, 0)
+            note.tags = []
+            mock_notes.append(note)
+
+        self.mock_zettel_service.get_all_notes.return_value = mock_notes
+
+        list_notes_func = self.registered_tools['zk_list_all_notes']
+
+        # Request only first 2 notes
+        result = list_notes_func(limit=2, offset=0)
+        assert "Notes (1-2 of 5)" in result
+        assert "Use offset=2 to see more notes" in result
+
+    def test_list_all_notes_empty(self):
+        """Test zk_list_all_notes with no notes."""
+        assert 'zk_list_all_notes' in self.registered_tools
+
+        self.mock_zettel_service.get_all_notes.return_value = []
+
+        list_notes_func = self.registered_tools['zk_list_all_notes']
+        result = list_notes_func()
+
+        assert "No notes found" in result
+
+    def test_add_tag_tool(self):
+        """Test the zk_add_tag tool."""
+        assert 'zk_add_tag' in self.registered_tools
+
+        mock_note = MagicMock()
+        mock_note.id = "test123"
+        mock_note.title = "Test Note"
+
+        self.mock_zettel_service.add_tag_to_note.return_value = mock_note
+
+        add_tag_func = self.registered_tools['zk_add_tag']
+        result = add_tag_func(note_id="test123", tag="new-tag")
+
+        assert "Tag 'new-tag' added" in result
+        assert "Test Note" in result
+
+        self.mock_zettel_service.add_tag_to_note.assert_called_with("test123", "new-tag")
+
+    def test_add_tag_empty_tag(self):
+        """Test zk_add_tag with empty tag."""
+        assert 'zk_add_tag' in self.registered_tools
+
+        add_tag_func = self.registered_tools['zk_add_tag']
+        result = add_tag_func(note_id="test123", tag="")
+
+        assert "Error: Tag cannot be empty" in result
+
+    def test_remove_tag_tool(self):
+        """Test the zk_remove_tag tool."""
+        assert 'zk_remove_tag' in self.registered_tools
+
+        mock_note = MagicMock()
+        mock_note.id = "test123"
+        mock_note.title = "Test Note"
+
+        self.mock_zettel_service.remove_tag_from_note.return_value = mock_note
+
+        remove_tag_func = self.registered_tools['zk_remove_tag']
+        result = remove_tag_func(note_id="test123", tag="old-tag")
+
+        assert "Tag 'old-tag' removed" in result
+        assert "Test Note" in result
+
+        self.mock_zettel_service.remove_tag_from_note.assert_called_with("test123", "old-tag")
+
+    def test_remove_tag_empty_tag(self):
+        """Test zk_remove_tag with empty tag."""
+        assert 'zk_remove_tag' in self.registered_tools
+
+        remove_tag_func = self.registered_tools['zk_remove_tag']
+        result = remove_tag_func(note_id="test123", tag="  ")
+
+        assert "Error: Tag cannot be empty" in result
+
+    def test_export_note_tool(self):
+        """Test the zk_export_note tool."""
+        assert 'zk_export_note' in self.registered_tools
+
+        markdown_content = """# Test Note
+
+Some content here.
+
+## Links
+- [[Other Note]]
+"""
+        self.mock_zettel_service.export_note.return_value = markdown_content
+
+        export_func = self.registered_tools['zk_export_note']
+        result = export_func(note_id="test123", format="markdown")
+
+        assert "# Test Note" in result
+        assert "Some content here" in result
+
+        self.mock_zettel_service.export_note.assert_called_with("test123", "markdown")
+
+    def test_export_note_not_found(self):
+        """Test zk_export_note with non-existent note."""
+        assert 'zk_export_note' in self.registered_tools
+
+        self.mock_zettel_service.export_note.side_effect = ValueError("Note with ID notfound not found")
+
+        export_func = self.registered_tools['zk_export_note']
+        result = export_func(note_id="notfound", format="markdown")
+
+        assert "Error:" in result
+        assert "not found" in result

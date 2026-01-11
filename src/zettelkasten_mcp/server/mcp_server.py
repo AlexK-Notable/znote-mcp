@@ -598,6 +598,117 @@ class ZettelkastenMcpServer:
                 logger.error(f"Failed to rebuild index: {e}", exc_info=True)
                 return self.format_error_response(e)
 
+        # List all notes with pagination
+        @self.mcp.tool(name="zk_list_all_notes")
+        def zk_list_all_notes(
+            limit: int = 50,
+            offset: int = 0,
+            sort_by: str = "updated_at",
+            descending: bool = True
+        ) -> str:
+            """List all notes in the Zettelkasten with pagination.
+            Args:
+                limit: Maximum number of notes to return (default: 50, max: 200)
+                offset: Number of notes to skip (for pagination)
+                sort_by: Field to sort by (created_at, updated_at, title)
+                descending: Sort in descending order (newest first)
+            """
+            try:
+                # Validate limit
+                limit = min(max(1, limit), 200)
+                offset = max(0, offset)
+
+                # Get all notes
+                all_notes = self.zettel_service.get_all_notes()
+                total_count = len(all_notes)
+
+                if not all_notes:
+                    return "No notes found in the Zettelkasten."
+
+                # Sort notes
+                if sort_by == "created_at":
+                    all_notes.sort(key=lambda n: n.created_at, reverse=descending)
+                elif sort_by == "updated_at":
+                    all_notes.sort(key=lambda n: n.updated_at, reverse=descending)
+                elif sort_by == "title":
+                    all_notes.sort(key=lambda n: n.title.lower(), reverse=descending)
+                else:
+                    all_notes.sort(key=lambda n: n.updated_at, reverse=descending)
+
+                # Apply pagination
+                notes = all_notes[offset:offset + limit]
+
+                if not notes:
+                    return f"No notes found at offset {offset}. Total notes: {total_count}"
+
+                # Format results
+                output = f"Notes ({offset + 1}-{offset + len(notes)} of {total_count}):\n\n"
+                for i, note in enumerate(notes, offset + 1):
+                    output += f"{i}. {note.title} (ID: {note.id})\n"
+                    output += f"   Type: {note.note_type.value}\n"
+                    output += f"   Updated: {note.updated_at.strftime('%Y-%m-%d %H:%M')}\n"
+                    if note.tags:
+                        output += f"   Tags: {', '.join(tag.name for tag in note.tags)}\n"
+                    output += "\n"
+
+                # Add pagination hint if there are more notes
+                if offset + limit < total_count:
+                    output += f"\n(Use offset={offset + limit} to see more notes)"
+
+                return output
+            except Exception as e:
+                return self.format_error_response(e)
+
+        # Add a tag to a note
+        @self.mcp.tool(name="zk_add_tag")
+        def zk_add_tag(note_id: str, tag: str) -> str:
+            """Add a tag to an existing note.
+            Args:
+                note_id: The ID of the note
+                tag: The tag to add
+            """
+            try:
+                if not tag or not tag.strip():
+                    return "Error: Tag cannot be empty"
+
+                tag = tag.strip()
+                note = self.zettel_service.add_tag_to_note(str(note_id), tag)
+                return f"Tag '{tag}' added to note '{note.title}' (ID: {note.id})"
+            except Exception as e:
+                return self.format_error_response(e)
+
+        # Remove a tag from a note
+        @self.mcp.tool(name="zk_remove_tag")
+        def zk_remove_tag(note_id: str, tag: str) -> str:
+            """Remove a tag from a note.
+            Args:
+                note_id: The ID of the note
+                tag: The tag to remove
+            """
+            try:
+                if not tag or not tag.strip():
+                    return "Error: Tag cannot be empty"
+
+                tag = tag.strip()
+                note = self.zettel_service.remove_tag_from_note(str(note_id), tag)
+                return f"Tag '{tag}' removed from note '{note.title}' (ID: {note.id})"
+            except Exception as e:
+                return self.format_error_response(e)
+
+        # Export a note
+        @self.mcp.tool(name="zk_export_note")
+        def zk_export_note(note_id: str, format: str = "markdown") -> str:
+            """Export a note in the specified format.
+            Args:
+                note_id: The ID of the note to export
+                format: Export format (currently only 'markdown' is supported)
+            """
+            try:
+                content = self.zettel_service.export_note(str(note_id), format)
+                return content
+            except Exception as e:
+                return self.format_error_response(e)
+
         # Sync notes to Obsidian vault
         @self.mcp.tool(name="zk_sync_to_obsidian")
         def zk_sync_to_obsidian() -> str:
