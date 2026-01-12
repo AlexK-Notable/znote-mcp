@@ -4,7 +4,7 @@ Provides a structured exception hierarchy with error codes and
 machine-readable error information for better error handling.
 """
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
 class ErrorCode(Enum):
@@ -251,6 +251,17 @@ class BulkOperationError(ZettelkastenError):
     """Raised for bulk operation errors.
 
     Provides detailed information about which items succeeded and failed.
+
+    Attributes:
+        operation: Name of the bulk operation (e.g., "bulk_create", "bulk_delete")
+        total_count: Total number of items attempted
+        success_count: Number of items that succeeded
+        failed_ids: List of IDs that failed (full list, not truncated)
+        original_error: The underlying exception if applicable
+
+    Note:
+        The `details` dict contains `failed_ids` truncated to 10 items for
+        safe serialization. Access `self.failed_ids` for the complete list.
     """
 
     def __init__(
@@ -259,10 +270,18 @@ class BulkOperationError(ZettelkastenError):
         operation: str,
         total_count: int = 0,
         success_count: int = 0,
-        failed_ids: Optional[list] = None,
+        failed_ids: Optional[List[str]] = None,
         code: ErrorCode = ErrorCode.BULK_OPERATION_FAILED,
         original_error: Optional[Exception] = None
     ):
+        # Validate invariants
+        if total_count < 0:
+            raise ValueError("total_count must be non-negative")
+        if success_count < 0:
+            raise ValueError("success_count must be non-negative")
+        if success_count > total_count:
+            raise ValueError("success_count cannot exceed total_count")
+
         details = {
             "operation": operation,
             "total_count": total_count,
@@ -278,5 +297,11 @@ class BulkOperationError(ZettelkastenError):
         self.operation = operation
         self.total_count = total_count
         self.success_count = success_count
-        self.failed_ids = failed_ids or []
+        # Defensive copy to prevent external mutation
+        self.failed_ids: List[str] = list(failed_ids) if failed_ids else []
         self.original_error = original_error
+
+    @property
+    def failed_count(self) -> int:
+        """Number of items that failed (computed from total - success)."""
+        return self.total_count - self.success_count

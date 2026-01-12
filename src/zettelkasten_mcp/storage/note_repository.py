@@ -5,9 +5,10 @@ import os
 import sqlite3
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import frontmatter
+import yaml
 from sqlalchemy import and_, create_engine, func, or_, select, text
 from sqlalchemy.orm import Session, joinedload
 
@@ -95,15 +96,29 @@ class NoteRepository(Repository[Note]):
             batch = note_files[i:i + batch_size]
             notes = []
             
-            # Read files
+            # Read files - track failures for user feedback
+            failed_files: List[str] = []
             for file_path in batch:
                 try:
                     with open(file_path, "r", encoding="utf-8") as f:
                         content = f.read()
                     note = self._parse_note_from_markdown(content)
                     notes.append(note)
-                except Exception as e:
-                    logger.error(f"Error processing file {file_path}: {e}")
+                except (IOError, OSError) as e:
+                    # File access errors - log and continue
+                    logger.error(f"Cannot read file {file_path.name}: {e}")
+                    failed_files.append(file_path.name)
+                except (ValueError, yaml.YAMLError) as e:
+                    # Malformed frontmatter or missing required fields
+                    logger.error(f"Invalid note format in {file_path.name}: {e}")
+                    failed_files.append(file_path.name)
+                # Let other exceptions (MemoryError, KeyboardInterrupt, bugs) propagate
+
+            if failed_files:
+                logger.warning(
+                    f"Failed to process {len(failed_files)} files in batch: "
+                    f"{failed_files[:5]}{'...' if len(failed_files) > 5 else ''}"
+                )
             
             # Index notes
             for note in notes:
@@ -141,6 +156,10 @@ class NoteRepository(Repository[Note]):
         try:
             note_type = NoteType(note_type_str)
         except ValueError:
+            logger.warning(
+                f"Unknown note type '{note_type_str}' in note {note_id}, "
+                "defaulting to PERMANENT"
+            )
             note_type = NoteType.PERMANENT
 
         # Extract project (default to "general" for backwards compatibility)
@@ -192,7 +211,11 @@ class NoteRepository(Repository[Note]):
                         try:
                             link_type = LinkType(link_type_str)
                         except ValueError:
-                            # If not a valid type, default to reference
+                            # If not a valid type, default to reference with warning
+                            logger.warning(
+                                f"Unknown link type '{link_type_str}' in note {note_id}, "
+                                "defaulting to REFERENCE"
+                            )
                             link_type = LinkType.REFERENCE
                         links.append(
                             Link(
@@ -203,8 +226,10 @@ class NoteRepository(Repository[Note]):
                                 created_at=datetime.datetime.now()
                             )
                         )
-                except Exception as e:
-                    logger.error(f"Error parsing link: {line} - {e}")
+                except (ValueError, IndexError) as e:
+                    # Malformed link line - log and skip this link
+                    logger.warning(f"Skipping malformed link in note {note_id}: {line} - {e}")
+                # Let other exceptions (bugs in Link constructor, etc.) propagate
         
         # Extract timestamps
         created_str = metadata.get("created")
@@ -516,6 +541,7 @@ class NoteRepository(Repository[Note]):
             # Process notes in batches to reduce memory usage
             batch_size = 50
             all_notes = []
+            failed_ids: List[str] = []
             # Create batches of note IDs
             note_ids = [note.id for note in db_notes]
             for i in range(0, len(note_ids), batch_size):
@@ -527,9 +553,18 @@ class NoteRepository(Repository[Note]):
                         note = self.get(note_id)
                         if note:
                             note_batch.append(note)
-                    except Exception as e:
+                    except (IOError, OSError, ValueError, yaml.YAMLError) as e:
+                        # File/parsing errors - log and continue
                         logger.error(f"Error loading note {note_id}: {e}")
+                        failed_ids.append(note_id)
+                    # Let system errors (MemoryError, etc.) and bugs propagate
                 all_notes.extend(note_batch)
+
+            if failed_ids:
+                logger.warning(
+                    f"Failed to load {len(failed_ids)} of {len(note_ids)} notes: "
+                    f"{failed_ids[:5]}{'...' if len(failed_ids) > 5 else ''}"
+                )
             return all_notes
     
     def update(self, note: Note) -> Note:
@@ -635,8 +670,11 @@ class NoteRepository(Repository[Note]):
             if note:
                 note_title = note.title
                 note_project = note.project
-        except Exception:
-            pass  # If we can't read the note, we'll still try to delete by ID
+        except (IOError, OSError, ValueError, yaml.YAMLError) as e:
+            # If we can't read the note, log and continue with deletion
+            # The note file exists but may be corrupted/unreadable
+            logger.warning(f"Cannot read note {id} for Obsidian cleanup: {e}")
+        # Let system errors and bugs propagate
 
         # Delete from file system
         try:
@@ -822,27 +860,35 @@ class NoteRepository(Repository[Note]):
         results = []
         search_term = f"%{query}%"
 
-        with self.session_factory() as session:
-            sql = text("""
-                SELECT id, title, content
-                FROM notes
-                WHERE title LIKE :term OR content LIKE :term
-                LIMIT :limit
-            """)
-            result = session.execute(sql, {"term": search_term, "limit": limit})
-            rows = result.fetchall()
+        try:
+            with self.session_factory() as session:
+                sql = text("""
+                    SELECT id, title, content
+                    FROM notes
+                    WHERE title LIKE :term OR content LIKE :term
+                    LIMIT :limit
+                """)
+                result = session.execute(sql, {"term": search_term, "limit": limit})
+                rows = result.fetchall()
 
-            for row in rows:
-                # Simple relevance: title match scores higher
-                title_match = query.lower() in row[1].lower() if row[1] else False
-                rank = -2.0 if title_match else -1.0
+                for row in rows:
+                    # Simple relevance: title match scores higher
+                    title_match = query.lower() in row[1].lower() if row[1] else False
+                    rank = -2.0 if title_match else -1.0
 
-                results.append({
-                    "id": row[0],
-                    "title": row[1],
-                    "rank": rank,
-                    "search_mode": "fallback"  # Indicate fallback was used
-                })
+                    results.append({
+                        "id": row[0],
+                        "title": row[1],
+                        "rank": rank,
+                        "search_mode": "fallback"  # Indicate fallback was used
+                    })
+        except Exception as e:
+            # Wrap database errors in SearchError as documented
+            raise SearchError(
+                f"Fallback text search failed: {e}",
+                query=query,
+                code=ErrorCode.SEARCH_FAILED
+            ) from e
 
         logger.debug(f"Fallback search returned {len(results)} results for query '{query}'")
         return results
@@ -947,6 +993,7 @@ class NoteRepository(Repository[Note]):
         # Get all notes from the file system
         note_files = list(self.notes_dir.glob("*.md"))
         synced_count = 0
+        failed_files: List[str] = []
 
         for file_path in note_files:
             try:
@@ -956,10 +1003,22 @@ class NoteRepository(Repository[Note]):
                 markdown = self._note_to_markdown(note)
                 self._mirror_to_obsidian(note, markdown)
                 synced_count += 1
-            except Exception as e:
-                logger.warning(f"Failed to sync note {file_path.name}: {e}")
+            except (IOError, OSError, PermissionError) as e:
+                # File access or permission errors
+                logger.warning(f"Cannot access {file_path.name} for sync: {e}")
+                failed_files.append(file_path.name)
+            except (ValueError, yaml.YAMLError) as e:
+                # Malformed note content
+                logger.warning(f"Invalid note format in {file_path.name}: {e}")
+                failed_files.append(file_path.name)
+            # Let system errors and bugs propagate
 
-        logger.info(f"Synced {synced_count} notes to Obsidian vault")
+        if failed_files:
+            logger.warning(
+                f"Obsidian sync completed with {len(failed_files)} failures: "
+                f"{failed_files[:5]}{'...' if len(failed_files) > 5 else ''}"
+            )
+        logger.info(f"Synced {synced_count} of {len(note_files)} notes to Obsidian vault")
         return synced_count
 
     # ========== Bulk Operations ==========
@@ -1216,6 +1275,8 @@ class NoteRepository(Repository[Note]):
 
         updated_count = 0
         failed_ids = []
+        # Track notes that need file updates (for atomic file operations)
+        notes_to_update: List[Tuple[str, Note]] = []
 
         try:
             with self.session_factory() as session:
@@ -1250,24 +1311,29 @@ class NoteRepository(Repository[Note]):
                         db_note.updated_at = datetime.datetime.now()
                         updated_count += 1
 
-                        # Update the markdown file to reflect new tags
+                        # Get note for file update (defer file write until after commit)
                         note = self.get(note_id)
                         if note:
                             for tag_name in tags:
                                 if not any(t.name == tag_name for t in note.tags):
                                     note.tags.append(Tag(name=tag_name))
-                            markdown = self._note_to_markdown(note)
-                            file_path = self.notes_dir / f"{note_id}.md"
-                            with self.file_lock:
-                                with open(file_path, "w", encoding="utf-8") as f:
-                                    f.write(markdown)
-                            self._mirror_to_obsidian(note, markdown)
+                            notes_to_update.append((note_id, note))
                     else:
                         # Note already had all tags - still counts as "processed"
                         updated_count += 1
 
                 # Commit all database changes atomically
                 session.commit()
+
+            # Now update files (database is already committed)
+            # Wrap all file operations in a single lock acquisition
+            with self.file_lock:
+                for note_id, note in notes_to_update:
+                    markdown = self._note_to_markdown(note)
+                    file_path = self.notes_dir / f"{note_id}.md"
+                    with open(file_path, "w", encoding="utf-8") as f:
+                        f.write(markdown)
+                    self._mirror_to_obsidian(note, markdown)
 
         except BulkOperationError:
             raise
@@ -1342,6 +1408,8 @@ class NoteRepository(Repository[Note]):
         updated_count = 0
         failed_ids = []
         tags_to_remove = set(tags)
+        # Track notes that need file updates (for atomic file operations)
+        notes_to_update: List[Tuple[str, Note]] = []
 
         try:
             with self.session_factory() as session:
@@ -1362,22 +1430,27 @@ class NoteRepository(Repository[Note]):
                         db_note.updated_at = datetime.datetime.now()
                         updated_count += 1
 
-                        # Update the markdown file to reflect removed tags
+                        # Get note for file update (defer file write until after commit)
                         note = self.get(note_id)
                         if note:
                             note.tags = [t for t in note.tags if t.name not in tags_to_remove]
-                            markdown = self._note_to_markdown(note)
-                            file_path = self.notes_dir / f"{note_id}.md"
-                            with self.file_lock:
-                                with open(file_path, "w", encoding="utf-8") as f:
-                                    f.write(markdown)
-                            self._mirror_to_obsidian(note, markdown)
+                            notes_to_update.append((note_id, note))
                     else:
                         # Note didn't have any of the tags - still counts as "processed"
                         updated_count += 1
 
                 # Commit all database changes atomically
                 session.commit()
+
+            # Now update files (database is already committed)
+            # Wrap all file operations in a single lock acquisition
+            with self.file_lock:
+                for note_id, note in notes_to_update:
+                    markdown = self._note_to_markdown(note)
+                    file_path = self.notes_dir / f"{note_id}.md"
+                    with open(file_path, "w", encoding="utf-8") as f:
+                        f.write(markdown)
+                    self._mirror_to_obsidian(note, markdown)
 
         except BulkOperationError:
             raise
