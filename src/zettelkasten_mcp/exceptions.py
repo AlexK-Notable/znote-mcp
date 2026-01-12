@@ -33,6 +33,11 @@ class ErrorCode(Enum):
     STORAGE_DELETE_FAILED = 4003
     STORAGE_CONNECTION_FAILED = 4004
 
+    # Bulk operation errors (45xx)
+    BULK_OPERATION_FAILED = 4501
+    BULK_OPERATION_PARTIAL = 4502
+    BULK_OPERATION_EMPTY_INPUT = 4503
+
     # Search errors (5xxx)
     SEARCH_FAILED = 5001
     SEARCH_INVALID_QUERY = 5002
@@ -240,3 +245,38 @@ class ValidationError(ZettelkastenError):
         super().__init__(message, code=code, details=details)
         self.field = field
         self.value = value
+
+
+class BulkOperationError(ZettelkastenError):
+    """Raised for bulk operation errors.
+
+    Provides detailed information about which items succeeded and failed.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        operation: str,
+        total_count: int = 0,
+        success_count: int = 0,
+        failed_ids: Optional[list] = None,
+        code: ErrorCode = ErrorCode.BULK_OPERATION_FAILED,
+        original_error: Optional[Exception] = None
+    ):
+        details = {
+            "operation": operation,
+            "total_count": total_count,
+            "success_count": success_count,
+            "failed_count": total_count - success_count
+        }
+        if failed_ids:
+            details["failed_ids"] = failed_ids[:10]  # Truncate for safety
+        if original_error:
+            details["original_error"] = str(original_error)[:200]
+
+        super().__init__(message, code=code, details=details)
+        self.operation = operation
+        self.total_count = total_count
+        self.success_count = success_count
+        self.failed_ids = failed_ids or []
+        self.original_error = original_error

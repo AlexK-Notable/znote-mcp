@@ -2,6 +2,7 @@
 import datetime
 import logging
 import os
+import sqlite3
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Union
@@ -16,6 +17,12 @@ from zettelkasten_mcp.models.db_models import (Base, DBLink, DBNote, DBTag,
                                             rebuild_fts_index)
 from zettelkasten_mcp.models.schema import Link, LinkType, Note, NoteType, Tag, validate_safe_path_component
 from zettelkasten_mcp.storage.base import Repository
+from zettelkasten_mcp.exceptions import (
+    BulkOperationError,
+    ErrorCode,
+    SearchError,
+    ValidationError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -722,12 +729,13 @@ class NoteRepository(Repository[Note]):
         Performs efficient full-text search with BM25 ranking.
 
         Args:
-            query: Search query. Supports FTS5 syntax:
+            query: Search query. Supports basic FTS5 syntax:
                    - Simple terms: "python async"
                    - Phrases: '"async await"'
                    - Boolean: "python AND NOT java"
                    - Prefix: "program*"
                    - Column filter: "title:python"
+                   Note: Complex syntax (NEAR, parentheses) may require escaping.
             limit: Maximum number of results to return.
             highlight: If True, include highlighted snippets in results.
 
@@ -737,6 +745,7 @@ class NoteRepository(Repository[Note]):
                 - title: Note title
                 - rank: BM25 relevance score (lower is better)
                 - snippet: Highlighted content snippet (if highlight=True)
+                - search_mode: "fts5" or "fallback" indicating search method used
         """
         results = []
 
@@ -780,15 +789,19 @@ class NoteRepository(Repository[Note]):
                         "id": row[0],
                         "title": row[1],
                         "rank": row[2],
+                        "search_mode": "fts5"  # Indicate FTS5 was used
                     }
                     if highlight and len(row) > 3:
                         entry["snippet"] = row[3]
                     results.append(entry)
 
-            except Exception as e:
-                # FTS5 query syntax errors
-                logger.warning(f"FTS5 search failed for query '{query}': {e}")
-                # Fall back to simple LIKE search
+            except sqlite3.OperationalError as e:
+                # FTS5 syntax errors - fall back to LIKE search
+                logger.error(
+                    f"FTS5 search failed for query '{query}': {type(e).__name__}: {e}. "
+                    "Falling back to LIKE search."
+                )
+                # Fall back to simple LIKE search with explicit indication
                 return self._fallback_text_search(query, limit)
 
         return results
@@ -801,6 +814,10 @@ class NoteRepository(Repository[Note]):
         """Fallback text search using LIKE when FTS5 fails.
 
         Used when FTS5 query syntax is invalid or FTS is unavailable.
+        Results include search_mode='fallback' to indicate the search mode.
+
+        Raises:
+            SearchError: If the fallback search also fails.
         """
         results = []
         search_term = f"%{query}%"
@@ -824,8 +841,10 @@ class NoteRepository(Repository[Note]):
                     "id": row[0],
                     "title": row[1],
                     "rank": rank,
+                    "search_mode": "fallback"  # Indicate fallback was used
                 })
 
+        logger.debug(f"Fallback search returned {len(results)} results for query '{query}'")
         return results
 
     def rebuild_fts(self) -> int:
@@ -949,6 +968,7 @@ class NoteRepository(Repository[Note]):
         """Create multiple notes in a single batch operation.
 
         All notes are created atomically - if any fails, all are rolled back.
+        Uses a single lock for the entire operation to prevent race conditions.
 
         Args:
             notes: List of Note objects to create.
@@ -957,90 +977,121 @@ class NoteRepository(Repository[Note]):
             List of created Note objects with assigned IDs.
 
         Raises:
+            BulkOperationError: If the operation fails or input is empty.
             IOError: If any file operation fails.
-            ValueError: If validation fails for any note.
+            ValidationError: If validation fails for any note.
         """
+        if not notes:
+            raise BulkOperationError(
+                "No notes provided for creation",
+                operation="bulk_create",
+                code=ErrorCode.BULK_OPERATION_EMPTY_INPUT
+            )
+
         from zettelkasten_mcp.models.schema import generate_id
 
         created_notes = []
         file_paths_created = []
+        # Track Obsidian mirrors for rollback
+        obsidian_notes_created = []  # List of (note_id, title, project) tuples
 
-        try:
-            for note in notes:
-                # Ensure the note has an ID
-                if not note.id:
-                    note.id = generate_id()
+        # Use a single lock for the entire bulk operation to prevent race conditions
+        with self.file_lock:
+            try:
+                for note in notes:
+                    # Ensure the note has an ID
+                    if not note.id:
+                        note.id = generate_id()
 
-                # Convert note to markdown
-                markdown = self._note_to_markdown(note)
+                    # Convert note to markdown
+                    markdown = self._note_to_markdown(note)
 
-                # Write to file
-                file_path = self.notes_dir / f"{note.id}.md"
-                with self.file_lock:
+                    # Write to file
+                    file_path = self.notes_dir / f"{note.id}.md"
                     with open(file_path, "w", encoding="utf-8") as f:
                         f.write(markdown)
-                file_paths_created.append(file_path)
+                    file_paths_created.append(file_path)
 
-                # Mirror to Obsidian vault if configured
-                self._mirror_to_obsidian(note, markdown)
+                    # Mirror to Obsidian vault if configured
+                    self._mirror_to_obsidian(note, markdown)
+                    # Track for potential rollback
+                    if self.obsidian_vault_path:
+                        obsidian_notes_created.append((note.id, note.title, note.project))
 
-                created_notes.append(note)
+                    created_notes.append(note)
 
-            # Index all notes in database in a single session
-            with self.session_factory() as session:
-                for note in created_notes:
-                    # Create database record
-                    db_note = DBNote(
-                        id=note.id,
-                        title=note.title,
-                        content=note.content,
-                        note_type=note.note_type.value,
-                        created_at=note.created_at,
-                        updated_at=note.updated_at
-                    )
-                    session.add(db_note)
-                    session.flush()
-
-                    # Add tags
-                    for tag in note.tags:
-                        db_tag = session.scalar(
-                            select(DBTag).where(DBTag.name == tag.name)
+                # Index all notes in database in a single session
+                with self.session_factory() as session:
+                    for note in created_notes:
+                        # Create database record
+                        db_note = DBNote(
+                            id=note.id,
+                            title=note.title,
+                            content=note.content,
+                            note_type=note.note_type.value,
+                            created_at=note.created_at,
+                            updated_at=note.updated_at
                         )
-                        if not db_tag:
-                            db_tag = DBTag(name=tag.name)
-                            session.add(db_tag)
-                            session.flush()
-                        db_note.tags.append(db_tag)
+                        session.add(db_note)
+                        session.flush()
 
-                    # Add links
-                    for link in note.links:
-                        db_link = DBLink(
-                            source_id=link.source_id,
-                            target_id=link.target_id,
-                            link_type=link.link_type.value,
-                            description=link.description,
-                            created_at=link.created_at
-                        )
-                        session.add(db_link)
+                        # Add tags
+                        for tag in note.tags:
+                            db_tag = session.scalar(
+                                select(DBTag).where(DBTag.name == tag.name)
+                            )
+                            if not db_tag:
+                                db_tag = DBTag(name=tag.name)
+                                session.add(db_tag)
+                                session.flush()
+                            db_note.tags.append(db_tag)
 
-                session.commit()
+                        # Add links
+                        for link in note.links:
+                            db_link = DBLink(
+                                source_id=link.source_id,
+                                target_id=link.target_id,
+                                link_type=link.link_type.value,
+                                description=link.description,
+                                created_at=link.created_at
+                            )
+                            session.add(db_link)
 
-            logger.info(f"Bulk created {len(created_notes)} notes")
-            return created_notes
+                    session.commit()
 
-        except Exception as e:
-            # Rollback: delete any files we created
-            for file_path in file_paths_created:
-                try:
-                    if file_path.exists():
-                        os.remove(file_path)
-                except IOError:
-                    pass
-            logger.error(f"Bulk create failed, rolled back: {e}")
-            raise
+                logger.info(f"Bulk created {len(created_notes)} notes")
+                return created_notes
+
+            except Exception as e:
+                # Rollback: delete any files we created
+                for file_path in file_paths_created:
+                    try:
+                        if file_path.exists():
+                            os.remove(file_path)
+                    except IOError as cleanup_error:
+                        logger.warning(f"Failed to cleanup file {file_path}: {cleanup_error}")
+
+                # Rollback: delete any Obsidian mirrors we created
+                for note_id, title, project in obsidian_notes_created:
+                    try:
+                        self._delete_from_obsidian(note_id, title, project)
+                    except Exception as cleanup_error:
+                        logger.warning(f"Failed to cleanup Obsidian mirror for {note_id}: {cleanup_error}")
+
+                logger.error(f"Bulk create failed, rolled back: {e}")
+                raise BulkOperationError(
+                    f"Bulk create failed: {e}",
+                    operation="bulk_create",
+                    total_count=len(notes),
+                    success_count=0,
+                    original_error=e
+                )
 
     def bulk_delete_notes(self, note_ids: List[str]) -> int:
         """Delete multiple notes in a single batch operation.
+
+        Deletes from database first (atomic), then files. This ensures
+        consistency: if database deletion fails, no files are touched.
 
         Args:
             note_ids: List of note IDs to delete.
@@ -1049,17 +1100,27 @@ class NoteRepository(Repository[Note]):
             Number of notes successfully deleted.
 
         Raises:
-            ValueError: If any note ID is invalid.
+            BulkOperationError: If the operation fails or input is empty.
+            ValueError: If any note ID contains unsafe path characters.
         """
-        deleted_count = 0
+        if not note_ids:
+            raise BulkOperationError(
+                "No note IDs provided for deletion",
+                operation="bulk_delete",
+                code=ErrorCode.BULK_OPERATION_EMPTY_INPUT
+            )
 
         # Validate all IDs first
         for note_id in note_ids:
             validate_safe_path_component(note_id, "Note ID")
 
-        # Collect note info for Obsidian deletion
+        # Collect note info for Obsidian deletion and file paths
         notes_info = []
+        file_paths = []
         for note_id in note_ids:
+            file_path = self.notes_dir / f"{note_id}.md"
+            if file_path.exists():
+                file_paths.append(file_path)
             try:
                 note = self.get(note_id)
                 if note:
@@ -1071,43 +1132,59 @@ class NoteRepository(Repository[Note]):
             except Exception:
                 notes_info.append({"id": note_id, "title": None, "project": None})
 
-        # Delete from file system
-        for note_id in note_ids:
-            file_path = self.notes_dir / f"{note_id}.md"
-            if file_path.exists():
+        # Delete from database FIRST (atomic transaction)
+        try:
+            with self.session_factory() as session:
+                for note_id in note_ids:
+                    session.execute(
+                        text("DELETE FROM links WHERE source_id = :note_id OR target_id = :note_id"),
+                        {"note_id": note_id}
+                    )
+                    session.execute(
+                        text("DELETE FROM note_tags WHERE note_id = :note_id"),
+                        {"note_id": note_id}
+                    )
+                    session.execute(
+                        text("DELETE FROM notes WHERE id = :note_id"),
+                        {"note_id": note_id}
+                    )
+                session.commit()
+        except Exception as e:
+            logger.error(f"Bulk delete database operation failed: {e}")
+            raise BulkOperationError(
+                f"Database deletion failed: {e}",
+                operation="bulk_delete",
+                total_count=len(note_ids),
+                success_count=0,
+                failed_ids=note_ids,
+                original_error=e
+            )
+
+        # Now delete files (database is already consistent)
+        # Wrap entire file deletion loop in single lock to prevent interleaving
+        deleted_count = 0
+        failed_files = []
+        with self.file_lock:
+            for file_path in file_paths:
                 try:
-                    with self.file_lock:
-                        os.remove(file_path)
+                    os.remove(file_path)
                     deleted_count += 1
                 except IOError as e:
-                    logger.warning(f"Failed to delete note file {note_id}: {e}")
+                    logger.warning(f"Failed to delete note file {file_path.name}: {e}")
+                    failed_files.append(file_path.stem)
 
         # Delete from Obsidian
         for info in notes_info:
             self._delete_from_obsidian(info["id"], info["title"], info["project"])
 
-        # Delete from database in a single transaction
-        with self.session_factory() as session:
-            for note_id in note_ids:
-                session.execute(
-                    text("DELETE FROM links WHERE source_id = :note_id OR target_id = :note_id"),
-                    {"note_id": note_id}
-                )
-                session.execute(
-                    text("DELETE FROM note_tags WHERE note_id = :note_id"),
-                    {"note_id": note_id}
-                )
-                session.execute(
-                    text("DELETE FROM notes WHERE id = :note_id"),
-                    {"note_id": note_id}
-                )
-            session.commit()
+        if failed_files:
+            logger.warning(f"Some files could not be deleted: {failed_files}")
 
         logger.info(f"Bulk deleted {deleted_count} notes")
         return deleted_count
 
     def bulk_add_tags(self, note_ids: List[str], tags: List[str]) -> int:
-        """Add tags to multiple notes in a single batch operation.
+        """Add tags to multiple notes in a single atomic transaction.
 
         Args:
             note_ids: List of note IDs to update.
@@ -1115,30 +1192,124 @@ class NoteRepository(Repository[Note]):
 
         Returns:
             Number of notes successfully updated.
-        """
-        updated_count = 0
 
+        Raises:
+            BulkOperationError: If input is empty or operation fails.
+            ValidationError: If any note ID fails path validation.
+        """
+        if not note_ids:
+            raise BulkOperationError(
+                "No note IDs provided for adding tags",
+                operation="bulk_add_tags",
+                code=ErrorCode.BULK_OPERATION_EMPTY_INPUT
+            )
+        if not tags:
+            raise BulkOperationError(
+                "No tags provided to add",
+                operation="bulk_add_tags",
+                code=ErrorCode.BULK_OPERATION_EMPTY_INPUT
+            )
+
+        # Validate all IDs first (security: prevent path traversal)
         for note_id in note_ids:
-            try:
-                note = self.get(note_id)
-                if note:
+            validate_safe_path_component(note_id, "Note ID")
+
+        updated_count = 0
+        failed_ids = []
+
+        try:
+            with self.session_factory() as session:
+                for note_id in note_ids:
+                    # Get the note from database
+                    db_note = session.scalar(select(DBNote).where(DBNote.id == note_id))
+                    if not db_note:
+                        failed_ids.append(note_id)
+                        logger.warning(f"Note {note_id} not found for adding tags")
+                        continue
+
+                    # Get existing tag names for this note
+                    existing_tag_names = {tag.name for tag in db_note.tags}
+
                     # Add new tags (avoiding duplicates)
-                    existing_tag_names = {tag.name for tag in note.tags}
+                    tags_added = False
                     for tag_name in tags:
                         if tag_name not in existing_tag_names:
-                            note.tags.append(Tag(name=tag_name))
+                            # Check if tag exists in database
+                            db_tag = session.scalar(
+                                select(DBTag).where(DBTag.name == tag_name)
+                            )
+                            if not db_tag:
+                                db_tag = DBTag(name=tag_name)
+                                session.add(db_tag)
+                                session.flush()
+                            db_note.tags.append(db_tag)
+                            existing_tag_names.add(tag_name)
+                            tags_added = True
 
-                    # Update the note
-                    self.update(note)
-                    updated_count += 1
-            except Exception as e:
-                logger.warning(f"Failed to add tags to note {note_id}: {e}")
+                    if tags_added:
+                        db_note.updated_at = datetime.datetime.now()
+                        updated_count += 1
+
+                        # Update the markdown file to reflect new tags
+                        note = self.get(note_id)
+                        if note:
+                            for tag_name in tags:
+                                if not any(t.name == tag_name for t in note.tags):
+                                    note.tags.append(Tag(name=tag_name))
+                            markdown = self._note_to_markdown(note)
+                            file_path = self.notes_dir / f"{note_id}.md"
+                            with self.file_lock:
+                                with open(file_path, "w", encoding="utf-8") as f:
+                                    f.write(markdown)
+                            self._mirror_to_obsidian(note, markdown)
+                    else:
+                        # Note already had all tags - still counts as "processed"
+                        updated_count += 1
+
+                # Commit all database changes atomically
+                session.commit()
+
+        except BulkOperationError:
+            raise
+        except Exception as e:
+            logger.error(f"Bulk add tags operation failed: {e}")
+            raise BulkOperationError(
+                f"Database operation failed: {e}",
+                operation="bulk_add_tags",
+                total_count=len(note_ids),
+                success_count=0,
+                failed_ids=note_ids,
+                code=ErrorCode.BULK_OPERATION_FAILED,
+                original_error=e
+            )
 
         logger.info(f"Bulk added tags {tags} to {updated_count} notes")
+
+        # Raise partial failure if some notes failed
+        if failed_ids:
+            if updated_count == 0:
+                raise BulkOperationError(
+                    "Failed to add tags to any notes",
+                    operation="bulk_add_tags",
+                    total_count=len(note_ids),
+                    success_count=0,
+                    failed_ids=failed_ids,
+                    code=ErrorCode.BULK_OPERATION_FAILED
+                )
+            else:
+                raise BulkOperationError(
+                    f"Partial success: added tags to {updated_count} of {len(note_ids)} notes",
+                    operation="bulk_add_tags",
+                    total_count=len(note_ids),
+                    success_count=updated_count,
+                    failed_ids=failed_ids,
+                    code=ErrorCode.BULK_OPERATION_PARTIAL
+                )
+
         return updated_count
 
     def bulk_remove_tags(self, note_ids: List[str], tags: List[str]) -> int:
-        """Remove tags from multiple notes in a single batch operation.
+        """Remove tags from multiple notes in a single atomic transaction.
 
         Args:
             note_ids: List of note IDs to update.
@@ -1146,30 +1317,109 @@ class NoteRepository(Repository[Note]):
 
         Returns:
             Number of notes successfully updated.
+
+        Raises:
+            BulkOperationError: If input is empty or operation fails.
+            ValidationError: If any note ID fails path validation.
         """
+        if not note_ids:
+            raise BulkOperationError(
+                "No note IDs provided for removing tags",
+                operation="bulk_remove_tags",
+                code=ErrorCode.BULK_OPERATION_EMPTY_INPUT
+            )
+        if not tags:
+            raise BulkOperationError(
+                "No tags provided to remove",
+                operation="bulk_remove_tags",
+                code=ErrorCode.BULK_OPERATION_EMPTY_INPUT
+            )
+
+        # Validate all IDs first (security: prevent path traversal)
+        for note_id in note_ids:
+            validate_safe_path_component(note_id, "Note ID")
+
         updated_count = 0
+        failed_ids = []
         tags_to_remove = set(tags)
 
-        for note_id in note_ids:
-            try:
-                note = self.get(note_id)
-                if note:
+        try:
+            with self.session_factory() as session:
+                for note_id in note_ids:
+                    # Get the note from database
+                    db_note = session.scalar(select(DBNote).where(DBNote.id == note_id))
+                    if not db_note:
+                        failed_ids.append(note_id)
+                        logger.warning(f"Note {note_id} not found for removing tags")
+                        continue
+
                     # Remove specified tags
-                    original_count = len(note.tags)
-                    note.tags = [tag for tag in note.tags if tag.name not in tags_to_remove]
+                    original_count = len(db_note.tags)
+                    db_note.tags = [tag for tag in db_note.tags if tag.name not in tags_to_remove]
 
                     # Only update if tags were actually removed
-                    if len(note.tags) < original_count:
-                        self.update(note)
+                    if len(db_note.tags) < original_count:
+                        db_note.updated_at = datetime.datetime.now()
                         updated_count += 1
-            except Exception as e:
-                logger.warning(f"Failed to remove tags from note {note_id}: {e}")
+
+                        # Update the markdown file to reflect removed tags
+                        note = self.get(note_id)
+                        if note:
+                            note.tags = [t for t in note.tags if t.name not in tags_to_remove]
+                            markdown = self._note_to_markdown(note)
+                            file_path = self.notes_dir / f"{note_id}.md"
+                            with self.file_lock:
+                                with open(file_path, "w", encoding="utf-8") as f:
+                                    f.write(markdown)
+                            self._mirror_to_obsidian(note, markdown)
+                    else:
+                        # Note didn't have any of the tags - still counts as "processed"
+                        updated_count += 1
+
+                # Commit all database changes atomically
+                session.commit()
+
+        except BulkOperationError:
+            raise
+        except Exception as e:
+            logger.error(f"Bulk remove tags operation failed: {e}")
+            raise BulkOperationError(
+                f"Database operation failed: {e}",
+                operation="bulk_remove_tags",
+                total_count=len(note_ids),
+                success_count=0,
+                failed_ids=note_ids,
+                code=ErrorCode.BULK_OPERATION_FAILED,
+                original_error=e
+            )
 
         logger.info(f"Bulk removed tags {tags} from {updated_count} notes")
+
+        # Raise partial failure if some notes failed
+        if failed_ids:
+            if updated_count == 0:
+                raise BulkOperationError(
+                    "Failed to remove tags from any notes",
+                    operation="bulk_remove_tags",
+                    total_count=len(note_ids),
+                    success_count=0,
+                    failed_ids=failed_ids,
+                    code=ErrorCode.BULK_OPERATION_FAILED
+                )
+            else:
+                raise BulkOperationError(
+                    f"Partial success: removed tags from {updated_count} of {len(note_ids)} notes",
+                    operation="bulk_remove_tags",
+                    total_count=len(note_ids),
+                    success_count=updated_count,
+                    failed_ids=failed_ids,
+                    code=ErrorCode.BULK_OPERATION_PARTIAL
+                )
+
         return updated_count
 
     def bulk_update_project(self, note_ids: List[str], project: str) -> int:
-        """Move multiple notes to a different project.
+        """Move multiple notes to a different project in a single atomic transaction.
 
         Args:
             note_ids: List of note IDs to update.
@@ -1177,22 +1427,128 @@ class NoteRepository(Repository[Note]):
 
         Returns:
             Number of notes successfully updated.
+
+        Raises:
+            BulkOperationError: If input is empty or operation fails.
+            ValidationError: If any note ID fails path validation.
         """
-        updated_count = 0
+        if not note_ids:
+            raise BulkOperationError(
+                "No note IDs provided for project update",
+                operation="bulk_update_project",
+                code=ErrorCode.BULK_OPERATION_EMPTY_INPUT
+            )
+        if not project or not project.strip():
+            raise BulkOperationError(
+                "Project name is required",
+                operation="bulk_update_project",
+                code=ErrorCode.BULK_OPERATION_EMPTY_INPUT
+            )
 
+        # Validate all IDs first (security: prevent path traversal)
         for note_id in note_ids:
-            try:
-                note = self.get(note_id)
-                if note and note.project != project:
-                    # Delete old Obsidian mirror before update
-                    self._delete_from_obsidian(note.id, note.title, note.project)
+            validate_safe_path_component(note_id, "Note ID")
 
-                    # Update project
+        # Also validate the project name
+        validate_safe_path_component(project, "Project name")
+
+        updated_count = 0
+        failed_ids = []
+        # Track notes that need file updates (for atomic file operations)
+        notes_to_update = []
+
+        try:
+            with self.session_factory() as session:
+                for note_id in note_ids:
+                    # Get the note from database
+                    db_note = session.scalar(select(DBNote).where(DBNote.id == note_id))
+                    if not db_note:
+                        failed_ids.append(note_id)
+                        logger.warning(f"Note {note_id} not found for project update")
+                        continue
+
+                    # Only update if project is different
+                    old_project = db_note.project
+                    if old_project != project:
+                        # Get the full note for file operations
+                        note = self.get(note_id)
+                        if note:
+                            notes_to_update.append({
+                                "note": note,
+                                "old_project": old_project,
+                                "old_title": note.title
+                            })
+
+                        # Update database
+                        db_note.project = project
+                        db_note.updated_at = datetime.datetime.now()
+                        updated_count += 1
+                    else:
+                        # Note already in target project - still counts as "processed"
+                        updated_count += 1
+
+                # Commit all database changes atomically
+                session.commit()
+
+            # Now update files (database is already committed)
+            # Wrap all file operations in a single lock acquisition
+            with self.file_lock:
+                for update_info in notes_to_update:
+                    note = update_info["note"]
+                    old_project = update_info["old_project"]
+                    old_title = update_info["old_title"]
+
+                    # Delete old Obsidian mirror
+                    self._delete_from_obsidian(note.id, old_title, old_project)
+
+                    # Update note's project
                     note.project = project
-                    self.update(note)
-                    updated_count += 1
-            except Exception as e:
-                logger.warning(f"Failed to update project for note {note_id}: {e}")
+                    note.updated_at = datetime.datetime.now()
+
+                    # Write updated markdown file
+                    markdown = self._note_to_markdown(note)
+                    file_path = self.notes_dir / f"{note.id}.md"
+                    with open(file_path, "w", encoding="utf-8") as f:
+                        f.write(markdown)
+
+                    # Mirror to new Obsidian location
+                    self._mirror_to_obsidian(note, markdown)
+
+        except BulkOperationError:
+            raise
+        except Exception as e:
+            logger.error(f"Bulk update project operation failed: {e}")
+            raise BulkOperationError(
+                f"Operation failed: {e}",
+                operation="bulk_update_project",
+                total_count=len(note_ids),
+                success_count=0,
+                failed_ids=note_ids,
+                code=ErrorCode.BULK_OPERATION_FAILED,
+                original_error=e
+            )
 
         logger.info(f"Bulk moved {updated_count} notes to project '{project}'")
+
+        # Raise partial failure if some notes failed
+        if failed_ids:
+            if updated_count == 0:
+                raise BulkOperationError(
+                    "Failed to update project for any notes",
+                    operation="bulk_update_project",
+                    total_count=len(note_ids),
+                    success_count=0,
+                    failed_ids=failed_ids,
+                    code=ErrorCode.BULK_OPERATION_FAILED
+                )
+            else:
+                raise BulkOperationError(
+                    f"Partial success: moved {updated_count} of {len(note_ids)} notes to project",
+                    operation="bulk_update_project",
+                    total_count=len(note_ids),
+                    success_count=updated_count,
+                    failed_ids=failed_ids,
+                    code=ErrorCode.BULK_OPERATION_PARTIAL
+                )
+
         return updated_count

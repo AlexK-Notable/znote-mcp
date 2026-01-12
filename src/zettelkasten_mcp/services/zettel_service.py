@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from zettelkasten_mcp.config import config
 from zettelkasten_mcp.exceptions import (
+    BulkOperationError,
     ErrorCode,
     NoteNotFoundError,
     NoteValidationError,

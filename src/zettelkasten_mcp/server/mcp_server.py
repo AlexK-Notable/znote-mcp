@@ -394,8 +394,19 @@ class ZettelkastenMcpServer:
                     if not results:
                         return f"No notes found matching '{query}'."
 
+                    # Check if fallback mode was used and warn the user
+                    fallback_warning = ""
+                    if results and results[0].get("search_mode") == "fallback":
+                        fallback_warning = (
+                            "⚠️ Note: FTS5 search failed, using basic text matching. "
+                            "Results may be less accurate and slower.\n\n"
+                        )
+                        op["search_mode"] = "fallback"
+                    else:
+                        op["search_mode"] = "fts5"
+
                     # Format results
-                    output = f"Found {len(results)} notes matching '{query}':\n\n"
+                    output = f"{fallback_warning}Found {len(results)} notes matching '{query}':\n\n"
                     for i, result in enumerate(results, 1):
                         output += f"{i}. {result['title']} (ID: {result['id']})\n"
                         output += f"   Relevance: {abs(result['rank']):.2f}\n"
