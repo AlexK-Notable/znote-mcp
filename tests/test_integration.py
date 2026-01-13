@@ -392,9 +392,13 @@ class TestIntegration:
                     tags=["obsidian", "mirror"]
                 )
 
-                # Verify the note was mirrored
-                expected_file = obsidian_path / "test-project" / "Obsidian Test Note.md"
-                assert expected_file.exists(), f"Obsidian mirror file not found: {expected_file}"
+                # Verify the note was mirrored (filename includes ID suffix for uniqueness)
+                # Format: "Title (id_suffix).md" where id_suffix is last 8 chars of note ID
+                project_dir = obsidian_path / "test-project"
+                id_suffix = note.id[-8:]
+                matching_files = list(project_dir.glob(f"Obsidian Test Note ({id_suffix}).md"))
+                assert len(matching_files) == 1, f"Expected 1 mirror file, found {len(matching_files)} in {project_dir}"
+                expected_file = matching_files[0]
 
                 # Verify content
                 with open(expected_file, "r") as f:
@@ -409,8 +413,11 @@ class TestIntegration:
                     project="another-project"
                 )
 
-                expected_file2 = obsidian_path / "another-project" / "Second Obsidian Note.md"
-                assert expected_file2.exists()
+                # Verify second note mirrored with ID suffix
+                project_dir2 = obsidian_path / "another-project"
+                id_suffix2 = note2.id[-8:]
+                matching_files2 = list(project_dir2.glob(f"Second Obsidian Note ({id_suffix2}).md"))
+                assert len(matching_files2) == 1
 
                 # Test bulk sync
                 synced_count = self.zettel_service.sync_to_obsidian()
@@ -419,6 +426,199 @@ class TestIntegration:
             finally:
                 # Restore repository to have no obsidian vault path
                 self.zettel_service.repository.obsidian_vault_path = None
+
+    def test_obsidian_title_collision(self):
+        """Test that notes with colliding sanitized titles create separate files.
+
+        Titles like "Hello: World" and "Hello; World" both sanitize to "Hello_ World"
+        but should create unique files via the ID suffix mechanism.
+        """
+        with tempfile.TemporaryDirectory() as temp_obsidian_dir:
+            obsidian_path = Path(temp_obsidian_dir)
+            self.zettel_service.repository.obsidian_vault_path = obsidian_path
+
+            try:
+                # Create two notes with titles that sanitize to the same string
+                # Colon (:) and semicolon (;) both become underscore (_)
+                note1 = self.zettel_service.create_note(
+                    title="Hello: World",  # Sanitizes to "Hello_ World"
+                    content="First note with colon in title.",
+                    project="collision-test"
+                )
+
+                note2 = self.zettel_service.create_note(
+                    title="Hello; World",  # Also sanitizes to "Hello_ World"
+                    content="Second note with semicolon in title.",
+                    project="collision-test"
+                )
+
+                # Both notes should have unique files in the same directory
+                project_dir = obsidian_path / "collision-test"
+
+                # Find files for each note by their ID suffix
+                id_suffix1 = note1.id[-8:]
+                id_suffix2 = note2.id[-8:]
+
+                files1 = list(project_dir.glob(f"*({id_suffix1}).md"))
+                files2 = list(project_dir.glob(f"*({id_suffix2}).md"))
+
+                assert len(files1) == 1, f"Note 1 should have exactly 1 file, found {len(files1)}"
+                assert len(files2) == 1, f"Note 2 should have exactly 1 file, found {len(files2)}"
+
+                # Verify they are different files
+                assert files1[0] != files2[0], "Collision! Both notes mapped to same file"
+
+                # Verify content is correct in each file
+                with open(files1[0], "r") as f:
+                    content1 = f.read()
+                    assert "First note with colon" in content1
+
+                with open(files2[0], "r") as f:
+                    content2 = f.read()
+                    assert "Second note with semicolon" in content2
+
+                # Verify total files (should be exactly 2)
+                all_files = list(project_dir.glob("*.md"))
+                assert len(all_files) == 2, f"Expected 2 files, found {len(all_files)}: {all_files}"
+
+            finally:
+                self.zettel_service.repository.obsidian_vault_path = None
+
+    def test_get_notes_by_project(self):
+        """Test SQL-level project filtering via get_notes_by_project()."""
+        # Create notes in different projects
+        note1 = self.zettel_service.create_note(
+            title="Alpha Note 1",
+            content="First note in Alpha project.",
+            project="alpha"
+        )
+        note2 = self.zettel_service.create_note(
+            title="Alpha Note 2",
+            content="Second note in Alpha project.",
+            project="alpha"
+        )
+        note3 = self.zettel_service.create_note(
+            title="Beta Note",
+            content="Note in Beta project.",
+            project="beta"
+        )
+        note4 = self.zettel_service.create_note(
+            title="General Note",
+            content="Note with default project.",
+            # No project specified - uses default "general"
+        )
+
+        # Test get_notes_by_project for "alpha"
+        alpha_notes = self.zettel_service.get_notes_by_project("alpha")
+        alpha_ids = [n.id for n in alpha_notes]
+        assert len(alpha_notes) == 2
+        assert note1.id in alpha_ids
+        assert note2.id in alpha_ids
+        assert note3.id not in alpha_ids
+
+        # Test get_notes_by_project for "beta"
+        beta_notes = self.zettel_service.get_notes_by_project("beta")
+        assert len(beta_notes) == 1
+        assert beta_notes[0].id == note3.id
+
+        # Test get_notes_by_project for "general" (default)
+        general_notes = self.zettel_service.get_notes_by_project("general")
+        assert len(general_notes) == 1
+        assert general_notes[0].id == note4.id
+
+        # Test get_notes_by_project for non-existent project
+        empty_notes = self.zettel_service.get_notes_by_project("nonexistent")
+        assert len(empty_notes) == 0
+
+    def test_get_all_notes_pagination(self):
+        """Test pagination in get_all_notes() with limit and offset."""
+        # Create 5 notes
+        notes = []
+        for i in range(5):
+            note = self.zettel_service.create_note(
+                title=f"Paginated Note {i}",
+                content=f"Content for pagination test note {i}.",
+                project="pagination-test"
+            )
+            notes.append(note)
+
+        # Test count_notes
+        total_count = self.zettel_service.count_notes()
+        assert total_count == 5
+
+        # Test get_all with no pagination (should return all)
+        all_notes = self.zettel_service.get_all_notes()
+        assert len(all_notes) == 5
+
+        # Test with limit only
+        limited_notes = self.zettel_service.get_all_notes(limit=2)
+        assert len(limited_notes) == 2
+
+        # Test with offset only
+        offset_notes = self.zettel_service.get_all_notes(offset=2)
+        assert len(offset_notes) == 3
+
+        # Test with both limit and offset (pagination)
+        page1 = self.zettel_service.get_all_notes(limit=2, offset=0)
+        page2 = self.zettel_service.get_all_notes(limit=2, offset=2)
+        page3 = self.zettel_service.get_all_notes(limit=2, offset=4)
+
+        assert len(page1) == 2
+        assert len(page2) == 2
+        assert len(page3) == 1
+
+        # Verify no overlap between pages
+        page1_ids = {n.id for n in page1}
+        page2_ids = {n.id for n in page2}
+        page3_ids = {n.id for n in page3}
+        assert page1_ids.isdisjoint(page2_ids)
+        assert page2_ids.isdisjoint(page3_ids)
+        assert page1_ids.isdisjoint(page3_ids)
+
+        # Test offset beyond total (should return empty)
+        empty_page = self.zettel_service.get_all_notes(limit=10, offset=100)
+        assert len(empty_page) == 0
+
+    def test_search_pagination(self):
+        """Test pagination in search_notes() with limit and offset."""
+        # Create 5 notes with a common tag
+        notes = []
+        for i in range(5):
+            note = self.zettel_service.create_note(
+                title=f"Searchable Note {i}",
+                content=f"Content for search pagination test note {i}.",
+                tags=["search-test"],
+                project="search-pagination"
+            )
+            notes.append(note)
+
+        # Test count_search_results
+        total_count = self.zettel_service.count_search_results(tag="search-test")
+        assert total_count == 5
+
+        # Test search with no pagination
+        all_results = self.zettel_service.search_notes(tag="search-test")
+        assert len(all_results) == 5
+
+        # Test with limit only
+        limited_results = self.zettel_service.search_notes(tag="search-test", limit=2)
+        assert len(limited_results) == 2
+
+        # Test with both limit and offset (pagination)
+        page1 = self.zettel_service.search_notes(tag="search-test", limit=2, offset=0)
+        page2 = self.zettel_service.search_notes(tag="search-test", limit=2, offset=2)
+        page3 = self.zettel_service.search_notes(tag="search-test", limit=2, offset=4)
+
+        assert len(page1) == 2
+        assert len(page2) == 2
+        assert len(page3) == 1
+
+        # Verify no overlap between pages
+        page1_ids = {n.id for n in page1}
+        page2_ids = {n.id for n in page2}
+        page3_ids = {n.id for n in page3}
+        assert page1_ids.isdisjoint(page2_ids)
+        assert page2_ids.isdisjoint(page3_ids)
 
     def test_orphaned_and_central_notes(self):
         """Test finding orphaned notes and central notes."""

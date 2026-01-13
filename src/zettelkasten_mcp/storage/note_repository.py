@@ -4,6 +4,7 @@ import logging
 import os
 import sqlite3
 import threading
+import weakref
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
@@ -15,7 +16,7 @@ from sqlalchemy.orm import Session, joinedload
 from zettelkasten_mcp.config import config
 from zettelkasten_mcp.models.db_models import (Base, DBLink, DBNote, DBTag,
                                             get_session_factory, init_db,
-                                            rebuild_fts_index)
+                                            note_tags, rebuild_fts_index)
 from zettelkasten_mcp.models.schema import Link, LinkType, Note, NoteType, Tag, validate_safe_path_component
 from zettelkasten_mcp.storage.base import Repository
 from zettelkasten_mcp.exceptions import (
@@ -55,12 +56,38 @@ class NoteRepository(Repository[Note]):
         self.engine = init_db()
         self.session_factory = get_session_factory(self.engine)
 
-        # File access lock
+        # File access lock (for bulk operations on multiple files)
         self.file_lock = threading.RLock()
+
+        # Per-note locks to prevent update-delete races (uses WeakValueDictionary
+        # so locks are garbage collected when no longer held by any thread)
+        self._note_locks: weakref.WeakValueDictionary[str, threading.RLock] = (
+            weakref.WeakValueDictionary()
+        )
+        self._note_locks_lock = threading.Lock()  # Protects _note_locks dict access
 
         # Initialize by rebuilding index if needed
         self.rebuild_index_if_needed()
-    
+
+    def _get_note_lock(self, note_id: str) -> threading.RLock:
+        """Get or create a lock for a specific note.
+
+        Uses WeakValueDictionary so locks are garbage collected when no longer
+        held. This prevents memory leaks while providing per-note synchronization.
+
+        Args:
+            note_id: The ID of the note to lock.
+
+        Returns:
+            A reentrant lock for the specified note.
+        """
+        with self._note_locks_lock:
+            lock = self._note_locks.get(note_id)
+            if lock is None:
+                lock = threading.RLock()
+                self._note_locks[note_id] = lock
+            return lock
+
     def rebuild_index_if_needed(self) -> None:
         """Rebuild the database index from files if needed."""
         # Count notes in database
@@ -271,6 +298,7 @@ class NoteRepository(Repository[Note]):
                 db_note.content = note.content
                 db_note.note_type = note.note_type.value
                 db_note.updated_at = note.updated_at
+                db_note.project = note.project
                 # Clear existing links and tags to rebuild them (parameterized queries)
                 session.execute(text("DELETE FROM links WHERE source_id = :note_id"), {"note_id": note.id})
                 session.execute(text("DELETE FROM note_tags WHERE note_id = :note_id"), {"note_id": note.id})
@@ -282,22 +310,16 @@ class NoteRepository(Repository[Note]):
                     content=note.content,
                     note_type=note.note_type.value,
                     created_at=note.created_at,
-                    updated_at=note.updated_at
+                    updated_at=note.updated_at,
+                    project=note.project
                 )
                 session.add(db_note)
                 
             session.flush()  # Flush to get the note ID
             
-            # Add tags
+            # Add tags (using atomic get-or-create to handle race conditions)
             for tag in note.tags:
-                # Check if tag exists
-                db_tag = session.scalar(
-                    select(DBTag).where(DBTag.name == tag.name)
-                )
-                if not db_tag:
-                    db_tag = DBTag(name=tag.name)
-                    session.add(db_tag)
-                    session.flush()  # Flush to get the tag ID
+                db_tag = self._get_or_create_tag(session, tag.name)
                 db_note.tags.append(db_tag)
             
             # Add links
@@ -323,6 +345,28 @@ class NoteRepository(Repository[Note]):
             
             # Commit changes
             session.commit()
+
+    def _get_or_create_tag(self, session, tag_name: str) -> DBTag:
+        """Atomically get or create a tag to handle concurrent creation race.
+
+        Uses INSERT OR IGNORE followed by SELECT to safely handle the case
+        where two transactions try to create the same tag simultaneously.
+
+        Args:
+            session: The SQLAlchemy session.
+            tag_name: The name of the tag.
+
+        Returns:
+            The DBTag object (either existing or newly created).
+        """
+        # Use INSERT OR IGNORE to avoid integrity errors from race conditions
+        session.execute(
+            text("INSERT OR IGNORE INTO tags (name) VALUES (:name)"),
+            {"name": tag_name}
+        )
+        # Now SELECT - the tag definitely exists (either we created it or it existed)
+        db_tag = session.scalar(select(DBTag).where(DBTag.name == tag_name))
+        return db_tag
 
     def _note_to_markdown(self, note: Note) -> str:
         """Convert a note to markdown with frontmatter."""
@@ -381,8 +425,9 @@ class NoteRepository(Repository[Note]):
         """Mirror a note to the Obsidian vault if configured.
 
         Creates a copy of the note in the Obsidian vault using the note's project
-        as subdirectory and the note's title as the filename (sanitized for
-        filesystem compatibility).
+        as subdirectory. Filename includes sanitized title + ID suffix to prevent
+        collisions (e.g., "Hello: World" and "Hello; World" both sanitize to
+        "Hello_ World" but get unique filenames via ID suffix).
         """
         if not self.obsidian_vault_path:
             return
@@ -399,15 +444,19 @@ class NoteRepository(Repository[Note]):
             for c in note.title
         ).strip()
 
-        # Ensure we have a valid filename
-        if not safe_title:
-            safe_title = note.id
+        # Create unique filename with ID suffix to prevent title collisions
+        # Use last 8 chars of ID for brevity while maintaining uniqueness
+        id_suffix = note.id[-8:] if len(note.id) >= 8 else note.id
+        if safe_title:
+            safe_filename = f"{safe_title} ({id_suffix})"
+        else:
+            safe_filename = note.id
 
         # Create project subdirectory
         project_dir = self.obsidian_vault_path / safe_project
         project_dir.mkdir(parents=True, exist_ok=True)
 
-        obsidian_file_path = project_dir / f"{safe_title}.md"
+        obsidian_file_path = project_dir / f"{safe_filename}.md"
 
         try:
             with open(obsidian_file_path, "w", encoding="utf-8") as f:
@@ -421,48 +470,53 @@ class NoteRepository(Repository[Note]):
                                project: Optional[str] = None) -> None:
         """Delete a note's mirror from the Obsidian vault if configured.
 
-        Tries to delete by project/title (primary) and searches all subdirs (fallback).
+        Searches for files with ID suffix pattern: "Title (id_suffix).md"
+        Uses project directory if known, otherwise searches all subdirectories.
         """
         if not self.obsidian_vault_path:
             return
 
-        files_to_try = []
+        # Get ID suffix used in filename
+        id_suffix = note_id[-8:] if len(note_id) >= 8 else note_id
 
-        # Sanitize title for filename matching
-        safe_title = None
-        if title:
-            safe_title = "".join(
-                c if c.isalnum() or c in " -_" else "_"
-                for c in title
-            ).strip()
-
-        # If we know the project, look there first
-        if project and safe_title:
+        # Determine which directories to search
+        search_dirs: List[Path] = []
+        if project:
             safe_project = "".join(
                 c if c.isalnum() or c in " -_" else "_"
                 for c in project
             ).strip() or "general"
-            files_to_try.append(self.obsidian_vault_path / safe_project / f"{safe_title}.md")
+            project_dir = self.obsidian_vault_path / safe_project
+            if project_dir.exists():
+                search_dirs.append(project_dir)
+        
+        # If no project specified or project dir doesn't exist, search all subdirs
+        if not search_dirs:
+            search_dirs = [
+                d for d in self.obsidian_vault_path.iterdir() 
+                if d.is_dir()
+            ]
 
-        # Search all project subdirectories for the file
-        if safe_title:
-            for subdir in self.obsidian_vault_path.iterdir():
-                if subdir.is_dir():
-                    files_to_try.append(subdir / f"{safe_title}.md")
-
-        # Also try ID-based filename in all subdirectories
-        for subdir in self.obsidian_vault_path.iterdir():
-            if subdir.is_dir():
-                files_to_try.append(subdir / f"{note_id}.md")
-
-        for file_path in files_to_try:
-            if file_path.exists():
+        # Search for file with matching ID suffix pattern
+        for search_dir in search_dirs:
+            # Primary: Find by ID suffix glob pattern
+            for file_path in search_dir.glob(f"*({id_suffix}).md"):
                 try:
-                    os.remove(file_path)
+                    file_path.unlink()
                     logger.debug(f"Deleted Obsidian mirror: {file_path}")
-                    return
-                except IOError as e:
+                    return  # Found and deleted
+                except OSError as e:
                     logger.warning(f"Failed to delete Obsidian mirror {file_path}: {e}")
+
+            # Fallback: Check for legacy filename (just ID, no title)
+            legacy_path = search_dir / f"{note_id}.md"
+            if legacy_path.exists():
+                try:
+                    legacy_path.unlink()
+                    logger.debug(f"Deleted legacy Obsidian mirror: {legacy_path}")
+                    return
+                except OSError as e:
+                    logger.warning(f"Failed to delete legacy Obsidian mirror {legacy_path}: {e}")
 
     def create(self, note: Note) -> Note:
         """Create a new note."""
@@ -525,19 +579,42 @@ class NoteRepository(Repository[Note]):
                 return None
             return self.get(db_note.id)
     
-    def get_all(self) -> List[Note]:
-        """Get all notes."""
+    def get_all(
+        self,
+        limit: Optional[int] = None,
+        offset: int = 0
+    ) -> List[Note]:
+        """Get all notes with optional pagination.
+
+        Args:
+            limit: Maximum number of notes to return. None for all notes.
+            offset: Number of notes to skip (for pagination).
+
+        Returns:
+            List of Note objects.
+
+        Note:
+            For large vaults, use limit/offset to avoid memory issues.
+            Use count_notes() to get total count for pagination UI.
+        """
         with self.session_factory() as session:
-            # Get all notes with eager loading of tags and links
+            # Build query with eager loading
             query = select(DBNote).options(
                 joinedload(DBNote.tags),
                 joinedload(DBNote.outgoing_links),
                 joinedload(DBNote.incoming_links)
-            )
+            ).order_by(DBNote.created_at.desc())
+
+            # Apply pagination at SQL level
+            if offset > 0:
+                query = query.offset(offset)
+            if limit is not None:
+                query = query.limit(limit)
+
             result = session.execute(query)
             # Apply unique() to handle the duplicate rows from eager loading
             db_notes = result.unique().scalars().all()
-            
+
             # Process notes in batches to reduce memory usage
             batch_size = 50
             all_notes = []
@@ -566,90 +643,137 @@ class NoteRepository(Repository[Note]):
                     f"{failed_ids[:5]}{'...' if len(failed_ids) > 5 else ''}"
                 )
             return all_notes
-    
+
+    def count_notes(self) -> int:
+        """Get total count of notes in the repository.
+
+        Useful for pagination UI when using get_all() with limit/offset.
+
+        Returns:
+            Total number of notes.
+        """
+        with self.session_factory() as session:
+            result = session.execute(select(func.count(DBNote.id)))
+            return result.scalar() or 0
+
+    def get_by_project(self, project: str) -> List[Note]:
+        """Get all notes for a specific project using SQL-level filtering.
+
+        This method queries the database directly for notes matching the project,
+        avoiding full file scans. Much faster than filtering get_all() results.
+
+        Args:
+            project: The project name to filter by.
+
+        Returns:
+            List of Note objects belonging to the specified project.
+        """
+        with self.session_factory() as session:
+            query = select(DBNote).where(DBNote.project == project).options(
+                joinedload(DBNote.tags),
+                joinedload(DBNote.outgoing_links),
+                joinedload(DBNote.incoming_links)
+            )
+            result = session.execute(query)
+            db_notes = result.unique().scalars().all()
+
+            notes = []
+            for db_note in db_notes:
+                try:
+                    note = self.get(db_note.id)
+                    if note:
+                        notes.append(note)
+                except (IOError, OSError, ValueError, yaml.YAMLError) as e:
+                    logger.error(f"Error loading note {db_note.id}: {e}")
+
+            return notes
+
     def update(self, note: Note) -> Note:
-        """Update a note."""
-        # Check if note exists
-        existing_note = self.get(note.id)
-        if not existing_note:
-            raise ValueError(f"Note with ID {note.id} does not exist")
+        """Update a note.
 
-        # If title or project changed, delete old Obsidian mirror (will be recreated)
-        if existing_note.title != note.title or existing_note.project != note.project:
-            self._delete_from_obsidian(note.id, existing_note.title, existing_note.project)
+        Uses per-note locking to prevent race conditions with concurrent
+        delete operations on the same note.
+        """
+        # Acquire per-note lock to prevent race with delete
+        note_lock = self._get_note_lock(note.id)
+        with note_lock:
+            # Check if note exists
+            existing_note = self.get(note.id)
+            if not existing_note:
+                raise ValueError(f"Note with ID {note.id} does not exist")
 
-        # Update timestamp
-        note.updated_at = datetime.datetime.now()
+            # If title or project changed, delete old Obsidian mirror (will be recreated)
+            if existing_note.title != note.title or existing_note.project != note.project:
+                self._delete_from_obsidian(note.id, existing_note.title, existing_note.project)
 
-        # Convert note to markdown
-        markdown = self._note_to_markdown(note)
+            # Update timestamp
+            note.updated_at = datetime.datetime.now()
 
-        # Write to file
-        file_path = self.notes_dir / f"{note.id}.md"
-        try:
-            with self.file_lock:
-                with open(file_path, "w", encoding="utf-8") as f:
-                    f.write(markdown)
-        except IOError as e:
-            raise IOError(f"Failed to write note to {file_path}: {e}")
+            # Convert note to markdown
+            markdown = self._note_to_markdown(note)
 
-        # Mirror to Obsidian vault if configured
-        self._mirror_to_obsidian(note, markdown)
-        
-        try:
-            # Re-index in database
-            with self.session_factory() as session:
-                # Get the existing note from the database
-                db_note = session.scalar(select(DBNote).where(DBNote.id == note.id))
-                if db_note:
-                    # Update the note fields
-                    db_note.title = note.title
-                    db_note.content = note.content
-                    db_note.note_type = note.note_type.value
-                    db_note.updated_at = note.updated_at
-                    
-                    # Clear existing tags
-                    db_note.tags = []
-                    
-                    # Add tags
-                    for tag in note.tags:
-                        # Check if tag exists
-                        db_tag = session.scalar(
-                            select(DBTag).where(DBTag.name == tag.name)
-                        )
-                        if not db_tag:
-                            db_tag = DBTag(name=tag.name)
-                            session.add(db_tag)
-                            session.flush()
-                        db_note.tags.append(db_tag)
-                    
-                    # For links, we'll delete existing links and add the new ones (parameterized)
-                    session.execute(text("DELETE FROM links WHERE source_id = :note_id"), {"note_id": note.id})
-                    
-                    # Add new links
-                    for link in note.links:
-                        db_link = DBLink(
-                            source_id=link.source_id,
-                            target_id=link.target_id,
-                            link_type=link.link_type.value,
-                            description=link.description,
-                            created_at=link.created_at
-                        )
-                        session.add(db_link)
-                    
-                    session.commit()
-                else:
-                    # This would be unusual, but handle it by creating a new database record
-                    self._index_note(note)
-        except Exception as e:
-            # Log and re-raise the exception
-            logger.error(f"Failed to update note in database: {e}")
-            raise
-        
-        return note
+            # Write to file
+            file_path = self.notes_dir / f"{note.id}.md"
+            try:
+                with self.file_lock:
+                    with open(file_path, "w", encoding="utf-8") as f:
+                        f.write(markdown)
+            except IOError as e:
+                raise IOError(f"Failed to write note to {file_path}: {e}")
+
+            # Mirror to Obsidian vault if configured
+            self._mirror_to_obsidian(note, markdown)
+
+            try:
+                # Re-index in database
+                with self.session_factory() as session:
+                    # Get the existing note from the database
+                    db_note = session.scalar(select(DBNote).where(DBNote.id == note.id))
+                    if db_note:
+                        # Update the note fields
+                        db_note.title = note.title
+                        db_note.content = note.content
+                        db_note.note_type = note.note_type.value
+                        db_note.updated_at = note.updated_at
+
+                        # Clear existing tags
+                        db_note.tags = []
+
+                        # Add tags (using atomic get-or-create to handle race conditions)
+                        for tag in note.tags:
+                            db_tag = self._get_or_create_tag(session, tag.name)
+                            db_note.tags.append(db_tag)
+
+                        # For links, we'll delete existing links and add the new ones (parameterized)
+                        session.execute(text("DELETE FROM links WHERE source_id = :note_id"), {"note_id": note.id})
+
+                        # Add new links
+                        for link in note.links:
+                            db_link = DBLink(
+                                source_id=link.source_id,
+                                target_id=link.target_id,
+                                link_type=link.link_type.value,
+                                description=link.description,
+                                created_at=link.created_at
+                            )
+                            session.add(db_link)
+
+                        session.commit()
+                    else:
+                        # This would be unusual, but handle it by creating a new database record
+                        self._index_note(note)
+            except Exception as e:
+                # Log and re-raise the exception
+                logger.error(f"Failed to update note in database: {e}")
+                raise
+
+            return note
     
     def delete(self, id: str) -> None:
         """Delete a note by ID.
+
+        Uses per-note locking to prevent race conditions with concurrent
+        update operations on the same note.
 
         Raises:
             ValueError: If the ID is invalid or the note doesn't exist
@@ -657,45 +781,64 @@ class NoteRepository(Repository[Note]):
         # Validate ID to prevent path traversal attacks
         validate_safe_path_component(id, "Note ID")
 
-        # Check if note exists and get its title for Obsidian mirror deletion
-        file_path = self.notes_dir / f"{id}.md"
-        if not file_path.exists():
-            raise ValueError(f"Note with ID {id} does not exist")
+        # Acquire per-note lock to prevent race with update
+        note_lock = self._get_note_lock(id)
+        with note_lock:
+            # Check if note exists and get its title for Obsidian mirror deletion
+            file_path = self.notes_dir / f"{id}.md"
+            if not file_path.exists():
+                raise ValueError(f"Note with ID {id} does not exist")
 
-        # Get the note's title and project before deleting (for Obsidian mirror)
-        note_title = None
-        note_project = None
-        try:
-            note = self.get(id)
-            if note:
-                note_title = note.title
-                note_project = note.project
-        except (IOError, OSError, ValueError, yaml.YAMLError) as e:
-            # If we can't read the note, log and continue with deletion
-            # The note file exists but may be corrupted/unreadable
-            logger.warning(f"Cannot read note {id} for Obsidian cleanup: {e}")
-        # Let system errors and bugs propagate
+            # Get the note's title and project before deleting (for Obsidian mirror)
+            note_title = None
+            note_project = None
+            try:
+                note = self.get(id)
+                if note:
+                    note_title = note.title
+                    note_project = note.project
+            except (IOError, OSError, ValueError, yaml.YAMLError) as e:
+                # If we can't read the note, log and continue with deletion
+                # The note file exists but may be corrupted/unreadable
+                logger.warning(f"Cannot read note {id} for Obsidian cleanup: {e}")
+            # Let system errors and bugs propagate
 
-        # Delete from file system
-        try:
-            with self.file_lock:
-                os.remove(file_path)
-        except IOError as e:
-            raise IOError(f"Failed to delete note {id}: {e}")
+            # Delete from file system
+            try:
+                with self.file_lock:
+                    os.remove(file_path)
+            except IOError as e:
+                raise IOError(f"Failed to delete note {id}: {e}")
 
-        # Delete from Obsidian vault if configured
-        self._delete_from_obsidian(id, note_title, note_project)
+            # Delete from Obsidian vault if configured
+            self._delete_from_obsidian(id, note_title, note_project)
 
-        # Delete from database (using parameterized queries to prevent SQL injection)
-        with self.session_factory() as session:
-            # Delete note and its relationships
-            session.execute(text("DELETE FROM links WHERE source_id = :note_id OR target_id = :note_id"), {"note_id": id})
-            session.execute(text("DELETE FROM note_tags WHERE note_id = :note_id"), {"note_id": id})
-            session.execute(text("DELETE FROM notes WHERE id = :note_id"), {"note_id": id})
-            session.commit()
+            # Delete from database (using parameterized queries to prevent SQL injection)
+            with self.session_factory() as session:
+                # Delete note and its relationships
+                session.execute(text("DELETE FROM links WHERE source_id = :note_id OR target_id = :note_id"), {"note_id": id})
+                session.execute(text("DELETE FROM note_tags WHERE note_id = :note_id"), {"note_id": id})
+                session.execute(text("DELETE FROM notes WHERE id = :note_id"), {"note_id": id})
+                session.commit()
     
-    def search(self, **kwargs: Any) -> List[Note]:
-        """Search for notes based on criteria."""
+    def search(
+        self,
+        limit: Optional[int] = None,
+        offset: int = 0,
+        **kwargs: Any
+    ) -> List[Note]:
+        """Search for notes based on criteria with optional pagination.
+
+        Args:
+            limit: Maximum number of results to return. None for all matches.
+            offset: Number of results to skip (for pagination).
+            **kwargs: Search criteria (content, title, note_type, tag, tags,
+                     linked_to, linked_from, created_after, created_before,
+                     updated_after, updated_before).
+
+        Returns:
+            List of matching Note objects.
+        """
         with self.session_factory() as session:
             query = select(DBNote).options(
                 joinedload(DBNote.tags),
@@ -714,7 +857,6 @@ class NoteRepository(Repository[Note]):
                 )
             if "title" in kwargs:
                 search_title = kwargs['title']
-                # query = query.where(DBNote.title.like(f"%{search_title}%"))
                 # Use case-insensitive search with func.lower()
                 query = query.where(func.lower(DBNote.title).like(f"%{search_title.lower()}%"))
             if "note_type" in kwargs:
@@ -745,16 +887,85 @@ class NoteRepository(Repository[Note]):
                 query = query.where(DBNote.updated_at >= kwargs["updated_after"])
             if "updated_before" in kwargs:
                 query = query.where(DBNote.updated_at <= kwargs["updated_before"])
+
+            # Order by creation date (newest first) for consistent pagination
+            query = query.order_by(DBNote.created_at.desc())
+
+            # Apply pagination at SQL level
+            if offset > 0:
+                query = query.offset(offset)
+            if limit is not None:
+                query = query.limit(limit)
+
             # Execute query and apply unique() to handle duplicates from joins
             result = session.execute(query)
             db_notes = result.unique().scalars().all()
-        # Load notes from file system
+
+        # Load notes from file system (hybrid approach - file is source of truth)
         notes = []
         for db_note in db_notes:
             note = self.get(db_note.id)
             if note:
                 notes.append(note)
         return notes
+
+    def count_search_results(self, **kwargs: Any) -> int:
+        """Count notes matching search criteria without loading them.
+
+        Useful for pagination UI when using search() with limit/offset.
+
+        Args:
+            **kwargs: Same search criteria as search().
+
+        Returns:
+            Total count of matching notes.
+        """
+        with self.session_factory() as session:
+            query = select(func.count(DBNote.id.distinct()))
+
+            # Apply same filters as search()
+            if "content" in kwargs:
+                search_term = kwargs['content']
+                query = query.where(
+                    or_(
+                        DBNote.content.like(f"%{search_term}%"),
+                        DBNote.title.like(f"%{search_term}%")
+                    )
+                )
+            if "title" in kwargs:
+                search_title = kwargs['title']
+                query = query.where(func.lower(DBNote.title).like(f"%{search_title.lower()}%"))
+            if "note_type" in kwargs:
+                note_type = (
+                    kwargs["note_type"].value
+                    if isinstance(kwargs["note_type"], NoteType)
+                    else kwargs["note_type"]
+                )
+                query = query.where(DBNote.note_type == note_type)
+            if "tag" in kwargs:
+                tag_name = kwargs["tag"]
+                query = query.join(DBNote.tags).where(DBTag.name == tag_name)
+            if "tags" in kwargs:
+                tag_names = kwargs["tags"]
+                if isinstance(tag_names, list):
+                    query = query.join(DBNote.tags).where(DBTag.name.in_(tag_names))
+            if "linked_to" in kwargs:
+                target_id = kwargs["linked_to"]
+                query = query.join(DBNote.outgoing_links).where(DBLink.target_id == target_id)
+            if "linked_from" in kwargs:
+                source_id = kwargs["linked_from"]
+                query = query.join(DBNote.incoming_links).where(DBLink.source_id == source_id)
+            if "created_after" in kwargs:
+                query = query.where(DBNote.created_at >= kwargs["created_after"])
+            if "created_before" in kwargs:
+                query = query.where(DBNote.created_at <= kwargs["created_before"])
+            if "updated_after" in kwargs:
+                query = query.where(DBNote.updated_at >= kwargs["updated_after"])
+            if "updated_before" in kwargs:
+                query = query.where(DBNote.updated_at <= kwargs["updated_before"])
+
+            result = session.execute(query)
+            return result.scalar() or 0
 
     def fts_search(
         self,
@@ -964,6 +1175,73 @@ class NoteRepository(Repository[Note]):
                 if note:
                     notes.append(note)
             return notes
+
+    def find_similarity_candidates(self, note_id: str) -> List[Note]:
+        """Find candidate notes for similarity comparison using SQL filtering.
+
+        Returns notes that share at least one tag with the given note OR have
+        a direct link to/from it. This reduces O(N) comparisons to O(C) where
+        C is the number of candidates.
+
+        Args:
+            note_id: The ID of the reference note.
+
+        Returns:
+            List of candidate Note objects (excludes the reference note itself).
+        """
+        with self.session_factory() as session:
+            # Get the reference note's tag IDs
+            note_tag_ids = session.execute(
+                select(note_tags.c.tag_id).where(note_tags.c.note_id == note_id)
+            ).scalars().all()
+
+            # Find notes with shared tags
+            shared_tag_note_ids = set()
+            if note_tag_ids:
+                result = session.execute(
+                    select(note_tags.c.note_id.distinct())
+                    .where(note_tags.c.tag_id.in_(note_tag_ids))
+                    .where(note_tags.c.note_id != note_id)
+                )
+                shared_tag_note_ids = {row[0] for row in result.all()}
+
+            # Find notes with direct links to/from this note
+            linked_note_ids = set()
+            # Outgoing links (notes this note links to)
+            outgoing = session.execute(
+                select(DBLink.target_id).where(DBLink.source_id == note_id)
+            ).scalars().all()
+            linked_note_ids.update(outgoing)
+
+            # Incoming links (notes that link to this note)
+            incoming = session.execute(
+                select(DBLink.source_id).where(DBLink.target_id == note_id)
+            ).scalars().all()
+            linked_note_ids.update(incoming)
+
+            # Notes that share common link targets (linked to same notes)
+            if outgoing:
+                common_target_notes = session.execute(
+                    select(DBLink.source_id.distinct())
+                    .where(DBLink.target_id.in_(outgoing))
+                    .where(DBLink.source_id != note_id)
+                ).scalars().all()
+                linked_note_ids.update(common_target_notes)
+
+            # Combine all candidate IDs
+            candidate_ids = shared_tag_note_ids | linked_note_ids
+
+        # Load candidate notes from file system
+        candidates = []
+        for cid in candidate_ids:
+            try:
+                note = self.get(cid)
+                if note:
+                    candidates.append(note)
+            except (IOError, OSError, ValueError, yaml.YAMLError) as e:
+                logger.warning(f"Failed to load candidate note {cid}: {e}")
+
+        return candidates
     
     def get_all_tags(self) -> List[Tag]:
         """Get all tags in the system."""
@@ -1094,15 +1372,9 @@ class NoteRepository(Repository[Note]):
                         session.add(db_note)
                         session.flush()
 
-                        # Add tags
+                        # Add tags (using atomic get-or-create to handle race conditions)
                         for tag in note.tags:
-                            db_tag = session.scalar(
-                                select(DBTag).where(DBTag.name == tag.name)
-                            )
-                            if not db_tag:
-                                db_tag = DBTag(name=tag.name)
-                                session.add(db_tag)
-                                session.flush()
+                            db_tag = self._get_or_create_tag(session, tag.name)
                             db_note.tags.append(db_tag)
 
                         # Add links
@@ -1291,18 +1563,11 @@ class NoteRepository(Repository[Note]):
                     # Get existing tag names for this note
                     existing_tag_names = {tag.name for tag in db_note.tags}
 
-                    # Add new tags (avoiding duplicates)
+                    # Add new tags (avoiding duplicates, using atomic get-or-create)
                     tags_added = False
                     for tag_name in tags:
                         if tag_name not in existing_tag_names:
-                            # Check if tag exists in database
-                            db_tag = session.scalar(
-                                select(DBTag).where(DBTag.name == tag_name)
-                            )
-                            if not db_tag:
-                                db_tag = DBTag(name=tag_name)
-                                session.add(db_tag)
-                                session.flush()
+                            db_tag = self._get_or_create_tag(session, tag_name)
                             db_note.tags.append(db_tag)
                             existing_tag_names.add(tag_name)
                             tags_added = True

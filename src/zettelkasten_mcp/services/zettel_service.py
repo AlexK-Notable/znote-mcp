@@ -113,13 +113,59 @@ class ZettelService:
         """Delete a note."""
         self.repository.delete(note_id)
     
-    def get_all_notes(self) -> List[Note]:
-        """Get all notes."""
-        return self.repository.get_all()
-    
+    def get_all_notes(
+        self,
+        limit: Optional[int] = None,
+        offset: int = 0
+    ) -> List[Note]:
+        """Get all notes with optional pagination.
+
+        Args:
+            limit: Maximum number of notes to return. None for all notes.
+            offset: Number of notes to skip (for pagination).
+
+        Returns:
+            List of Note objects, ordered by creation date (newest first).
+        """
+        return self.repository.get_all(limit=limit, offset=offset)
+
+    def count_notes(self) -> int:
+        """Get total count of notes in the repository.
+
+        Useful for pagination when using get_all_notes() with limit/offset.
+
+        Returns:
+            Total number of notes.
+        """
+        return self.repository.count_notes()
+
+    def get_notes_by_project(self, project: str) -> List[Note]:
+        """Get all notes for a specific project using SQL-level filtering.
+
+        Args:
+            project: The project name to filter by.
+
+        Returns:
+            List of Note objects belonging to the specified project.
+        """
+        return self.repository.get_by_project(project)
+
     def search_notes(self, **kwargs: Any) -> List[Note]:
         """Search for notes based on criteria."""
         return self.repository.search(**kwargs)
+
+    def count_search_results(self, **kwargs: Any) -> int:
+        """Count notes matching search criteria without loading them.
+
+        Useful for pagination UI when using search_notes() with limit/offset.
+
+        Args:
+            **kwargs: Same search criteria as search_notes().
+
+        Returns:
+            Total count of matching notes.
+        """
+        return self.repository.count_search_results(**kwargs)
     
     def get_notes_by_tag(self, tag: str) -> List[Note]:
         """Get notes by tag."""
@@ -313,42 +359,46 @@ class ZettelService:
         return self.repository.rebuild_fts()
 
     def find_similar_notes(self, note_id: str, threshold: float = 0.5) -> List[Tuple[Note, float]]:
-        """Find notes similar to the given note based on shared tags and links."""
+        """Find notes similar to the given note based on shared tags and links.
+
+        Uses SQL-optimized candidate selection to avoid O(N) file reads.
+        Only notes with at least one shared tag or direct link are considered.
+        """
         note = self.repository.get(note_id)
         if not note:
             raise NoteNotFoundError(note_id)
-        
-        # Get all notes
-        all_notes = self.repository.get_all()
+
+        # Get candidates with shared tags or direct links (SQL-optimized)
+        candidates = self.repository.find_similarity_candidates(note_id)
         results = []
-        
+
         # Set of this note's tags and links
         note_tags = {tag.name for tag in note.tags}
         note_links = {link.target_id for link in note.links}
-        
-        # Add notes linked to this note
+
+        # Build set of note IDs that link to this note
         incoming_notes = self.repository.find_linked_notes(note_id, "incoming")
         note_incoming = {n.id for n in incoming_notes}
-        
-        # For each note, calculate similarity
-        for other_note in all_notes:
+
+        # For each candidate, calculate similarity
+        for other_note in candidates:
             if other_note.id == note_id:
                 continue
-            
+
             # Calculate tag overlap
             other_tags = {tag.name for tag in other_note.tags}
             tag_overlap = len(note_tags.intersection(other_tags))
-            
+
             # Calculate link overlap (outgoing)
             other_links = {link.target_id for link in other_note.links}
             link_overlap = len(note_links.intersection(other_links))
-            
+
             # Check if other note links to this note
             incoming_overlap = 1 if other_note.id in note_incoming else 0
-            
+
             # Check if this note links to other note
             outgoing_overlap = 1 if other_note.id in note_links else 0
-            
+
             # Calculate similarity score
             # Weight: 40% tags, 20% outgoing links, 20% incoming links, 20% direct connections
             total_possible = (
@@ -357,7 +407,7 @@ class ZettelService:
                 1 * 0.2 +  # Possible incoming link
                 1 * 0.2    # Possible outgoing link
             )
-            
+
             # Avoid division by zero
             if total_possible == 0:
                 similarity = 0.0
@@ -368,10 +418,10 @@ class ZettelService:
                     (incoming_overlap * 0.2) +
                     (outgoing_overlap * 0.2)
                 ) / total_possible
-            
+
             if similarity >= threshold:
                 results.append((other_note, similarity))
-        
+
         # Sort by similarity (descending)
         results.sort(key=lambda x: x[1], reverse=True)
         return results

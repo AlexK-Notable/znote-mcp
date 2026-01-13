@@ -2,7 +2,7 @@
 import logging
 from typing import Dict, List, Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from zettelkasten_mcp.models.db_models import DBNote, DBTag, note_tags
 from zettelkasten_mcp.models.schema import Tag
@@ -35,14 +35,14 @@ class TagRepository:
             The Tag object.
         """
         with self.session_factory() as session:
-            db_tag = session.scalar(
-                select(DBTag).where(DBTag.name == tag_name)
+            # Use INSERT OR IGNORE to handle concurrent creation race
+            session.execute(
+                text("INSERT OR IGNORE INTO tags (name) VALUES (:name)"),
+                {"name": tag_name}
             )
-            if not db_tag:
-                db_tag = DBTag(name=tag_name)
-                session.add(db_tag)
-                session.commit()
-
+            session.commit()
+            # Now SELECT - the tag definitely exists
+            db_tag = session.scalar(select(DBTag).where(DBTag.name == tag_name))
             return Tag(name=db_tag.name)
 
     def get(self, tag_name: str) -> Optional[Tag]:
@@ -181,14 +181,12 @@ class TagRepository:
             tag_name: The tag name.
         """
         with self.session_factory() as session:
-            # Get or create the tag
-            db_tag = session.scalar(
-                select(DBTag).where(DBTag.name == tag_name)
+            # Get or create the tag (using INSERT OR IGNORE to handle race conditions)
+            session.execute(
+                text("INSERT OR IGNORE INTO tags (name) VALUES (:name)"),
+                {"name": tag_name}
             )
-            if not db_tag:
-                db_tag = DBTag(name=tag_name)
-                session.add(db_tag)
-                session.flush()
+            db_tag = session.scalar(select(DBTag).where(DBTag.name == tag_name))
 
             # Get the note
             db_note = session.scalar(

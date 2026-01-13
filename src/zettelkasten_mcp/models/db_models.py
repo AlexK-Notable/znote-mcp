@@ -30,7 +30,8 @@ class DBNote(Base):
     note_type = Column(String(50), default=NoteType.PERMANENT.value, nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.datetime.now, nullable=False)
     updated_at = Column(DateTime, default=datetime.datetime.now, nullable=False)
-    
+    project = Column(String(255), default="general", nullable=False, index=True)
+
     # Relationships
     tags = relationship(
         "DBTag", secondary=note_tags, back_populates="notes"
@@ -104,10 +105,33 @@ def init_db() -> None:
     engine = create_engine(config.get_db_url())
     Base.metadata.create_all(engine)
 
+    # Run migrations for schema updates
+    _migrate_add_project_column(engine)
+
     # Create FTS5 virtual table for full-text search
     init_fts5(engine)
 
     return engine
+
+
+def _migrate_add_project_column(engine) -> None:
+    """Migration: Add project column to existing databases.
+
+    SQLite doesn't support IF NOT EXISTS for ADD COLUMN, so we check
+    the schema first. This is idempotent and safe to run multiple times.
+    """
+    from sqlalchemy import text, inspect
+
+    inspector = inspect(engine)
+    columns = [col['name'] for col in inspector.get_columns('notes')]
+
+    if 'project' not in columns:
+        with engine.connect() as conn:
+            conn.execute(text(
+                "ALTER TABLE notes ADD COLUMN project VARCHAR(255) "
+                "NOT NULL DEFAULT 'general'"
+            ))
+            conn.commit()
 
 
 def init_fts5(engine) -> None:
