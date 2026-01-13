@@ -2,6 +2,7 @@
 import datetime
 import logging
 import os
+import shutil
 import sqlite3
 import threading
 import weakref
@@ -11,6 +12,8 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Union
 import frontmatter
 import yaml
 from sqlalchemy import and_, create_engine, func, or_, select, text
+from sqlalchemy.exc import DatabaseError as SQLAlchemyDatabaseError
+from sqlalchemy.exc import OperationalError as SQLAlchemyOperationalError
 from sqlalchemy.orm import Session, joinedload
 
 from zettelkasten_mcp.config import config
@@ -21,6 +24,7 @@ from zettelkasten_mcp.models.schema import Link, LinkType, Note, NoteType, Tag, 
 from zettelkasten_mcp.storage.base import Repository
 from zettelkasten_mcp.exceptions import (
     BulkOperationError,
+    DatabaseCorruptionError,
     ErrorCode,
     SearchError,
     ValidationError,
@@ -66,8 +70,181 @@ class NoteRepository(Repository[Note]):
         )
         self._note_locks_lock = threading.Lock()  # Protects _note_locks dict access
 
-        # Initialize by rebuilding index if needed
-        self.rebuild_index_if_needed()
+        # FTS5 availability tracking - allows graceful degradation when corrupted
+        self._fts_available: bool = True
+
+        # Check database health and recover if needed
+        self._initialize_with_health_check()
+
+    def _initialize_with_health_check(self) -> None:
+        """Initialize database with health check and auto-recovery.
+
+        Performs a comprehensive health check on startup. If corruption
+        is detected, automatically backs up the corrupted database and
+        rebuilds from markdown source files. Also sets FTS availability flag.
+        """
+        try:
+            health = self.check_database_health()
+            if not health["healthy"]:
+                logger.warning(
+                    f"Database health check failed: {health['issues']}. "
+                    "Attempting auto-recovery..."
+                )
+                self._nuke_and_rebuild_database()
+                logger.info("Database auto-recovery completed successfully")
+                # After rebuild, FTS should be available
+                self._fts_available = True
+            else:
+                # Database is healthy, just sync if needed
+                self.rebuild_index_if_needed()
+                # Set FTS availability based on health check
+                self._fts_available = health.get("fts_ok", True)
+                if not self._fts_available:
+                    logger.warning(
+                        "FTS5 index unhealthy but SQLite OK. "
+                        "Attempting FTS rebuild..."
+                    )
+                    if self._attempt_fts_recovery():
+                        self._fts_available = True
+        except sqlite3.DatabaseError as e:
+            if "malformed" in str(e).lower() or "corrupt" in str(e).lower():
+                logger.error(f"Database corruption detected: {e}. Initiating recovery...")
+                self._nuke_and_rebuild_database()
+                self._fts_available = True  # Fresh rebuild includes FTS
+            else:
+                raise
+
+    def check_database_health(self) -> Dict[str, Any]:
+        """Perform comprehensive database health check.
+
+        Checks both SQLite integrity and FTS5 index integrity.
+
+        Returns:
+            Dict with keys:
+                - healthy: bool indicating overall health
+                - sqlite_ok: bool for SQLite integrity
+                - fts_ok: bool for FTS5 integrity
+                - note_count: int of notes in database
+                - file_count: int of markdown files
+                - issues: list of issue descriptions
+        """
+        issues = []
+        sqlite_ok = False
+        fts_ok = False
+        note_count = 0
+        file_count = len(list(self.notes_dir.glob("*.md")))
+
+        try:
+            with self.session_factory() as session:
+                # Check SQLite integrity
+                result = session.execute(text("PRAGMA integrity_check")).fetchone()
+                sqlite_ok = result[0] == "ok"
+                if not sqlite_ok:
+                    issues.append(f"SQLite integrity check failed: {result[0]}")
+
+                # Get note count
+                note_count = session.scalar(
+                    select(func.count(DBNote.id))
+                )
+
+                # Check FTS5 integrity (this catches FTS-specific corruption)
+                try:
+                    session.execute(
+                        text("INSERT INTO notes_fts(notes_fts) VALUES('integrity-check')")
+                    )
+                    fts_ok = True
+                except sqlite3.DatabaseError as e:
+                    issues.append(f"FTS5 integrity check failed: {e}")
+                    fts_ok = False
+
+        except sqlite3.DatabaseError as e:
+            issues.append(f"Database access error: {e}")
+            if "malformed" in str(e).lower():
+                issues.append("Database file appears to be corrupted")
+
+        # Check count mismatch (potential sync issues)
+        if abs(note_count - file_count) > 0:
+            issues.append(
+                f"Note count mismatch: {note_count} in DB vs {file_count} files"
+            )
+
+        return {
+            "healthy": sqlite_ok and fts_ok and not issues,
+            "sqlite_ok": sqlite_ok,
+            "fts_ok": fts_ok,
+            "note_count": note_count,
+            "file_count": file_count,
+            "issues": issues
+        }
+
+    def _nuke_and_rebuild_database(self) -> str:
+        """Nuclear recovery option: backup corrupted DB and rebuild from scratch.
+
+        Creates a timestamped backup of the corrupted database, deletes it,
+        reinitializes the schema, and rebuilds the index from markdown files.
+
+        Returns:
+            Path to the backup file.
+
+        Raises:
+            DatabaseCorruptionError: If recovery fails.
+        """
+        db_url = config.get_db_url()
+        db_path = Path(db_url.replace("sqlite:///", ""))
+
+        backup_path = None
+        if db_path.exists():
+            # Create timestamped backup
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_name = f"{db_path.stem}.corrupted.{timestamp}.bak"
+            backup_path = db_path.parent / backup_name
+
+            try:
+                shutil.copy(db_path, backup_path)
+                logger.info(f"Backed up corrupted database to: {backup_path}")
+            except IOError as e:
+                logger.warning(f"Could not backup corrupted database: {e}")
+
+            # Delete the corrupted database and WAL files
+            try:
+                db_path.unlink()
+                # Also remove WAL and SHM files if they exist
+                wal_path = db_path.with_suffix(".db-wal")
+                shm_path = db_path.with_suffix(".db-shm")
+                if wal_path.exists():
+                    wal_path.unlink()
+                if shm_path.exists():
+                    shm_path.unlink()
+                logger.info("Deleted corrupted database files")
+            except IOError as e:
+                raise DatabaseCorruptionError(
+                    f"Failed to delete corrupted database: {e}",
+                    recovered=False,
+                    backup_path=str(backup_path) if backup_path else None,
+                    code=ErrorCode.DATABASE_RECOVERY_FAILED,
+                    original_error=e
+                )
+
+        # Reinitialize database
+        try:
+            self.engine = init_db()
+            self.session_factory = get_session_factory(self.engine)
+
+            # Rebuild index from markdown files
+            self.rebuild_index()
+            logger.info(
+                f"Database rebuilt successfully from {len(list(self.notes_dir.glob('*.md')))} files"
+            )
+        except Exception as e:
+            raise DatabaseCorruptionError(
+                f"Failed to rebuild database: {e}",
+                recovered=False,
+                backup_path=str(backup_path) if backup_path else None,
+                code=ErrorCode.DATABASE_RECOVERY_FAILED,
+                original_error=e
+            )
+
+        return str(backup_path) if backup_path else ""
 
     def _get_note_lock(self, note_id: str) -> threading.RLock:
         """Get or create a lock for a specific note.
@@ -973,9 +1150,10 @@ class NoteRepository(Repository[Note]):
         limit: int = 50,
         highlight: bool = False
     ) -> List[Dict[str, Any]]:
-        """Full-text search using SQLite FTS5.
+        """Full-text search using SQLite FTS5 with graceful degradation.
 
-        Performs efficient full-text search with BM25 ranking.
+        Performs efficient full-text search with BM25 ranking. If FTS5 is
+        unavailable or corrupted, automatically falls back to LIKE-based search.
 
         Args:
             query: Search query. Supports basic FTS5 syntax:
@@ -996,6 +1174,11 @@ class NoteRepository(Repository[Note]):
                 - snippet: Highlighted content snippet (if highlight=True)
                 - search_mode: "fts5" or "fallback" indicating search method used
         """
+        # Skip FTS5 entirely if known to be unavailable (graceful degradation)
+        if not self._fts_available:
+            logger.debug("FTS5 unavailable, using fallback search")
+            return self._fallback_text_search(query, limit)
+
         results = []
 
         with self.session_factory() as session:
@@ -1044,16 +1227,75 @@ class NoteRepository(Repository[Note]):
                         entry["snippet"] = row[3]
                     results.append(entry)
 
-            except sqlite3.OperationalError as e:
+            except (sqlite3.OperationalError, SQLAlchemyOperationalError) as e:
                 # FTS5 syntax errors - fall back to LIKE search
-                logger.error(
-                    f"FTS5 search failed for query '{query}': {type(e).__name__}: {e}. "
-                    "Falling back to LIKE search."
+                logger.warning(
+                    f"FTS5 query failed for '{query}': {e}. Using fallback search."
                 )
-                # Fall back to simple LIKE search with explicit indication
                 return self._fallback_text_search(query, limit)
 
+            except (sqlite3.DatabaseError, SQLAlchemyDatabaseError) as e:
+                # Corruption or malformed database - attempt recovery
+                error_msg = str(e).lower()
+                if "malformed" in error_msg or "corrupt" in error_msg:
+                    logger.error(
+                        f"FTS5 corruption detected: {e}. Attempting auto-rebuild..."
+                    )
+                    if self._attempt_fts_recovery():
+                        # Retry search after successful rebuild
+                        logger.info("FTS5 rebuilt successfully, retrying search")
+                        return self.fts_search(query, limit, highlight)
+                    else:
+                        # Recovery failed, disable FTS and use fallback
+                        logger.error(
+                            "FTS5 recovery failed. Disabling FTS5 for this session. "
+                            "Call reset_fts_availability() after manual repair."
+                        )
+                        self._fts_available = False
+                        return self._fallback_text_search(query, limit)
+                else:
+                    # Non-corruption database error - still fall back
+                    logger.error(f"FTS5 database error: {e}. Using fallback search.")
+                    return self._fallback_text_search(query, limit)
+
         return results
+
+    def _attempt_fts_recovery(self) -> bool:
+        """Attempt to recover FTS5 index by rebuilding it.
+
+        Returns:
+            True if recovery succeeded, False otherwise.
+        """
+        try:
+            count = self.rebuild_fts()
+            logger.info(f"FTS5 index rebuilt with {count} notes")
+            return True
+        except Exception as e:
+            logger.error(f"FTS5 rebuild failed: {e}")
+            return False
+
+    def reset_fts_availability(self) -> bool:
+        """Reset FTS5 availability flag and verify FTS5 works.
+
+        Call this after manually repairing the FTS5 index to re-enable
+        FTS5 search. Performs an integrity check before re-enabling.
+
+        Returns:
+            True if FTS5 is now available, False if still broken.
+        """
+        try:
+            with self.session_factory() as session:
+                # Test FTS5 with integrity check
+                session.execute(
+                    text("INSERT INTO notes_fts(notes_fts) VALUES('integrity-check')")
+                )
+            self._fts_available = True
+            logger.info("FTS5 availability reset - FTS5 is now enabled")
+            return True
+        except Exception as e:
+            logger.error(f"FTS5 still unavailable: {e}")
+            self._fts_available = False
+            return False
 
     def _fallback_text_search(
         self,

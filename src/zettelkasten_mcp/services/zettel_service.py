@@ -358,6 +358,31 @@ class ZettelService:
         """
         return self.repository.rebuild_fts()
 
+    def check_database_health(self) -> Dict[str, Any]:
+        """Perform comprehensive database health check.
+
+        Returns:
+            Dict with keys:
+                - healthy: bool indicating overall health
+                - sqlite_ok: bool for SQLite integrity
+                - fts_ok: bool for FTS5 integrity
+                - note_count: int of notes in database
+                - file_count: int of markdown files
+                - issues: list of issue descriptions
+        """
+        return self.repository.check_database_health()
+
+    def reset_fts_availability(self) -> bool:
+        """Reset FTS5 availability after manual repair.
+
+        Call this if FTS5 was disabled due to corruption and you've
+        manually repaired the database.
+
+        Returns:
+            True if FTS5 is now available, False if still broken.
+        """
+        return self.repository.reset_fts_availability()
+
     def find_similar_notes(self, note_id: str, threshold: float = 0.5) -> List[Tuple[Note, float]]:
         """Find notes similar to the given note based on shared tags and links.
 

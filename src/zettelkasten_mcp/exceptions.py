@@ -32,6 +32,9 @@ class ErrorCode(Enum):
     STORAGE_WRITE_FAILED = 4002
     STORAGE_DELETE_FAILED = 4003
     STORAGE_CONNECTION_FAILED = 4004
+    DATABASE_CORRUPTED = 4005
+    DATABASE_RECOVERY_FAILED = 4006
+    FTS_CORRUPTED = 4007
 
     # Bulk operation errors (45xx)
     BULK_OPERATION_FAILED = 4501
@@ -190,6 +193,38 @@ class StorageError(ZettelkastenError):
         self.operation = operation
         self.path = path
         self.original_error = original_error
+
+
+class DatabaseCorruptionError(StorageError):
+    """Raised when database corruption is detected.
+
+    This exception indicates that the SQLite database (or FTS5 index)
+    has become corrupted and may need to be rebuilt from source files.
+
+    Attributes:
+        recovered: Whether auto-recovery was successful
+        backup_path: Path to the backup of the corrupted database
+    """
+
+    def __init__(
+        self,
+        message: str,
+        recovered: bool = False,
+        backup_path: Optional[str] = None,
+        code: ErrorCode = ErrorCode.DATABASE_CORRUPTED,
+        original_error: Optional[Exception] = None
+    ):
+        super().__init__(
+            message,
+            operation="database_check",
+            code=code,
+            original_error=original_error
+        )
+        self.recovered = recovered
+        self.backup_path = backup_path
+        self.details["recovered"] = recovered
+        if backup_path:
+            self.details["backup_path"] = backup_path
 
 
 class SearchError(ZettelkastenError):

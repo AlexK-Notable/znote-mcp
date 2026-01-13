@@ -100,9 +100,33 @@ class DBLink(Base):
         )
 
 def init_db() -> None:
-    """Initialize the database."""
-    # Create engine based on configuration
-    engine = create_engine(config.get_db_url())
+    """Initialize the database with hardened configuration.
+
+    Applies SQLite best practices for crash resilience:
+    - WAL (Write-Ahead Logging) mode for atomic writes
+    - NORMAL synchronous mode (good balance of safety vs speed)
+    - Pool pre-ping to detect stale connections
+    """
+    from sqlalchemy import text, event
+
+    # Create engine with connection pooling that validates connections
+    engine = create_engine(
+        config.get_db_url(),
+        pool_pre_ping=True,  # Validate connections before use
+    )
+
+    # Apply WAL mode and other PRAGMA settings on every connection
+    @event.listens_for(engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        # WAL mode: writes go to separate journal, preventing corruption on crash
+        cursor.execute("PRAGMA journal_mode=WAL")
+        # NORMAL sync: flush WAL to disk at critical moments (good balance)
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        # Increase cache size for better performance (negative = KB)
+        cursor.execute("PRAGMA cache_size=-64000")  # 64MB cache
+        cursor.close()
+
     Base.metadata.create_all(engine)
 
     # Run migrations for schema updates
