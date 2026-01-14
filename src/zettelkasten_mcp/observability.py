@@ -1,22 +1,112 @@
 """Observability utilities for the Zettelkasten MCP server.
 
-Provides structured logging, timing metrics, and operation tracking.
+Provides structured logging, timing metrics, operation tracking,
+and persistent disk logging with rotation.
 """
 import functools
+import json
 import logging
+import os
 import time
 import uuid
 from collections import defaultdict
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from threading import Lock
-from typing import Any, Callable, Dict, List, Optional, TypeVar
+from typing import Any, Callable, Dict, List, Optional, TypeVar, Union
 
 logger = logging.getLogger(__name__)
 
+# Default log directory (can be overridden via configure_logging)
+DEFAULT_LOG_DIR = Path.home() / ".zettelkasten" / "logs"
+DEFAULT_METRICS_FILE = Path.home() / ".zettelkasten" / "metrics.json"
+
+# Logging format with ISO 8601 timestamps
+LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s - %(message)s"
+LOG_DATE_FORMAT = "%Y-%m-%dT%H:%M:%S%z"
+
 # Type variable for decorators
 F = TypeVar('F', bound=Callable[..., Any])
+
+# Global flag to track if logging has been configured
+_logging_configured = False
+
+
+def configure_logging(
+    log_dir: Optional[Union[str, Path]] = None,
+    level: int = logging.INFO,
+    max_bytes: int = 10 * 1024 * 1024,  # 10 MB per file
+    backup_count: int = 5,
+    console: bool = True,
+) -> Path:
+    """Configure persistent file logging with rotation.
+
+    Sets up rotating file handler for the zettelkasten logger hierarchy.
+    Log files are rotated when they reach max_bytes, keeping backup_count old files.
+
+    Args:
+        log_dir: Directory for log files. Defaults to ~/.zettelkasten/logs/
+        level: Logging level (default: INFO)
+        max_bytes: Maximum size per log file before rotation (default: 10 MB)
+        backup_count: Number of rotated files to keep (default: 5)
+        console: Also log to console (default: True)
+
+    Returns:
+        Path to the log directory
+
+    Example:
+        configure_logging(level=logging.DEBUG, backup_count=10)
+    """
+    global _logging_configured
+
+    log_path = Path(log_dir) if log_dir else DEFAULT_LOG_DIR
+    log_path.mkdir(parents=True, exist_ok=True)
+
+    # Get root zettelkasten logger
+    root_logger = logging.getLogger("zettelkasten")
+    root_logger.setLevel(level)
+
+    # Also configure the module logger
+    module_logger = logging.getLogger(__name__)
+    module_logger.setLevel(level)
+
+    # Create formatter
+    formatter = logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
+
+    # Add rotating file handler
+    log_file = log_path / "zettelkasten.log"
+    file_handler = RotatingFileHandler(
+        log_file,
+        maxBytes=max_bytes,
+        backupCount=backup_count,
+        encoding="utf-8",
+    )
+    file_handler.setLevel(level)
+    file_handler.setFormatter(formatter)
+    root_logger.addHandler(file_handler)
+
+    # Optionally add console handler
+    if console and not any(
+        isinstance(h, logging.StreamHandler) and not isinstance(h, RotatingFileHandler)
+        for h in root_logger.handlers
+    ):
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(level)
+        console_handler.setFormatter(formatter)
+        root_logger.addHandler(console_handler)
+
+    _logging_configured = True
+    root_logger.info(f"Logging configured: {log_file} (max {max_bytes} bytes, {backup_count} backups)")
+
+    return log_path
+
+
+def is_logging_configured() -> bool:
+    """Check if file logging has been configured."""
+    return _logging_configured
 
 
 @dataclass
@@ -37,12 +127,30 @@ class MetricsCollector:
 
     Collects timing, success/failure rates, and error information
     for each operation type (create_note, search_notes, etc.).
+
+    Supports persistence to disk with auto-save on significant events.
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        metrics_file: Optional[Union[str, Path]] = None,
+        auto_save_interval: int = 100,
+    ):
+        """Initialize the metrics collector.
+
+        Args:
+            metrics_file: Path to persist metrics. Defaults to ~/.zettelkasten/metrics.json
+            auto_save_interval: Save to disk every N operations (0 to disable)
+        """
         self._metrics: Dict[str, OperationMetrics] = defaultdict(OperationMetrics)
         self._lock = Lock()
         self._start_time = datetime.now(timezone.utc)
+        self._metrics_file = Path(metrics_file) if metrics_file else DEFAULT_METRICS_FILE
+        self._auto_save_interval = auto_save_interval
+        self._operation_count_since_save = 0
+
+        # Try to load existing metrics on startup
+        self._load_metrics()
 
     def record_operation(
         self,
@@ -72,6 +180,14 @@ class MetricsCollector:
                 m.error_count += 1
                 m.last_error = error
                 m.last_error_time = datetime.now(timezone.utc)
+
+            # Auto-save periodically
+            self._operation_count_since_save += 1
+            if (
+                self._auto_save_interval > 0
+                and self._operation_count_since_save >= self._auto_save_interval
+            ):
+                self._save_metrics_unlocked()
 
     def get_metrics(self) -> Dict[str, Dict[str, Any]]:
         """Get a snapshot of all metrics.
@@ -123,6 +239,103 @@ class MetricsCollector:
         with self._lock:
             self._metrics.clear()
             self._start_time = datetime.now(timezone.utc)
+            self._operation_count_since_save = 0
+
+    def _load_metrics(self) -> bool:
+        """Load metrics from disk (called internally during init).
+
+        Returns:
+            True if metrics were loaded successfully, False otherwise.
+        """
+        try:
+            if not self._metrics_file.exists():
+                return False
+
+            with open(self._metrics_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            # Restore start time
+            if "start_time" in data:
+                self._start_time = datetime.fromisoformat(data["start_time"])
+
+            # Restore operation metrics
+            for op_name, op_data in data.get("operations", {}).items():
+                m = self._metrics[op_name]
+                m.count = op_data.get("count", 0)
+                m.success_count = op_data.get("success_count", 0)
+                m.error_count = op_data.get("error_count", 0)
+                m.total_duration_ms = op_data.get("total_duration_ms", 0.0)
+                m.min_duration_ms = op_data.get("min_duration_ms", float("inf"))
+                m.max_duration_ms = op_data.get("max_duration_ms", 0.0)
+                m.last_error = op_data.get("last_error")
+                if op_data.get("last_error_time"):
+                    m.last_error_time = datetime.fromisoformat(op_data["last_error_time"])
+
+            logger.debug(f"Loaded metrics from {self._metrics_file}")
+            return True
+
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
+            logger.warning(f"Failed to load metrics from {self._metrics_file}: {e}")
+            return False
+
+    def _save_metrics_unlocked(self) -> bool:
+        """Save metrics to disk (must be called with lock held).
+
+        Returns:
+            True if saved successfully, False otherwise.
+        """
+        try:
+            # Ensure parent directory exists
+            self._metrics_file.parent.mkdir(parents=True, exist_ok=True)
+
+            # Build serializable data
+            data = {
+                "start_time": self._start_time.isoformat(),
+                "saved_at": datetime.now(timezone.utc).isoformat(),
+                "operations": {},
+            }
+
+            for op_name, m in self._metrics.items():
+                data["operations"][op_name] = {
+                    "count": m.count,
+                    "success_count": m.success_count,
+                    "error_count": m.error_count,
+                    "total_duration_ms": m.total_duration_ms,
+                    "min_duration_ms": m.min_duration_ms if m.min_duration_ms != float("inf") else None,
+                    "max_duration_ms": m.max_duration_ms,
+                    "last_error": m.last_error,
+                    "last_error_time": m.last_error_time.isoformat() if m.last_error_time else None,
+                }
+
+            # Atomic write via temp file
+            temp_file = self._metrics_file.with_suffix(".tmp")
+            with open(temp_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+
+            temp_file.rename(self._metrics_file)
+            self._operation_count_since_save = 0
+            return True
+
+        except (OSError, TypeError) as e:
+            logger.error(f"Failed to save metrics to {self._metrics_file}: {e}")
+            return False
+
+    def save_metrics(self) -> bool:
+        """Explicitly save metrics to disk.
+
+        Returns:
+            True if saved successfully, False otherwise.
+
+        Example:
+            # Save before shutdown
+            metrics.save_metrics()
+        """
+        with self._lock:
+            return self._save_metrics_unlocked()
+
+    def get_metrics_file(self) -> Path:
+        """Get the path to the metrics file."""
+        return self._metrics_file
 
 
 # Global metrics collector instance

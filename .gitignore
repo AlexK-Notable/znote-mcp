@@ -58,3 +58,11 @@ repomix-output.xml
 # Data files
 data/db/*.db
 data/notes/*.md
+
+# Development tools
+.serena/
+in-memoria.db
+in-memoria-vectors.db/
+
+# Local scripts
+scripts/

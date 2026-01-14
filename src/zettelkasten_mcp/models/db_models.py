@@ -6,6 +6,7 @@ from sqlalchemy import (Column, DateTime, ForeignKey, Integer, String, Table,
                        Text, UniqueConstraint, create_engine)
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Mapped, Session, declarative_base, relationship, sessionmaker
+from sqlalchemy.pool import QueuePool
 
 from zettelkasten_mcp.config import config
 from zettelkasten_mcp.models.schema import LinkType, NoteType
@@ -105,14 +106,22 @@ def init_db() -> None:
     Applies SQLite best practices for crash resilience:
     - WAL (Write-Ahead Logging) mode for atomic writes
     - NORMAL synchronous mode (good balance of safety vs speed)
+    - QueuePool for connection reuse with size limits
     - Pool pre-ping to detect stale connections
+    - Connection timeout to prevent deadlocks
     """
     from sqlalchemy import text, event
 
-    # Create engine with connection pooling that validates connections
+    # Create engine with connection pooling optimized for SQLite
+    # SQLite is single-writer, so a small pool is ideal
     engine = create_engine(
         config.get_db_url(),
-        pool_pre_ping=True,  # Validate connections before use
+        poolclass=QueuePool,
+        pool_size=5,           # Base pool size (concurrent reads)
+        max_overflow=10,       # Allow up to 15 total connections under load
+        pool_timeout=30,       # Wait up to 30s for a connection
+        pool_recycle=3600,     # Recycle connections after 1 hour
+        pool_pre_ping=True,    # Validate connections before use
     )
 
     # Apply WAL mode and other PRAGMA settings on every connection
