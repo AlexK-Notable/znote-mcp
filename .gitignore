@@ -41,6 +41,13 @@ logs/
 htmlcov/
 .pytest_cache/
 
+# Test fixtures (keep README but ignore test data)
+tests/fixtures/notes/*
+tests/fixtures/database/*
+tests/fixtures/obsidian_vault/*
+!tests/fixtures/README.md
+!tests/fixtures/*/.gitkeep
+
 # Local configuration
 config.local.json
 claude_desktop_config.json
