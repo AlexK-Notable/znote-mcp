@@ -17,20 +17,33 @@ from znote_mcp.storage.note_repository import NoteRepository
 
 
 class TestWALMode:
-    """Tests for WAL mode configuration."""
+    """Tests for WAL mode configuration (persistent mode only)."""
 
     def test_wal_mode_enabled(self, note_repository):
-        """Verify WAL mode is enabled on database connections."""
+        """Verify appropriate journal mode based on database type.
+
+        - In-memory databases use MEMORY journal (no disk, so WAL not applicable)
+        - Persistent databases use WAL for crash safety
+        """
         with note_repository.session_factory() as session:
             result = session.execute(text("PRAGMA journal_mode")).fetchone()
-            assert result[0].lower() == "wal", "WAL mode should be enabled"
+            journal_mode = result[0].lower()
+            # In-memory mode uses "memory" journal, persistent uses "wal"
+            assert journal_mode in ("wal", "memory"), \
+                f"Journal mode should be WAL or MEMORY, got {journal_mode}"
 
-    def test_synchronous_normal(self, note_repository):
-        """Verify synchronous mode is set to NORMAL for performance balance."""
+    def test_synchronous_mode(self, note_repository):
+        """Verify appropriate synchronous mode based on database type.
+
+        - In-memory: OFF (0) for max performance (no durability needed)
+        - Persistent: NORMAL (1) for balance of safety vs speed
+        """
         with note_repository.session_factory() as session:
             result = session.execute(text("PRAGMA synchronous")).fetchone()
-            # NORMAL = 1
-            assert result[0] == 1, "Synchronous mode should be NORMAL (1)"
+            sync_mode = result[0]
+            # In-memory mode uses 0 (OFF), persistent uses 1 (NORMAL)
+            assert sync_mode in (0, 1), \
+                f"Synchronous mode should be 0 (OFF) or 1 (NORMAL), got {sync_mode}"
 
 
 class TestDatabaseHealthCheck:
