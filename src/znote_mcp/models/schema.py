@@ -6,7 +6,8 @@ from datetime import datetime as dt, timezone
 import random
 import inspect
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set, Union
+from dataclasses import dataclass
+from typing import Any, Dict, List, Literal, Optional, Set, Union
 from pydantic import BaseModel, Field, field_validator
 import threading
 import re
@@ -177,6 +178,99 @@ class Tag(BaseModel):
     def __str__(self) -> str:
         """Return string representation of tag."""
         return self.name
+
+
+@dataclass(frozen=True)
+class VersionInfo:
+    """Git commit metadata for version tracking.
+
+    Attributes:
+        commit_hash: Short SHA (7 characters) of the git commit.
+        timestamp: When the commit was created.
+        author: Who created the commit (defaults to "znote-mcp").
+    """
+    commit_hash: str
+    timestamp: datetime.datetime
+    author: str = "znote-mcp"
+
+    @classmethod
+    def from_git_commit(cls, commit_hash: str, timestamp: datetime.datetime) -> "VersionInfo":
+        """Create a VersionInfo from git commit data.
+
+        Args:
+            commit_hash: Full or short SHA of the git commit.
+            timestamp: When the commit was created.
+
+        Returns:
+            VersionInfo with the hash truncated to 7 characters.
+        """
+        return cls(
+            commit_hash=commit_hash[:7],
+            timestamp=timestamp,
+        )
+
+
+@dataclass
+class ConflictResult:
+    """Response indicating a version conflict during note update.
+
+    Attributes:
+        status: Always "conflict" for this result type.
+        note_id: ID of the note that had a conflict.
+        expected_version: The version the client expected.
+        actual_version: The actual current version of the note.
+        message: Human-readable description of the conflict.
+    """
+    status: Literal["conflict"]
+    note_id: str
+    expected_version: str
+    actual_version: str
+    message: str
+
+    def to_dict(self) -> Dict[str, str]:
+        """Convert to dictionary representation.
+
+        Returns:
+            Dictionary with all fields.
+        """
+        return {
+            "status": self.status,
+            "note_id": self.note_id,
+            "expected_version": self.expected_version,
+            "actual_version": self.actual_version,
+            "message": self.message,
+        }
+
+
+@dataclass
+class VersionedNote:
+    """A note with its version information.
+
+    Wraps a Note with its corresponding VersionInfo for tracking
+    which version of the note is being worked with.
+
+    Attributes:
+        note: The note data.
+        version: Git version metadata for this note.
+    """
+    note: "Note"
+    version: VersionInfo
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary representation.
+
+        Returns:
+            Dictionary with 'note' (as dict) and 'version' (as dict) keys.
+        """
+        return {
+            "note": self.note.model_dump(),
+            "version": {
+                "commit_hash": self.version.commit_hash,
+                "timestamp": self.version.timestamp.isoformat(),
+                "author": self.version.author,
+            },
+        }
+
 
 class Note(BaseModel):
     """A Zettelkasten note."""
