@@ -6,7 +6,7 @@ from sqlalchemy import (Column, DateTime, ForeignKey, Integer, String, Table,
                        Text, UniqueConstraint, create_engine)
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Mapped, Session, declarative_base, relationship, sessionmaker
-from sqlalchemy.pool import QueuePool
+from sqlalchemy.pool import QueuePool, StaticPool
 
 from znote_mcp.config import config
 from znote_mcp.models.schema import LinkType, NoteType
@@ -100,48 +100,83 @@ class DBLink(Base):
             f"target='{self.target_id}', type='{self.link_type}')>"
         )
 
-def init_db() -> None:
+def init_db(in_memory: bool = False) -> None:
     """Initialize the database with hardened configuration.
 
-    Applies SQLite best practices for crash resilience:
+    Args:
+        in_memory: If True, use in-memory SQLite for process isolation.
+                   Each process gets its own isolated database that is
+                   rebuilt from markdown files on startup. This eliminates
+                   cross-process coordination overhead.
+
+    For persistent mode (in_memory=False):
     - WAL (Write-Ahead Logging) mode for atomic writes
     - NORMAL synchronous mode (good balance of safety vs speed)
     - QueuePool for connection reuse with size limits
     - Pool pre-ping to detect stale connections
     - Connection timeout to prevent deadlocks
+
+    For in-memory mode (in_memory=True):
+    - StaticPool keeps single connection alive for process lifetime
+    - No WAL mode (not applicable to in-memory)
+    - Faster startup, no disk I/O for index operations
+    - Index must be rebuilt from markdown files on startup
     """
     from sqlalchemy import text, event
 
-    # Create engine with connection pooling optimized for SQLite
-    # SQLite is single-writer, so a small pool is ideal
-    engine = create_engine(
-        config.get_db_url(),
-        poolclass=QueuePool,
-        pool_size=5,           # Base pool size (concurrent reads)
-        max_overflow=10,       # Allow up to 15 total connections under load
-        pool_timeout=30,       # Wait up to 30s for a connection
-        pool_recycle=3600,     # Recycle connections after 1 hour
-        pool_pre_ping=True,    # Validate connections before use
-    )
+    if in_memory:
+        # In-memory SQLite for process isolation
+        # StaticPool keeps the single connection alive
+        engine = create_engine(
+            "sqlite:///:memory:",
+            poolclass=StaticPool,
+            connect_args={"check_same_thread": False}
+        )
 
-    # Apply WAL mode and other PRAGMA settings on every connection
-    @event.listens_for(engine, "connect")
-    def set_sqlite_pragma(dbapi_connection, connection_record):
-        cursor = dbapi_connection.cursor()
-        # WAL mode: writes go to separate journal, preventing corruption on crash
-        cursor.execute("PRAGMA journal_mode=WAL")
-        # NORMAL sync: flush WAL to disk at critical moments (good balance)
-        cursor.execute("PRAGMA synchronous=NORMAL")
-        # Increase cache size for better performance (negative = KB)
-        cursor.execute("PRAGMA cache_size=-64000")  # 64MB cache
-        cursor.close()
+        # Apply optimizations for in-memory (no WAL needed)
+        @event.listens_for(engine, "connect")
+        def set_sqlite_pragma_memory(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            # Use memory journal for in-memory DB
+            cursor.execute("PRAGMA journal_mode=MEMORY")
+            # Synchronous off for in-memory (no durability needed)
+            cursor.execute("PRAGMA synchronous=OFF")
+            # Large cache for in-memory performance
+            cursor.execute("PRAGMA cache_size=-64000")  # 64MB cache
+            cursor.close()
+    else:
+        # Persistent SQLite with connection pooling
+        engine = create_engine(
+            config.get_db_url(),
+            poolclass=QueuePool,
+            pool_size=5,           # Base pool size (concurrent reads)
+            max_overflow=10,       # Allow up to 15 total connections under load
+            pool_timeout=30,       # Wait up to 30s for a connection
+            pool_recycle=3600,     # Recycle connections after 1 hour
+            pool_pre_ping=True,    # Validate connections before use
+        )
+
+        # Apply WAL mode and other PRAGMA settings on every connection
+        @event.listens_for(engine, "connect")
+        def set_sqlite_pragma(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            # WAL mode: writes go to separate journal, preventing corruption on crash
+            cursor.execute("PRAGMA journal_mode=WAL")
+            # NORMAL sync: flush WAL to disk at critical moments (good balance)
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            # Increase cache size for better performance (negative = KB)
+            cursor.execute("PRAGMA cache_size=-64000")  # 64MB cache
+            cursor.close()
 
     Base.metadata.create_all(engine)
 
-    # Run migrations for schema updates
-    _migrate_add_project_column(engine)
+    # Run migrations only for persistent databases
+    # (in-memory DBs are created fresh each time)
+    if not in_memory:
+        _migrate_add_project_column(engine)
 
     # Create FTS5 virtual table for full-text search
+    # (works for both in-memory and persistent)
     init_fts5(engine)
 
     return engine
