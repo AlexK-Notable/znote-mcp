@@ -121,52 +121,78 @@ class GitWrapper:
         self,
         args: List[str],
         check: bool = True,
-        capture_output: bool = True
+        capture_output: bool = True,
+        retries: int = 3,
+        retry_delay: float = 0.1
     ) -> subprocess.CompletedProcess:
-        """Run a git command via subprocess.
+        """Run a git command via subprocess with retry for lock contention.
 
         Args:
             args: Git command arguments (without 'git' prefix)
             check: If True, raise GitError on non-zero exit
             capture_output: If True, capture stdout and stderr
+            retries: Number of retries for index.lock contention (default: 3)
+            retry_delay: Seconds to wait between retries (default: 0.1)
 
         Returns:
             CompletedProcess with command results
 
         Raises:
-            GitError: If check=True and command fails
+            GitError: If check=True and command fails after all retries
         """
+        import time
+
         cmd = ["git", "-C", str(self.repo_path)] + args
+        last_error = None
 
-        try:
-            result = subprocess.run(
-                cmd,
-                check=False,
-                capture_output=capture_output,
-                text=True,
-                timeout=30  # Prevent hanging
-            )
-
-            if check and result.returncode != 0:
-                raise GitError(
-                    message=f"Git command failed: {' '.join(args)}",
-                    command=cmd,
-                    returncode=result.returncode,
-                    stderr=result.stderr.strip() if result.stderr else None
+        for attempt in range(retries + 1):
+            try:
+                result = subprocess.run(
+                    cmd,
+                    check=False,
+                    capture_output=capture_output,
+                    text=True,
+                    timeout=30  # Prevent hanging
                 )
 
-            return result
+                # Check for index.lock contention (can retry)
+                if result.returncode != 0 and result.stderr:
+                    if "index.lock" in result.stderr and attempt < retries:
+                        logger.debug(
+                            f"Git index.lock contention, retry {attempt + 1}/{retries}: {args}"
+                        )
+                        time.sleep(retry_delay * (attempt + 1))  # Exponential backoff
+                        continue
 
-        except subprocess.TimeoutExpired as e:
-            raise GitError(
-                message=f"Git command timed out: {' '.join(args)}",
-                command=cmd
-            ) from e
-        except FileNotFoundError:
-            raise GitError(
-                message="Git is not installed or not in PATH",
-                command=cmd
-            )
+                if check and result.returncode != 0:
+                    raise GitError(
+                        message=f"Git command failed: {' '.join(args)}",
+                        command=cmd,
+                        returncode=result.returncode,
+                        stderr=result.stderr.strip() if result.stderr else None
+                    )
+
+                return result
+
+            except subprocess.TimeoutExpired as e:
+                last_error = GitError(
+                    message=f"Git command timed out: {' '.join(args)}",
+                    command=cmd
+                )
+                if attempt < retries:
+                    time.sleep(retry_delay * (attempt + 1))
+                    continue
+                raise last_error from e
+            except FileNotFoundError:
+                raise GitError(
+                    message="Git is not installed or not in PATH",
+                    command=cmd
+                )
+
+        # Should not reach here, but just in case
+        if last_error:
+            raise last_error
+        raise GitError(f"Git command failed after {retries} retries: {args}")
 
     def _ensure_git_repo(self) -> None:
         """Initialize git repo if .git doesn't exist.
@@ -324,15 +350,52 @@ class GitWrapper:
         # Check if there are changes to commit
         status_result = self._run_git(["status", "--porcelain", str(rel_path)])
         if not status_result.stdout.strip():
-            # No changes to commit - return current version
+            # No changes to commit - check if version changed (conflict)
             current = self.get_file_version(file_path)
             if current:
+                if expected_version:
+                    # Version changed since our check - this is a conflict
+                    if current.commit_hash[:len(expected_version)] != expected_version[:len(expected_version)]:
+                        note_id = file_path.stem
+                        raise GitConflictError(
+                            note_id=note_id,
+                            expected_version=expected_version,
+                            actual_version=current.commit_hash
+                        )
                 return current
             # File exists but has no commits - create initial commit
             # This shouldn't happen after add, but handle gracefully
 
-        # Commit
-        self._run_git(["commit", "-m", message, "--", str(rel_path)])
+        # Try to commit - may fail if another process commits first
+        commit_result = self._run_git(
+            ["commit", "-m", message, "--", str(rel_path)],
+            check=False  # Don't raise on error, we'll handle it
+        )
+
+        if commit_result.returncode != 0:
+            # Commit failed - check if it's because another process committed first
+            # This manifests as "nothing to commit" or similar
+            current = self.get_file_version(file_path)
+            if current:
+                if expected_version:
+                    # Check if version changed (conflict from another process)
+                    if current.commit_hash[:len(expected_version)] != expected_version[:len(expected_version)]:
+                        note_id = file_path.stem
+                        raise GitConflictError(
+                            note_id=note_id,
+                            expected_version=expected_version,
+                            actual_version=current.commit_hash
+                        )
+                # Version didn't change or no expected_version - return current
+                return current
+
+            # Commit failed for some other reason
+            raise GitError(
+                message=f"Git commit failed: {commit_result.stderr or 'unknown error'}",
+                command=["commit", "-m", message, "--", str(rel_path)],
+                returncode=commit_result.returncode,
+                stderr=commit_result.stderr
+            )
 
         # Get and return the new version
         new_version = self.get_file_version(file_path)
