@@ -14,7 +14,16 @@ from znote_mcp.exceptions import (
     LinkError,
     ValidationError,
 )
-from znote_mcp.models.schema import Link, LinkType, Note, NoteType, Tag
+from znote_mcp.models.schema import (
+    ConflictResult,
+    Link,
+    LinkType,
+    Note,
+    NoteType,
+    Tag,
+    VersionInfo,
+    VersionedNote,
+)
 from znote_mcp.storage.note_repository import NoteRepository
 
 logger = logging.getLogger(__name__)
@@ -548,3 +557,143 @@ class ZettelService:
             Number of notes successfully updated.
         """
         return self.repository.bulk_update_project(note_ids, project)
+
+    # =========================================================================
+    # Versioned CRUD Operations (with git conflict detection)
+    # =========================================================================
+
+    def get_note_versioned(self, note_id: str) -> Optional[VersionedNote]:
+        """Retrieve a note by ID with its version information.
+
+        Args:
+            note_id: The note ID.
+
+        Returns:
+            VersionedNote if found, None otherwise.
+        """
+        return self.repository.get_versioned(note_id)
+
+    def create_note_versioned(
+        self,
+        title: str,
+        content: str,
+        note_type: NoteType = NoteType.PERMANENT,
+        project: str = "general",
+        tags: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> VersionedNote:
+        """Create a new note with version tracking.
+
+        Args:
+            title: Note title.
+            content: Note content.
+            note_type: Type of note (default: PERMANENT).
+            project: Project name (default: "general").
+            tags: Optional list of tag names.
+            metadata: Optional metadata dictionary.
+
+        Returns:
+            VersionedNote with the created note and its version info.
+
+        Raises:
+            NoteValidationError: If title or content is missing.
+        """
+        if not title:
+            raise NoteValidationError(
+                "Title is required",
+                field="title",
+                code=ErrorCode.NOTE_TITLE_REQUIRED
+            )
+        if not content:
+            raise NoteValidationError(
+                "Content is required",
+                field="content",
+                code=ErrorCode.NOTE_CONTENT_REQUIRED
+            )
+
+        # Create note object
+        note = Note(
+            title=title,
+            content=content,
+            note_type=note_type,
+            project=project,
+            tags=[Tag(name=tag) for tag in (tags or [])],
+            metadata=metadata or {}
+        )
+
+        # Save with version tracking
+        return self.repository.create_versioned(note)
+
+    def update_note_versioned(
+        self,
+        note_id: str,
+        title: Optional[str] = None,
+        content: Optional[str] = None,
+        note_type: Optional[NoteType] = None,
+        project: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        expected_version: Optional[str] = None
+    ) -> Union[VersionedNote, ConflictResult]:
+        """Update an existing note with version conflict detection.
+
+        If expected_version is provided and doesn't match the current version,
+        returns a ConflictResult instead of updating.
+
+        Args:
+            note_id: The note ID to update.
+            title: New title (optional).
+            content: New content (optional).
+            note_type: New note type (optional).
+            project: New project (optional).
+            tags: New tags list (optional).
+            metadata: New metadata (optional).
+            expected_version: Expected version hash for conflict detection.
+
+        Returns:
+            VersionedNote on success, ConflictResult if version conflict.
+
+        Raises:
+            NoteNotFoundError: If the note doesn't exist.
+        """
+        note = self.repository.get(note_id)
+        if not note:
+            raise NoteNotFoundError(note_id)
+
+        # Update fields
+        if title is not None:
+            note.title = title
+        if content is not None:
+            note.content = content
+        if note_type is not None:
+            note.note_type = note_type
+        if project is not None:
+            note.project = project
+        if tags is not None:
+            note.tags = [Tag(name=tag) for tag in tags]
+        if metadata is not None:
+            note.metadata = metadata
+
+        note.updated_at = datetime.datetime.now(timezone.utc)
+
+        # Update with version checking
+        return self.repository.update_versioned(note, expected_version)
+
+    def delete_note_versioned(
+        self,
+        note_id: str,
+        expected_version: Optional[str] = None
+    ) -> Union[VersionInfo, ConflictResult]:
+        """Delete a note with version conflict detection.
+
+        If expected_version is provided and doesn't match the current version,
+        returns a ConflictResult instead of deleting.
+
+        Args:
+            note_id: The note ID to delete.
+            expected_version: Expected version hash for conflict detection.
+
+        Returns:
+            VersionInfo on success, ConflictResult if version conflict.
+        """
+        return self.repository.delete_versioned(note_id, expected_version)
