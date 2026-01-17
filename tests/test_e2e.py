@@ -14,7 +14,7 @@ import json
 import pytest
 from pathlib import Path
 
-from zettelkasten_mcp.models.schema import LinkType, NoteType
+from znote_mcp.models.schema import LinkType, NoteType
 
 # Import fixtures from conftest_e2e (use relative import)
 from conftest_e2e import (

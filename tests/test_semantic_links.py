@@ -3,9 +3,9 @@ import datetime
 import pytest
 from unittest.mock import patch, MagicMock, ANY
 
-from zettelkasten_mcp.models.schema import LinkType, Note, NoteType, Tag, Link
-from zettelkasten_mcp.services.zettel_service import ZettelService
-from zettelkasten_mcp.server.mcp_server import ZettelkastenMcpServer
+from znote_mcp.models.schema import LinkType, Note, NoteType, Tag, Link
+from znote_mcp.services.zettel_service import ZettelService
+from znote_mcp.server.mcp_server import ZettelkastenMcpServer
 
 
 class TestSemanticLinks:
@@ -819,7 +819,7 @@ Test content for parsing links from markdown.
         )
         
         # Create search service
-        from zettelkasten_mcp.services.search_service import SearchService
+        from znote_mcp.services.search_service import SearchService
         search_service = SearchService(zettel_service)
         
         # Search for linked notes
@@ -896,7 +896,7 @@ Test content for parsing links from markdown.
     
     def test_central_notes_with_semantic_links(self, zettel_service):
         """Test the find_central_notes function with semantic links."""
-        from zettelkasten_mcp.services.search_service import SearchService
+        from znote_mcp.services.search_service import SearchService
         search_service = SearchService(zettel_service)
         
         # Create a network of notes with semantic links

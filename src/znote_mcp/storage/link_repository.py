@@ -5,8 +5,8 @@ from typing import List, Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from zettelkasten_mcp.models.db_models import DBLink, DBNote
-from zettelkasten_mcp.models.schema import Link, LinkType
+from znote_mcp.models.db_models import DBLink, DBNote
+from znote_mcp.models.schema import Link, LinkType
 
 logger = logging.getLogger(__name__)
 

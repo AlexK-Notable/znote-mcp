@@ -6,14 +6,14 @@ from pathlib import Path
 import pytest
 from sqlalchemy import create_engine, text
 
-from zettelkasten_mcp.config import config
-from zettelkasten_mcp.exceptions import (
+from znote_mcp.config import config
+from znote_mcp.exceptions import (
     DatabaseCorruptionError,
     ErrorCode,
 )
-from zettelkasten_mcp.models.db_models import Base, init_db
-from zettelkasten_mcp.models.schema import Note, NoteType, Tag
-from zettelkasten_mcp.storage.note_repository import NoteRepository
+from znote_mcp.models.db_models import Base, init_db
+from znote_mcp.models.schema import Note, NoteType, Tag
+from znote_mcp.storage.note_repository import NoteRepository
 
 
 class TestWALMode:

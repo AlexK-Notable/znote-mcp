@@ -21,12 +21,12 @@ from typing import Generator, Tuple
 import pytest
 from sqlalchemy import create_engine
 
-from zettelkasten_mcp.config import config
-from zettelkasten_mcp.models.db_models import Base, init_db
-from zettelkasten_mcp.server.mcp_server import ZettelkastenMcpServer
-from zettelkasten_mcp.services.search_service import SearchService
-from zettelkasten_mcp.services.zettel_service import ZettelService
-from zettelkasten_mcp.storage.note_repository import NoteRepository
+from znote_mcp.config import config
+from znote_mcp.models.db_models import Base, init_db
+from znote_mcp.server.mcp_server import ZettelkastenMcpServer
+from znote_mcp.services.search_service import SearchService
+from znote_mcp.services.zettel_service import ZettelService
+from znote_mcp.storage.note_repository import NoteRepository
 
 
 # Fixture paths - explicitly within the test directory

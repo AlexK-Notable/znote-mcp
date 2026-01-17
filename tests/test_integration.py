@@ -4,11 +4,11 @@ import os
 import tempfile
 from pathlib import Path
 import pytest
-from zettelkasten_mcp.config import config
-from zettelkasten_mcp.models.schema import LinkType, NoteType
-from zettelkasten_mcp.server.mcp_server import ZettelkastenMcpServer
-from zettelkasten_mcp.services.zettel_service import ZettelService
-from zettelkasten_mcp.services.search_service import SearchService
+from znote_mcp.config import config
+from znote_mcp.models.schema import LinkType, NoteType
+from znote_mcp.server.mcp_server import ZettelkastenMcpServer
+from znote_mcp.services.zettel_service import ZettelService
+from znote_mcp.services.search_service import SearchService
 
 class TestIntegration:
     """Integration tests for the entire Zettelkasten MCP system."""

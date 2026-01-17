@@ -18,16 +18,16 @@ from sqlalchemy.exc import DatabaseError as SQLAlchemyDatabaseError
 from sqlalchemy.exc import OperationalError as SQLAlchemyOperationalError
 from sqlalchemy.orm import Session, joinedload
 
-from zettelkasten_mcp.config import config
-from zettelkasten_mcp.models.db_models import (Base, DBLink, DBNote, DBTag,
+from znote_mcp.config import config
+from znote_mcp.models.db_models import (Base, DBLink, DBNote, DBTag,
                                             get_session_factory, init_db,
                                             note_tags, rebuild_fts_index)
-from zettelkasten_mcp.models.schema import (
+from znote_mcp.models.schema import (
     Link, LinkType, Note, NoteType, Tag, validate_safe_path_component,
     utc_now, ensure_timezone_aware
 )
-from zettelkasten_mcp.storage.base import Repository
-from zettelkasten_mcp.exceptions import (
+from znote_mcp.storage.base import Repository
+from znote_mcp.exceptions import (
     BulkOperationError,
     DatabaseCorruptionError,
     ErrorCode,
@@ -982,7 +982,7 @@ class NoteRepository(Repository[Note]):
         """Create a new note."""
         # Ensure the note has an ID
         if not note.id:
-            from zettelkasten_mcp.models.schema import generate_id
+            from znote_mcp.models.schema import generate_id
             note.id = generate_id()
 
         # Convert note to markdown
@@ -1932,7 +1932,7 @@ class NoteRepository(Repository[Note]):
                 code=ErrorCode.BULK_OPERATION_EMPTY_INPUT
             )
 
-        from zettelkasten_mcp.models.schema import generate_id
+        from znote_mcp.models.schema import generate_id
 
         created_notes = []
         staged_files: List[Tuple[Path, Path]] = []  # (staging_path, final_path) pairs

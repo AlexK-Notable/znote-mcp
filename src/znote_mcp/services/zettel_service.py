@@ -5,8 +5,8 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
-from zettelkasten_mcp.config import config
-from zettelkasten_mcp.exceptions import (
+from znote_mcp.config import config
+from znote_mcp.exceptions import (
     BulkOperationError,
     ErrorCode,
     NoteNotFoundError,
@@ -14,8 +14,8 @@ from zettelkasten_mcp.exceptions import (
     LinkError,
     ValidationError,
 )
-from zettelkasten_mcp.models.schema import Link, LinkType, Note, NoteType, Tag
-from zettelkasten_mcp.storage.note_repository import NoteRepository
+from znote_mcp.models.schema import Link, LinkType, Note, NoteType, Tag
+from znote_mcp.storage.note_repository import NoteRepository
 
 logger = logging.getLogger(__name__)
 

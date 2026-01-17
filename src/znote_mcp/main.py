@@ -7,11 +7,11 @@ import os
 import sys
 from pathlib import Path
 
-from zettelkasten_mcp.config import config
-from zettelkasten_mcp.models.db_models import init_db
-from zettelkasten_mcp.observability import configure_logging, metrics
-from zettelkasten_mcp.server.mcp_server import ZettelkastenMcpServer
-from zettelkasten_mcp.utils import setup_logging
+from znote_mcp.config import config
+from znote_mcp.models.db_models import init_db
+from znote_mcp.observability import configure_logging, metrics
+from znote_mcp.server.mcp_server import ZettelkastenMcpServer
+from znote_mcp.utils import setup_logging
 
 
 def parse_args():

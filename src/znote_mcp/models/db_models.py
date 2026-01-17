@@ -8,8 +8,8 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Mapped, Session, declarative_base, relationship, sessionmaker
 from sqlalchemy.pool import QueuePool
 
-from zettelkasten_mcp.config import config
-from zettelkasten_mcp.models.schema import LinkType, NoteType
+from znote_mcp.config import config
+from znote_mcp.models.schema import LinkType, NoteType
 
 # Create base class for SQLAlchemy models
 Base = declarative_base()

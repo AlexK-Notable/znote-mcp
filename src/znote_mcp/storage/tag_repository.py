@@ -4,8 +4,8 @@ from typing import Dict, List, Optional
 
 from sqlalchemy import func, select, text
 
-from zettelkasten_mcp.models.db_models import DBNote, DBTag, note_tags
-from zettelkasten_mcp.models.schema import Tag
+from znote_mcp.models.db_models import DBNote, DBTag, note_tags
+from znote_mcp.models.schema import Tag
 
 logger = logging.getLogger(__name__)
 

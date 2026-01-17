@@ -4,12 +4,12 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 from sqlalchemy import func, select, text
 
-from zettelkasten_mcp.models.schema import LinkType, Note, NoteType, Tag
-from zettelkasten_mcp.services.zettel_service import ZettelService
+from znote_mcp.models.schema import LinkType, Note, NoteType, Tag
+from znote_mcp.services.zettel_service import ZettelService
 
 from sqlalchemy import or_
 from sqlalchemy.orm import joinedload
-from zettelkasten_mcp.models.db_models import DBLink, DBNote
+from znote_mcp.models.db_models import DBLink, DBNote
 
 @dataclass
 class SearchResult:

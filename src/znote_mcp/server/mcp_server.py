@@ -6,8 +6,8 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
 from sqlalchemy import exc as sqlalchemy_exc
 from mcp.server.fastmcp import Context, FastMCP
-from zettelkasten_mcp.config import config
-from zettelkasten_mcp.exceptions import (
+from znote_mcp.config import config
+from znote_mcp.exceptions import (
     ZettelkastenError,
     NoteNotFoundError,
     NoteValidationError,
@@ -15,11 +15,11 @@ from zettelkasten_mcp.exceptions import (
     StorageError,
     ValidationError,
 )
-from zettelkasten_mcp.models.schema import LinkType, Note, NoteType, Tag
-from zettelkasten_mcp.backup import backup_manager
-from zettelkasten_mcp.observability import metrics, timed_operation
-from zettelkasten_mcp.services.search_service import SearchService
-from zettelkasten_mcp.services.zettel_service import ZettelService
+from znote_mcp.models.schema import LinkType, Note, NoteType, Tag
+from znote_mcp.backup import backup_manager
+from znote_mcp.observability import metrics, timed_operation
+from znote_mcp.services.search_service import SearchService
+from znote_mcp.services.zettel_service import ZettelService
 
 logger = logging.getLogger(__name__)
 

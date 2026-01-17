@@ -4,8 +4,8 @@ import datetime
 import pytest
 from unittest.mock import patch, MagicMock, call
 
-from zettelkasten_mcp.server.mcp_server import ZettelkastenMcpServer
-from zettelkasten_mcp.models.schema import LinkType, NoteType
+from znote_mcp.server.mcp_server import ZettelkastenMcpServer
+from znote_mcp.models.schema import LinkType, NoteType
 
 class TestMcpServer:
     """Tests for the ZettelkastenMcpServer class."""
@@ -33,9 +33,9 @@ class TestMcpServer:
         self.mock_search_service = MagicMock()
         
         # Create patchers for FastMCP, ZettelService, and SearchService
-        self.mcp_patcher = patch('zettelkasten_mcp.server.mcp_server.FastMCP', return_value=self.mock_mcp)
-        self.zettel_patcher = patch('zettelkasten_mcp.server.mcp_server.ZettelService', return_value=self.mock_zettel_service)
-        self.search_patcher = patch('zettelkasten_mcp.server.mcp_server.SearchService', return_value=self.mock_search_service)
+        self.mcp_patcher = patch('znote_mcp.server.mcp_server.FastMCP', return_value=self.mock_mcp)
+        self.zettel_patcher = patch('znote_mcp.server.mcp_server.ZettelService', return_value=self.mock_zettel_service)
+        self.search_patcher = patch('znote_mcp.server.mcp_server.SearchService', return_value=self.mock_search_service)
         
         # Start the patchers
         self.mcp_patcher.start()

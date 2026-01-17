@@ -1,6 +1,8 @@
-# Zettelkasten MCP Server
+# znote-mcp
 
 A Model Context Protocol (MCP) server that implements the Zettelkasten knowledge management methodology, allowing you to create, link, explore and synthesize atomic notes through Claude and other MCP-compatible clients.
+
+> **Note**: This is a fork of [entanglr/zettelkasten-mcp](https://github.com/entanglr/zettelkasten-mcp), renamed to znote-mcp.
 
 ## What is Zettelkasten?
 
@@ -30,7 +32,7 @@ This structure invites serendipitous discoveries as you follow trails of thought
 
 ## Examples
 
-- Knowledge creation: [A small Zettelkasten knowledge network about the Zettelkasten method itself](https://github.com/entanglr/zettelkasten-mcp/discussions/5)
+- Knowledge creation: [A small Zettelkasten knowledge network about the Zettelkasten method itself](https://github.com/entanglr/znote-mcp/discussions/5)
 
 ## Note Types
 
@@ -66,31 +68,31 @@ To ensure maximum effectiveness, we recommend using a system prompt ("project in
 
 Pick one:
 
-- [system-prompt.md](https://github.com/entanglr/zettelkasten-mcp/blob/main/docs/prompts/system/system-prompt.md)
-- [system-prompt-with-protocol.md](https://github.com/entanglr/zettelkasten-mcp/blob/main/docs/prompts/system/system-prompt-with-protocol.md)
+- [system-prompt.md](https://github.com/entanglr/znote-mcp/blob/main/docs/prompts/system/system-prompt.md)
+- [system-prompt-with-protocol.md](https://github.com/entanglr/znote-mcp/blob/main/docs/prompts/system/system-prompt-with-protocol.md)
 
 ### Project knowledge
 
 For end users:
 
-- [zettelkasten-methodology-technical.md](https://github.com/entanglr/zettelkasten-mcp/blob/main/docs/project-knowledge/user/zettelkasten-methodology-technical.md)
-- [link-types-in-zettelkasten-mcp-server.md](https://github.com/entanglr/zettelkasten-mcp/blob/main/docs/project-knowledge/user/link-types-in-zettelkasten-mcp-server.md)
+- [zettelkasten-methodology-technical.md](https://github.com/entanglr/znote-mcp/blob/main/docs/project-knowledge/user/zettelkasten-methodology-technical.md)
+- [link-types-in-znote-mcp-server.md](https://github.com/entanglr/znote-mcp/blob/main/docs/project-knowledge/user/link-types-in-znote-mcp-server.md)
 - (more info relevant to your project)
 
 ### Chat Prompts
 
-- [chat-prompt-knowledge-creation.md](https://github.com/entanglr/zettelkasten-mcp/blob/main/docs/prompts/chat/chat-prompt-knowledge-creation.md)
-- [chat-prompt-knowledge-creation-batch.md](https://github.com/entanglr/zettelkasten-mcp/blob/main/docs/prompts/chat/chat-prompt-knowledge-creation-batch.md)
-- [chat-prompt-knowledge-exploration.md](https://github.com/entanglr/zettelkasten-mcp/blob/main/docs/prompts/chat/chat-prompt-knowledge-exploration.md)
-- [chat-prompt-knowledge-synthesis.md](https://github.com/entanglr/zettelkasten-mcp/blob/main/docs/prompts/chat/chat-prompt-knowledge-synthesis.md)
+- [chat-prompt-knowledge-creation.md](https://github.com/entanglr/znote-mcp/blob/main/docs/prompts/chat/chat-prompt-knowledge-creation.md)
+- [chat-prompt-knowledge-creation-batch.md](https://github.com/entanglr/znote-mcp/blob/main/docs/prompts/chat/chat-prompt-knowledge-creation-batch.md)
+- [chat-prompt-knowledge-exploration.md](https://github.com/entanglr/znote-mcp/blob/main/docs/prompts/chat/chat-prompt-knowledge-exploration.md)
+- [chat-prompt-knowledge-synthesis.md](https://github.com/entanglr/znote-mcp/blob/main/docs/prompts/chat/chat-prompt-knowledge-synthesis.md)
 
 ### Project knowledge (dev)
 
 For developers and contributors:
 
-- [Example - A simple MCP server.md](https://github.com/entanglr/zettelkasten-mcp/blob/main/docs/project-knowledge/dev/Example%20-%20A%20simple%20MCP%20server%20that%20exposes%20a%20website%20fetching%20tool.md)
-- [MCP Python SDK-README.md](https://github.com/entanglr/zettelkasten-mcp/blob/main/docs/project-knowledge/dev/MCP%20Python%20SDK-README.md)
-- [llms-full.txt](https://github.com/entanglr/zettelkasten-mcp/blob/main/docs/project-knowledge/dev/llms-full.txt)
+- [Example - A simple MCP server.md](https://github.com/entanglr/znote-mcp/blob/main/docs/project-knowledge/dev/Example%20-%20A%20simple%20MCP%20server%20that%20exposes%20a%20website%20fetching%20tool.md)
+- [MCP Python SDK-README.md](https://github.com/entanglr/znote-mcp/blob/main/docs/project-knowledge/dev/MCP%20Python%20SDK-README.md)
+- [llms-full.txt](https://github.com/entanglr/znote-mcp/blob/main/docs/project-knowledge/dev/llms-full.txt)
 
 NB: Optionally include the source code with a tool like [repomix](https://github.com/yamadashy/repomix).
 
@@ -116,8 +118,8 @@ If you edit Markdown files directly outside the system, you'll need to run the `
 
 ```bash
 # Clone the repository
-git clone https://github.com/entanglr/zettelkasten-mcp.git
-cd zettelkasten-mcp
+git clone https://github.com/entanglr/znote-mcp.git
+cd znote-mcp
 
 # Create a virtual environment with uv
 uv venv
@@ -145,13 +147,13 @@ Then edit the file to configure your connection parameters.
 ### Starting the Server
 
 ```bash
-python -m zettelkasten_mcp.main
+python -m znote_mcp.main
 ```
 
 Or with explicit configuration:
 
 ```bash
-python -m zettelkasten_mcp.main --notes-dir ./data/notes --database-path ./data/db/zettelkasten.db
+python -m znote_mcp.main --notes-dir ./data/notes --database-path ./data/db/zettelkasten.db
 ```
 
 ### Connecting to Claude Desktop
@@ -161,15 +163,15 @@ Add the following configuration to your Claude Desktop:
 ```json
 {
   "mcpServers": {
-    "zettelkasten": {
-      "command": "/absolute/path/to/zettelkasten-mcp/.venv/bin/python",
+    "znote": {
+      "command": "/absolute/path/to/znote-mcp/.venv/bin/python",
       "args": [
         "-m",
-        "zettelkasten_mcp.main"
+        "znote_mcp.main"
       ],
       "env": {
-        "ZETTELKASTEN_NOTES_DIR": "/absolute/path/to/zettelkasten-mcp/data/notes",
-        "ZETTELKASTEN_DATABASE_PATH": "/absolute/path/to/zettelkasten-mcp/data/db/zettelkasten.db",
+        "ZETTELKASTEN_NOTES_DIR": "/absolute/path/to/znote-mcp/data/notes",
+        "ZETTELKASTEN_DATABASE_PATH": "/absolute/path/to/znote-mcp/data/db/zettelkasten.db",
         "ZETTELKASTEN_LOG_LEVEL": "INFO"
       }
     }
@@ -201,9 +203,9 @@ All tools have been prefixed with `zk_` for better organization:
 ## Project Structure
 
 ```
-zettelkasten-mcp/
+znote-mcp/
 ├── src/
-│   └── zettelkasten_mcp/
+│   └── znote_mcp/
 │       ├── models/       # Data models
 │       ├── storage/      # Storage layer
 │       ├── services/     # Business logic
@@ -236,7 +238,7 @@ uv run pytest -v tests/
 
 #### With coverage report
 ```bash
-uv run pytest --cov=zettelkasten_mcp --cov-report=term-missing tests/
+uv run pytest --cov=znote_mcp --cov-report=term-missing tests/
 ```
 
 #### Running a specific test file
@@ -272,10 +274,11 @@ tests/
 
 **⚠️ USE AT YOUR OWN RISK**: This software is experimental and provided as-is without warranty of any kind. While efforts have been made to ensure data integrity, it may contain bugs that could potentially lead to data loss or corruption. Always back up your notes regularly and use caution when testing with important information.
 
-## Credit Where Credit's Due
+## Acknowledgments
 
-This MCP server was crafted with the assistance of Claude, who helped organize the atomic thoughts of this project into a coherent knowledge graph. Much like a good Zettelkasten system, Claude connected the dots between ideas that might otherwise have remained isolated. Unlike Luhmann's paper-based system, however, Claude didn't require 90,000 index cards to be effective.
+- [Peter J. Herrel (@diggy)](https://github.com/diggy) and [Entanglr](https://github.com/entanglr) - Original creators of [zettelkasten-mcp](https://github.com/entanglr/zettelkasten-mcp)
+- This MCP server was crafted with the assistance of Claude, who helped organize the atomic thoughts of this project into a coherent knowledge graph.
 
 ## License
 
-MIT License
+MIT License - see the [LICENSE](LICENSE) file for details.

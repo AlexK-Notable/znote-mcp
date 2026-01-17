@@ -37,7 +37,7 @@ class ZettelkastenConfig(BaseModel):
     )
     # Server configuration
     server_name: str = Field(
-        default=os.getenv("ZETTELKASTEN_SERVER_NAME", "zettelkasten-mcp")
+        default=os.getenv("ZETTELKASTEN_SERVER_NAME", "znote-mcp")
     )
     server_version: str = Field(default="1.2.1")
     # Date format for ID generation (using ISO format for timestamps)

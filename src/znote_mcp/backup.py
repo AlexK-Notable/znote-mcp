@@ -15,7 +15,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Dict, List, Optional, Union
 
-from zettelkasten_mcp.config import config
+from znote_mcp.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -340,7 +340,7 @@ def backup_now(label: Optional[str] = None) -> Dict[str, Optional[Path]]:
         Dictionary with paths to created backups.
 
     Example:
-        from zettelkasten_mcp.backup import backup_now
+        from znote_mcp.backup import backup_now
         result = backup_now(label="before-migration")
     """
     return backup_manager.create_full_backup(label=label)
