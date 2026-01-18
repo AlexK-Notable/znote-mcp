@@ -15,7 +15,14 @@ from znote_mcp.exceptions import (
     StorageError,
     ValidationError,
 )
-from znote_mcp.models.schema import LinkType, Note, NoteType, Tag
+from znote_mcp.models.schema import (
+    ConflictResult,
+    LinkType,
+    Note,
+    NoteType,
+    Tag,
+    VersionedNote,
+)
 from znote_mcp.backup import backup_manager
 from znote_mcp.observability import metrics, timed_operation
 from znote_mcp.services.search_service import SearchService
@@ -130,24 +137,32 @@ class ZettelkastenMcpServer:
             """Retrieve a note by ID or title.
             Args:
                 identifier: The ID or title of the note
+            Returns:
+                Note content with version hash (use version in zk_update_note/zk_delete_note
+                for conflict detection when multiple processes may edit the same note).
             """
             with timed_operation("zk_get_note", identifier=identifier[:30]) as op:
                 try:
                     identifier = str(identifier)
-                    # Try to get by ID first
-                    note = self.zettel_service.get_note(identifier)
+                    # Try to get by ID first (with version info)
+                    versioned = self.zettel_service.get_note_versioned(identifier)
                     # If not found, try by title
-                    if not note:
+                    if not versioned:
                         note = self.zettel_service.get_note_by_title(identifier)
-                    if not note:
+                        if note:
+                            versioned = self.zettel_service.get_note_versioned(note.id)
+                    if not versioned:
                         op["found"] = False
                         return f"Note not found: {identifier}"
 
+                    note = versioned.note
+                    version = versioned.version
                     op["found"] = True
                     op["note_id"] = note.id
-                    # Format the note
+                    # Format the note with version info
                     result = f"# {note.title}\n"
                     result += f"ID: {note.id}\n"
+                    result += f"Version: {version.commit_hash}\n"
                     result += f"Type: {note.note_type.value}\n"
                     result += f"Created: {note.created_at.isoformat()}\n"
                     result += f"Updated: {note.updated_at.isoformat()}\n"
@@ -167,9 +182,10 @@ class ZettelkastenMcpServer:
             content: Optional[str] = None,
             note_type: Optional[str] = None,
             project: Optional[str] = None,
-            tags: Optional[str] = None
+            tags: Optional[str] = None,
+            expected_version: Optional[str] = None
         ) -> str:
-            """Update an existing note.
+            """Update an existing note with optional version conflict detection.
             Args:
                 note_id: The ID of the note to update
                 title: New title (optional)
@@ -177,6 +193,11 @@ class ZettelkastenMcpServer:
                 note_type: New note type (optional)
                 project: New project (optional, moves note to different Obsidian subdirectory)
                 tags: New comma-separated list of tags (optional)
+                expected_version: Version hash from zk_get_note for conflict detection.
+                    If provided and doesn't match current version, returns CONFLICT error
+                    instead of overwriting (recommended for multi-process safety).
+            Returns:
+                Success message with new version, or CONFLICT error if version mismatch.
             """
             try:
                 # Get the note
@@ -197,34 +218,73 @@ class ZettelkastenMcpServer:
                 if tags is not None:  # Allow empty string to clear tags
                     tag_list = [t.strip() for t in tags.split(",") if t.strip()]
 
-                # Update the note
-                updated_note = self.zettel_service.update_note(
+                # Update the note with version checking
+                result = self.zettel_service.update_note_versioned(
                     note_id=note_id,
                     title=title,
                     content=content,
                     note_type=note_type_enum,
                     project=project,
-                    tags=tag_list
+                    tags=tag_list,
+                    expected_version=expected_version
                 )
-                return f"Note updated successfully: {updated_note.id} (project: {updated_note.project})"
+
+                # Check for conflict
+                if isinstance(result, ConflictResult):
+                    return (
+                        f"CONFLICT: {result.message}\n"
+                        f"Expected version: {result.expected_version}\n"
+                        f"Actual version: {result.actual_version}\n"
+                        f"Re-read the note with zk_get_note to get the latest version."
+                    )
+
+                # Success - return new version
+                versioned = result
+                return (
+                    f"Note updated successfully: {versioned.note.id}\n"
+                    f"New version: {versioned.version.commit_hash}\n"
+                    f"Project: {versioned.note.project}"
+                )
             except Exception as e:
                 return self.format_error_response(e)
 
         # Delete a note
         @self.mcp.tool(name="zk_delete_note")
-        def zk_delete_note(note_id: str) -> str:
-            """Delete a note.
+        def zk_delete_note(
+            note_id: str,
+            expected_version: Optional[str] = None
+        ) -> str:
+            """Delete a note with optional version conflict detection.
             Args:
                 note_id: The ID of the note to delete
+                expected_version: Version hash from zk_get_note for conflict detection.
+                    If provided and doesn't match current version, returns CONFLICT error
+                    instead of deleting (recommended for multi-process safety).
+            Returns:
+                Success message, or CONFLICT error if version mismatch.
             """
             try:
                 # Check if note exists
                 note = self.zettel_service.get_note(note_id)
                 if not note:
                     return f"Note not found: {note_id}"
-                
-                # Delete the note
-                self.zettel_service.delete_note(str(note_id))
+
+                # Delete the note with version checking
+                result = self.zettel_service.delete_note_versioned(
+                    note_id=str(note_id),
+                    expected_version=expected_version
+                )
+
+                # Check for conflict
+                if isinstance(result, ConflictResult):
+                    return (
+                        f"CONFLICT: {result.message}\n"
+                        f"Expected version: {result.expected_version}\n"
+                        f"Actual version: {result.actual_version}\n"
+                        f"Re-read the note with zk_get_note to verify before deleting."
+                    )
+
+                # Success
                 return f"Note deleted successfully: {note_id}"
             except Exception as e:
                 return self.format_error_response(e)

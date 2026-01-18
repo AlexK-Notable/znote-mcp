@@ -89,7 +89,7 @@ class TestMcpServer:
         """Test the zk_get_note tool."""
         # Check the tool is registered
         assert 'zk_get_note' in self.registered_tools
-        
+
         # Set up mock note
         mock_note = MagicMock()
         mock_note.id = "test123"
@@ -104,21 +104,31 @@ class TestMcpServer:
         mock_tag2.name = "tag2"
         mock_note.tags = [mock_tag1, mock_tag2]
         mock_note.links = []
-        
-        # Set up return value for get_note
-        self.mock_zettel_service.get_note.return_value = mock_note
-        
+
+        # Set up mock version info
+        mock_version = MagicMock()
+        mock_version.commit_hash = "abc1234"
+
+        # Set up mock versioned note
+        mock_versioned_note = MagicMock()
+        mock_versioned_note.note = mock_note
+        mock_versioned_note.version = mock_version
+
+        # Set up return value for get_note_versioned
+        self.mock_zettel_service.get_note_versioned.return_value = mock_versioned_note
+
         # Call the tool function directly
         get_note_func = self.registered_tools['zk_get_note']
         result = get_note_func(identifier="test123")
-        
+
         # Verify result
         assert "# Test Note" in result
         assert "ID: test123" in result
+        assert "Version: abc1234" in result
         assert "Test content" in result
-        
+
         # Verify service call
-        self.mock_zettel_service.get_note.assert_called_with("test123")
+        self.mock_zettel_service.get_note_versioned.assert_called_with("test123")
 
     def test_create_link_tool(self):
         """Test the zk_create_link tool."""

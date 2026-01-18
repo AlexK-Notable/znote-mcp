@@ -35,6 +35,21 @@ class ZettelkastenConfig(BaseModel):
             else None
         )
     )
+    # Git versioning configuration
+    # When True, notes are version-controlled with git and include commit hashes
+    git_enabled: bool = Field(
+        default_factory=lambda: os.getenv(
+            "ZETTELKASTEN_GIT_ENABLED", "true"
+        ).lower() in ("true", "1", "yes")
+    )
+    # In-memory database configuration
+    # When True, uses in-memory SQLite for process isolation (recommended for
+    # multi-process environments). Index is rebuilt from markdown files on startup.
+    in_memory_db: bool = Field(
+        default_factory=lambda: os.getenv(
+            "ZETTELKASTEN_IN_MEMORY_DB", "true"
+        ).lower() in ("true", "1", "yes")
+    )
     # Server configuration
     server_name: str = Field(
         default=os.getenv("ZETTELKASTEN_SERVER_NAME", "znote-mcp")

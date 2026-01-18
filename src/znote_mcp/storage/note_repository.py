@@ -24,8 +24,9 @@ from znote_mcp.models.db_models import (Base, DBLink, DBNote, DBTag,
                                             note_tags, rebuild_fts_index)
 from znote_mcp.models.schema import (
     Link, LinkType, Note, NoteType, Tag, validate_safe_path_component,
-    utc_now, ensure_timezone_aware
+    utc_now, ensure_timezone_aware, VersionInfo, ConflictResult, VersionedNote
 )
+from znote_mcp.storage.git_wrapper import GitWrapper, GitConflictError
 from znote_mcp.storage.base import Repository
 from znote_mcp.exceptions import (
     BulkOperationError,
@@ -45,12 +46,26 @@ class NoteRepository(Repository[Note]):
     The file system is the source of truth - database is rebuilt from files if needed.
     """
     
-    def __init__(self, notes_dir: Optional[Path] = None):
+    def __init__(
+        self,
+        notes_dir: Optional[Path] = None,
+        database_path: Optional[Path] = None,
+        obsidian_vault_path: Optional[Path] = None,
+        use_git: bool = True,
+        in_memory_db: bool = True,
+    ):
         """Initialize the repository.
 
         Args:
             notes_dir: Path to directory containing note markdown files.
                        If None, uses config.notes_dir.
+            database_path: Path to SQLite database file.
+                          Ignored when in_memory_db=True.
+            obsidian_vault_path: Path to Obsidian vault for mirroring.
+                                If None, uses config setting.
+            use_git: If True, enable git versioning for notes. Default True.
+            in_memory_db: If True, use in-memory SQLite database. Default True.
+                         When True, database is rebuilt from files on startup.
 
         Note:
             The notes_dir should be the directory CONTAINING the .md files,
@@ -64,6 +79,10 @@ class NoteRepository(Repository[Note]):
             else config.get_absolute_path(config.notes_dir)
         )
 
+        # Store configuration options
+        self.use_git = use_git
+        self.in_memory_db = in_memory_db
+
         # Ensure directories exist
         self.notes_dir.mkdir(parents=True, exist_ok=True)
 
@@ -73,16 +92,25 @@ class NoteRepository(Repository[Note]):
         # Log the configuration being used
         logger.info(
             f"NoteRepository initialized: notes_dir={self.notes_dir}, "
-            f"db_url={config.get_db_url()}"
+            f"db_url={config.get_db_url() if not in_memory_db else ':memory:'}, "
+            f"use_git={use_git}, in_memory_db={in_memory_db}"
         )
 
         # Initialize Obsidian vault mirror (optional)
-        self.obsidian_vault_path = config.get_obsidian_vault_path()
+        self.obsidian_vault_path = (
+            obsidian_vault_path if obsidian_vault_path else config.get_obsidian_vault_path()
+        )
         if self.obsidian_vault_path:
             logger.info(f"Obsidian vault mirror enabled: {self.obsidian_vault_path}")
 
+        # Initialize GitWrapper for version control (if enabled)
+        self._git: Optional[GitWrapper] = None
+        if use_git:
+            self._git = GitWrapper(self.notes_dir)
+            logger.info(f"Git versioning enabled for {self.notes_dir}")
+
         # Initialize database
-        self.engine = init_db()
+        self.engine = init_db(in_memory=in_memory_db)
         self.session_factory = get_session_factory(self.engine)
 
         # File access lock (for bulk operations on multiple files)
@@ -102,7 +130,11 @@ class NoteRepository(Repository[Note]):
         self._cleanup_staging()
 
         # Check database health and recover if needed
-        self._initialize_with_health_check()
+        # For in-memory databases, always rebuild from files
+        if in_memory_db:
+            self.rebuild_index()
+        else:
+            self._initialize_with_health_check()
 
     def _validate_notes_dir(self) -> None:
         """Validate that notes_dir looks like a valid notes directory.
@@ -1280,7 +1312,188 @@ class NoteRepository(Repository[Note]):
                 session.execute(text("DELETE FROM note_tags WHERE note_id = :note_id"), {"note_id": id})
                 session.execute(text("DELETE FROM notes WHERE id = :note_id"), {"note_id": id})
                 session.commit()
-    
+
+    # =========================================================================
+    # Versioned CRUD Operations (with git tracking)
+    # =========================================================================
+
+    def get_versioned(self, id: str) -> Optional[VersionedNote]:
+        """Get a note with its version information.
+
+        Args:
+            id: The note ID
+
+        Returns:
+            VersionedNote if found, None otherwise
+        """
+        note = self.get(id)
+        if not note:
+            return None
+
+        if self._git:
+            file_path = self.notes_dir / f"{id}.md"
+            version = self._git.get_file_version(file_path)
+            if version:
+                version_info = VersionInfo.from_git_commit(
+                    version.commit_hash,
+                    version.timestamp
+                )
+            else:
+                version_info = VersionInfo(
+                    commit_hash="0000000",
+                    timestamp=note.created_at
+                )
+        else:
+            version_info = VersionInfo(
+                commit_hash="0000000",
+                timestamp=note.updated_at
+            )
+
+        return VersionedNote(note=note, version=version_info)
+
+    def create_versioned(self, note: Note) -> VersionedNote:
+        """Create a note with version tracking.
+
+        Args:
+            note: The note to create
+
+        Returns:
+            VersionedNote with the created note and its version info
+        """
+        created_note = self.create(note)
+
+        if self._git:
+            file_path = self.notes_dir / f"{created_note.id}.md"
+            version = self._git.commit_file(
+                file_path,
+                f"Create note: {created_note.title}"
+            )
+            version_info = VersionInfo.from_git_commit(
+                version.commit_hash,
+                version.timestamp
+            )
+        else:
+            version_info = VersionInfo(
+                commit_hash="0000000",
+                timestamp=created_note.created_at
+            )
+
+        return VersionedNote(note=created_note, version=version_info)
+
+    def update_versioned(
+        self,
+        note: Note,
+        expected_version: Optional[str] = None
+    ) -> Union[VersionedNote, ConflictResult]:
+        """Update a note with version checking.
+
+        Args:
+            note: The note to update
+            expected_version: If provided, check this matches current version before updating
+
+        Returns:
+            VersionedNote on success, ConflictResult if version conflict detected
+        """
+        file_path = self.notes_dir / f"{note.id}.md"
+
+        # Check for conflict if expected version provided
+        if expected_version and self._git:
+            matches, actual = self._git.check_version_match(file_path, expected_version)
+            if not matches and actual:
+                return ConflictResult(
+                    status="conflict",
+                    note_id=note.id,
+                    expected_version=expected_version,
+                    actual_version=actual,
+                    message=f"Note was modified by another process. Expected version {expected_version}, found {actual}"
+                )
+
+        # Perform the update
+        updated_note = self.update(note)
+
+        # Commit to git
+        if self._git:
+            try:
+                version = self._git.commit_file(
+                    file_path,
+                    f"Update note: {updated_note.title}",
+                    expected_version=expected_version
+                )
+                version_info = VersionInfo.from_git_commit(
+                    version.commit_hash,
+                    version.timestamp
+                )
+            except GitConflictError as e:
+                return ConflictResult(
+                    status="conflict",
+                    note_id=note.id,
+                    expected_version=e.expected_version,
+                    actual_version=e.actual_version,
+                    message=str(e)
+                )
+        else:
+            version_info = VersionInfo(
+                commit_hash="0000000",
+                timestamp=updated_note.updated_at
+            )
+
+        return VersionedNote(note=updated_note, version=version_info)
+
+    def delete_versioned(
+        self,
+        id: str,
+        expected_version: Optional[str] = None
+    ) -> Union[VersionInfo, ConflictResult]:
+        """Delete a note with version checking.
+
+        Args:
+            id: The note ID to delete
+            expected_version: If provided, check this matches current version before deleting
+
+        Returns:
+            VersionInfo on success, ConflictResult if version conflict detected
+        """
+        file_path = self.notes_dir / f"{id}.md"
+
+        # Get note title for commit message before deletion
+        note = self.get(id)
+        title = note.title if note else id
+
+        # Check version if provided
+        if expected_version and self._git:
+            matches, actual = self._git.check_version_match(file_path, expected_version)
+            if not matches and actual:
+                return ConflictResult(
+                    status="conflict",
+                    note_id=id,
+                    expected_version=expected_version,
+                    actual_version=actual,
+                    message=f"Note was modified. Cannot delete."
+                )
+
+        # Perform deletion
+        self.delete(id)
+
+        # Commit to git
+        if self._git:
+            try:
+                version = self._git.delete_file(
+                    file_path,
+                    f"Delete note: {title}",
+                    expected_version=expected_version
+                )
+                return VersionInfo.from_git_commit(version.commit_hash, version.timestamp)
+            except GitConflictError as e:
+                return ConflictResult(
+                    status="conflict",
+                    note_id=id,
+                    expected_version=e.expected_version,
+                    actual_version=e.actual_version,
+                    message="Version conflict during delete"
+                )
+
+        return VersionInfo(commit_hash="0000000", timestamp=utc_now())
+
     def search(
         self,
         limit: Optional[int] = None,
