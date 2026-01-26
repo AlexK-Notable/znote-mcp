@@ -908,19 +908,28 @@ class NoteRepository(Repository[Note]):
     def _mirror_to_obsidian(self, note: Note, markdown: str) -> None:
         """Mirror a note to the Obsidian vault if configured.
 
-        Creates a copy of the note in the Obsidian vault using the note's project
-        as subdirectory. Filename includes sanitized title + ID suffix to prevent
-        collisions (e.g., "Hello: World" and "Hello; World" both sanitize to
-        "Hello_ World" but get unique filenames via ID suffix).
+        Creates a copy of the note in the Obsidian vault using the folder structure:
+        vault_path/project/purpose/filename.md
+
+        This organization allows:
+        - Quick navigation by project context
+        - Further grouping by workflow purpose (research, planning, bugfixing, general)
+        - Clear separation of different types of work
+
+        Filename includes sanitized title + ID suffix to prevent collisions.
         """
         if not self.obsidian_vault_path:
             return
 
         # Sanitize the project name for use as a directory
+        # Handle sub-projects (e.g., "monorepo/frontend" -> "monorepo_frontend")
         safe_project = "".join(
             c if c.isalnum() or c in " -_" else "_"
             for c in note.project
         ).strip() or "general"
+
+        # Get purpose for second-level organization
+        purpose = note.note_purpose.value if note.note_purpose else "general"
 
         # Sanitize the title for use as a filename
         safe_title = "".join(
@@ -936,11 +945,11 @@ class NoteRepository(Repository[Note]):
         else:
             safe_filename = note.id
 
-        # Create project subdirectory
-        project_dir = self.obsidian_vault_path / safe_project
-        project_dir.mkdir(parents=True, exist_ok=True)
+        # Create project/purpose subdirectory structure
+        target_dir = self.obsidian_vault_path / safe_project / purpose
+        target_dir.mkdir(parents=True, exist_ok=True)
 
-        obsidian_file_path = project_dir / f"{safe_filename}.md"
+        obsidian_file_path = target_dir / f"{safe_filename}.md"
 
         try:
             with open(obsidian_file_path, "w", encoding="utf-8") as f:
@@ -951,11 +960,15 @@ class NoteRepository(Repository[Note]):
             logger.warning(f"Failed to mirror note to Obsidian vault: {e}")
 
     def _delete_from_obsidian(self, note_id: str, title: Optional[str] = None,
-                               project: Optional[str] = None) -> None:
+                               project: Optional[str] = None,
+                               purpose: Optional[str] = None) -> None:
         """Delete a note's mirror from the Obsidian vault if configured.
 
         Searches for files with ID suffix pattern: "Title (id_suffix).md"
-        Uses project directory if known, otherwise searches all subdirectories.
+
+        Directory structure is: vault_path/project/purpose/filename.md
+        Searches in the specific purpose dir if known, then project dir,
+        finally all subdirectories as fallback.
         """
         if not self.obsidian_vault_path:
             return
@@ -971,15 +984,30 @@ class NoteRepository(Repository[Note]):
                 for c in project
             ).strip() or "general"
             project_dir = self.obsidian_vault_path / safe_project
+
+            # If we know the purpose, search there first
+            if purpose:
+                purpose_dir = project_dir / purpose
+                if purpose_dir.exists():
+                    search_dirs.append(purpose_dir)
+
+            # Also search all purpose subdirs within project
             if project_dir.exists():
+                for subdir in project_dir.iterdir():
+                    if subdir.is_dir() and subdir not in search_dirs:
+                        search_dirs.append(subdir)
+                # Also search project dir itself (for legacy flat structure)
                 search_dirs.append(project_dir)
-        
-        # If no project specified or project dir doesn't exist, search all subdirs
+
+        # If no project specified or project dir doesn't exist, search all subdirs recursively
         if not search_dirs:
-            search_dirs = [
-                d for d in self.obsidian_vault_path.iterdir() 
-                if d.is_dir()
-            ]
+            for top_dir in self.obsidian_vault_path.iterdir():
+                if top_dir.is_dir():
+                    search_dirs.append(top_dir)
+                    # Also search subdirs (purpose folders)
+                    for subdir in top_dir.iterdir():
+                        if subdir.is_dir():
+                            search_dirs.append(subdir)
 
         # Search for file with matching ID suffix pattern
         for search_dir in search_dirs:
@@ -1186,9 +1214,15 @@ class NoteRepository(Repository[Note]):
             if not existing_note:
                 raise ValueError(f"Note with ID {note.id} does not exist")
 
-            # If title or project changed, delete old Obsidian mirror (will be recreated)
-            if existing_note.title != note.title or existing_note.project != note.project:
-                self._delete_from_obsidian(note.id, existing_note.title, existing_note.project)
+            # If title, project, or purpose changed, delete old Obsidian mirror (will be recreated)
+            old_purpose = existing_note.note_purpose.value if existing_note.note_purpose else "general"
+            new_purpose = note.note_purpose.value if note.note_purpose else "general"
+            if (existing_note.title != note.title or
+                existing_note.project != note.project or
+                old_purpose != new_purpose):
+                self._delete_from_obsidian(
+                    note.id, existing_note.title, existing_note.project, old_purpose
+                )
 
             # Update timestamp
             note.updated_at = utc_now()
@@ -1273,14 +1307,16 @@ class NoteRepository(Repository[Note]):
             if not file_path.exists():
                 raise ValueError(f"Note with ID {id} does not exist")
 
-            # Get the note's title and project before deleting (for Obsidian mirror)
+            # Get the note's title, project, and purpose before deleting (for Obsidian mirror)
             note_title = None
             note_project = None
+            note_purpose = None
             try:
                 note = self.get(id)
                 if note:
                     note_title = note.title
                     note_project = note.project
+                    note_purpose = note.note_purpose.value if note.note_purpose else "general"
             except (IOError, OSError, ValueError, yaml.YAMLError) as e:
                 # If we can't read the note, log and continue with deletion
                 # The note file exists but may be corrupted/unreadable
@@ -1295,7 +1331,7 @@ class NoteRepository(Repository[Note]):
                 raise IOError(f"Failed to delete note {id}: {e}")
 
             # Delete from Obsidian vault if configured
-            self._delete_from_obsidian(id, note_title, note_project)
+            self._delete_from_obsidian(id, note_title, note_project, note_purpose)
 
             # Delete from database (using parameterized queries to prevent SQL injection)
             with self.session_factory() as session:
@@ -2117,10 +2153,11 @@ class NoteRepository(Repository[Note]):
                     notes_info.append({
                         "id": note_id,
                         "title": note.title,
-                        "project": note.project
+                        "project": note.project,
+                        "purpose": note.note_purpose.value if note.note_purpose else "general"
                     })
             except Exception:
-                notes_info.append({"id": note_id, "title": None, "project": None})
+                notes_info.append({"id": note_id, "title": None, "project": None, "purpose": None})
 
         # Delete from database FIRST (atomic transaction)
         try:
@@ -2165,7 +2202,7 @@ class NoteRepository(Repository[Note]):
 
         # Delete from Obsidian
         for info in notes_info:
-            self._delete_from_obsidian(info["id"], info["title"], info["project"])
+            self._delete_from_obsidian(info["id"], info["title"], info["project"], info["purpose"])
 
         if failed_files:
             logger.warning(f"Some files could not be deleted: {failed_files}")
@@ -2473,7 +2510,8 @@ class NoteRepository(Repository[Note]):
                             notes_to_update.append({
                                 "note": note,
                                 "old_project": old_project,
-                                "old_title": note.title
+                                "old_title": note.title,
+                                "old_purpose": note.note_purpose.value if note.note_purpose else "general"
                             })
 
                         # Update database
@@ -2494,9 +2532,10 @@ class NoteRepository(Repository[Note]):
                     note = update_info["note"]
                     old_project = update_info["old_project"]
                     old_title = update_info["old_title"]
+                    old_purpose = update_info["old_purpose"]
 
                     # Delete old Obsidian mirror
-                    self._delete_from_obsidian(note.id, old_title, old_project)
+                    self._delete_from_obsidian(note.id, old_title, old_project, old_purpose)
 
                     # Update note's project
                     note.project = project

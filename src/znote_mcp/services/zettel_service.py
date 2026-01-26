@@ -38,10 +38,26 @@ class ZettelService:
         content: str,
         note_type: NoteType = NoteType.PERMANENT,
         project: str = "general",
+        note_purpose: NotePurpose = NotePurpose.GENERAL,
         tags: Optional[List[str]] = None,
+        plan_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None
     ) -> Note:
-        """Create a new note."""
+        """Create a new note.
+
+        Args:
+            title: Note title (required).
+            content: Note content (required).
+            note_type: Zettelkasten note type.
+            project: Project this note belongs to.
+            note_purpose: Workflow purpose (research, planning, bugfixing, general).
+            tags: List of tag names.
+            plan_id: Optional ID of associated plan/task.
+            metadata: Additional metadata dict.
+
+        Returns:
+            Created Note object.
+        """
         if not title:
             raise NoteValidationError(
                 "Title is required",
@@ -61,7 +77,9 @@ class ZettelService:
             content=content,
             note_type=note_type,
             project=project,
+            note_purpose=note_purpose,
             tags=[Tag(name=tag) for tag in (tags or [])],
+            plan_id=plan_id,
             metadata=metadata or {}
         )
 
@@ -83,10 +101,27 @@ class ZettelService:
         content: Optional[str] = None,
         note_type: Optional[NoteType] = None,
         project: Optional[str] = None,
+        note_purpose: Optional[NotePurpose] = None,
         tags: Optional[List[str]] = None,
+        plan_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None
     ) -> Note:
-        """Update an existing note."""
+        """Update an existing note.
+
+        Args:
+            note_id: ID of the note to update.
+            title: New title (optional).
+            content: New content (optional).
+            note_type: New Zettelkasten type (optional).
+            project: New project (optional).
+            note_purpose: New purpose (optional).
+            tags: New list of tag names (optional).
+            plan_id: New plan ID (optional, use empty string to clear).
+            metadata: New metadata dict (optional).
+
+        Returns:
+            Updated Note object.
+        """
         note = self.repository.get(note_id)
         if not note:
             raise NoteNotFoundError(note_id)
@@ -100,8 +135,12 @@ class ZettelService:
             note.note_type = note_type
         if project is not None:
             note.project = project
+        if note_purpose is not None:
+            note.note_purpose = note_purpose
         if tags is not None:
             note.tags = [Tag(name=tag) for tag in tags]
+        if plan_id is not None:
+            note.plan_id = plan_id if plan_id else None  # Empty string clears
         if metadata is not None:
             note.metadata = metadata
 

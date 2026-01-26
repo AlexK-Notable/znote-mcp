@@ -5,7 +5,7 @@ import pytest
 from unittest.mock import patch, MagicMock, call
 
 from znote_mcp.server.mcp_server import ZettelkastenMcpServer
-from znote_mcp.models.schema import LinkType, NoteType
+from znote_mcp.models.schema import LinkType, NoteType, NotePurpose
 
 class TestMcpServer:
     """Tests for the ZettelkastenMcpServer class."""
@@ -64,6 +64,8 @@ class TestMcpServer:
         # Set up return value for create_note
         mock_note = MagicMock()
         mock_note.id = "test123"
+        mock_note.project = "general"
+        mock_note.note_purpose = NotePurpose.GENERAL
         self.mock_zettel_service.create_note.return_value = mock_note
         # Call the tool function directly
         create_note_func = self.registered_tools['zk_create_note']
@@ -82,20 +84,25 @@ class TestMcpServer:
             content="Test content",
             note_type=NoteType.PERMANENT,
             project="general",
-            tags=["tag1", "tag2"]
+            note_purpose=NotePurpose.GENERAL,
+            tags=["tag1", "tag2"],
+            plan_id=None
         )
 
     def test_get_note_tool(self):
         """Test the zk_get_note tool."""
         # Check the tool is registered
         assert 'zk_get_note' in self.registered_tools
-        
+
         # Set up mock note
         mock_note = MagicMock()
         mock_note.id = "test123"
         mock_note.title = "Test Note"
         mock_note.content = "Test content"
         mock_note.note_type = NoteType.PERMANENT
+        mock_note.project = "test-project"
+        mock_note.note_purpose = NotePurpose.RESEARCH
+        mock_note.plan_id = None
         mock_note.created_at.isoformat.return_value = "2023-01-01T12:00:00"
         mock_note.updated_at.isoformat.return_value = "2023-01-01T12:30:00"
         mock_tag1 = MagicMock()
@@ -104,19 +111,21 @@ class TestMcpServer:
         mock_tag2.name = "tag2"
         mock_note.tags = [mock_tag1, mock_tag2]
         mock_note.links = []
-        
+
         # Set up return value for get_note
         self.mock_zettel_service.get_note.return_value = mock_note
-        
+
         # Call the tool function directly
         get_note_func = self.registered_tools['zk_get_note']
         result = get_note_func(identifier="test123")
-        
+
         # Verify result
         assert "# Test Note" in result
         assert "ID: test123" in result
         assert "Test content" in result
-        
+        assert "Project: test-project" in result
+        assert "Purpose: research" in result
+
         # Verify service call
         self.mock_zettel_service.get_note.assert_called_with("test123")
 

@@ -393,11 +393,12 @@ class TestIntegration:
                 )
 
                 # Verify the note was mirrored (filename includes ID suffix for uniqueness)
-                # Format: "Title (id_suffix).md" where id_suffix is last 8 chars of note ID
-                project_dir = obsidian_path / "test-project"
+                # Format: project/purpose/Title (id_suffix).md
+                # Purpose defaults to "general" for notes created without explicit purpose
+                purpose_dir = obsidian_path / "test-project" / "general"
                 id_suffix = note.id[-8:]
-                matching_files = list(project_dir.glob(f"Obsidian Test Note ({id_suffix}).md"))
-                assert len(matching_files) == 1, f"Expected 1 mirror file, found {len(matching_files)} in {project_dir}"
+                matching_files = list(purpose_dir.glob(f"Obsidian Test Note ({id_suffix}).md"))
+                assert len(matching_files) == 1, f"Expected 1 mirror file, found {len(matching_files)} in {purpose_dir}"
                 expected_file = matching_files[0]
 
                 # Verify content
@@ -413,10 +414,10 @@ class TestIntegration:
                     project="another-project"
                 )
 
-                # Verify second note mirrored with ID suffix
-                project_dir2 = obsidian_path / "another-project"
+                # Verify second note mirrored with ID suffix (in purpose subdir)
+                purpose_dir2 = obsidian_path / "another-project" / "general"
                 id_suffix2 = note2.id[-8:]
-                matching_files2 = list(project_dir2.glob(f"Second Obsidian Note ({id_suffix2}).md"))
+                matching_files2 = list(purpose_dir2.glob(f"Second Obsidian Note ({id_suffix2}).md"))
                 assert len(matching_files2) == 1
 
                 # Test bulk sync
@@ -452,15 +453,16 @@ class TestIntegration:
                     project="collision-test"
                 )
 
-                # Both notes should have unique files in the same directory
-                project_dir = obsidian_path / "collision-test"
+                # Both notes should have unique files in the same purpose directory
+                # Purpose defaults to "general" when not specified
+                purpose_dir = obsidian_path / "collision-test" / "general"
 
                 # Find files for each note by their ID suffix
                 id_suffix1 = note1.id[-8:]
                 id_suffix2 = note2.id[-8:]
 
-                files1 = list(project_dir.glob(f"*({id_suffix1}).md"))
-                files2 = list(project_dir.glob(f"*({id_suffix2}).md"))
+                files1 = list(purpose_dir.glob(f"*({id_suffix1}).md"))
+                files2 = list(purpose_dir.glob(f"*({id_suffix2}).md"))
 
                 assert len(files1) == 1, f"Note 1 should have exactly 1 file, found {len(files1)}"
                 assert len(files2) == 1, f"Note 2 should have exactly 1 file, found {len(files2)}"
@@ -478,7 +480,7 @@ class TestIntegration:
                     assert "Second note with semicolon" in content2
 
                 # Verify total files (should be exactly 2)
-                all_files = list(project_dir.glob("*.md"))
+                all_files = list(purpose_dir.glob("*.md"))
                 assert len(all_files) == 2, f"Expected 2 files, found {len(all_files)}: {all_files}"
 
             finally:
