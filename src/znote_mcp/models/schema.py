@@ -54,6 +54,54 @@ def validate_safe_path_component(value: str, field_name: str = "value") -> str:
     return value
 
 
+# Regex pattern for valid project path segments
+SAFE_PROJECT_SEGMENT_PATTERN = re.compile(r'^[a-zA-Z0-9_\-]+$')
+
+
+def validate_project_path(value: str) -> str:
+    """Validate a project path that may contain sub-projects.
+
+    Project paths can use '/' to denote hierarchy (e.g., "monorepo/frontend").
+    Each segment must be safe for filesystem use.
+
+    Args:
+        value: The project path to validate
+
+    Returns:
+        The validated path (unchanged)
+
+    Raises:
+        ValueError: If the path is invalid
+    """
+    if not value:
+        raise ValueError("Project path cannot be empty")
+
+    # Check for path traversal attempts
+    if '..' in value:
+        raise ValueError("Project path cannot contain '..' (path traversal)")
+
+    # Check for backslashes (Windows path separators not allowed)
+    if '\\' in value:
+        raise ValueError("Project path cannot contain backslashes")
+
+    # Split into segments and validate each
+    segments = value.split('/')
+
+    # Check for empty segments (leading/trailing/double slashes)
+    if any(not seg for seg in segments):
+        raise ValueError("Project path cannot have empty segments (no leading/trailing/double slashes)")
+
+    # Validate each segment
+    for segment in segments:
+        if not SAFE_PROJECT_SEGMENT_PATTERN.match(segment):
+            raise ValueError(
+                f"Project segment '{segment}' contains invalid characters. "
+                "Only alphanumeric characters, underscores, and hyphens are allowed."
+            )
+
+    return value
+
+
 def utc_now() -> datetime.datetime:
     """Get current UTC time as timezone-aware datetime.
 
@@ -165,6 +213,14 @@ class NoteType(str, Enum):
     STRUCTURE = "structure"  # Structure/index notes that organize other notes
     HUB = "hub"              # Hub notes that serve as entry points
 
+
+class NotePurpose(str, Enum):
+    """Workflow-oriented purpose of a note (for Obsidian organization)."""
+    RESEARCH = "research"      # Investigation, learning, exploration
+    PLANNING = "planning"      # Plans, designs, architecture decisions
+    BUGFIXING = "bugfixing"    # Debugging sessions, fixes, investigations
+    GENERAL = "general"        # Default for uncategorized notes
+
 class Tag(BaseModel):
     """A tag for categorizing notes."""
     name: str = Field(..., description="Tag name")
@@ -184,7 +240,9 @@ class Note(BaseModel):
     title: str = Field(..., description="Title of the note")
     content: str = Field(..., description="Content of the note")
     note_type: NoteType = Field(default=NoteType.PERMANENT, description="Type of note")
-    project: str = Field(default="general", description="Project this note belongs to")
+    note_purpose: NotePurpose = Field(default=NotePurpose.GENERAL, description="Workflow purpose (research, planning, bugfixing)")
+    project: str = Field(default="general", description="Project this note belongs to (use '/' for sub-projects)")
+    plan_id: Optional[str] = Field(default=None, description="Groups related planning notes (auto-generated for planning purpose)")
     tags: List[Tag] = Field(default_factory=list, description="Tags for categorization")
     links: List[Link] = Field(default_factory=list, description="Links to other notes")
     created_at: datetime.datetime = Field(
@@ -214,11 +272,21 @@ class Note(BaseModel):
     @field_validator("project")
     @classmethod
     def validate_project(cls, v: str) -> str:
-        """Validate that the project name is safe for filesystem use."""
+        """Validate project path (supports sub-projects with '/' separator)."""
         # Allow empty string to default to "general"
         if not v or not v.strip():
             return "general"
-        return validate_safe_path_component(v, "Project name")
+        return validate_project_path(v)
+
+    @field_validator("plan_id")
+    @classmethod
+    def validate_plan_id(cls, v: Optional[str]) -> Optional[str]:
+        """Validate that the plan_id is safe for filesystem use."""
+        if v is None:
+            return None
+        if not v.strip():
+            return None
+        return validate_safe_path_component(v, "Plan ID")
 
     @field_validator("title")
     @classmethod
@@ -295,3 +363,51 @@ class Note(BaseModel):
             tags=tags_str,
             links=links_str
         )
+
+
+class Project(BaseModel):
+    """A project in the Zettelkasten system.
+
+    Projects organize notes and can be hierarchical (sub-projects).
+    Project IDs use '/' for hierarchy: "monorepo/frontend".
+    """
+    id: str = Field(..., description="Unique project ID (use '/' for sub-projects)")
+    name: str = Field(..., description="Human-readable display name")
+    description: Optional[str] = Field(default=None, description="Brief project description for LLM context")
+    parent_id: Optional[str] = Field(default=None, description="Parent project ID for sub-projects")
+    path: Optional[str] = Field(default=None, description="Filesystem path associated with project")
+    created_at: datetime.datetime = Field(
+        default_factory=utc_now,
+        description="When the project was created (UTC)"
+    )
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional metadata (git remote, etc.)"
+    )
+
+    model_config = {
+        "validate_assignment": True,
+        "extra": "forbid"
+    }
+
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, v: str) -> str:
+        """Validate project ID (supports sub-projects with '/' separator)."""
+        return validate_project_path(v)
+
+    @field_validator("parent_id")
+    @classmethod
+    def validate_parent_id(cls, v: Optional[str]) -> Optional[str]:
+        """Validate parent project ID."""
+        if v is None:
+            return None
+        return validate_project_path(v)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        """Validate that the name is not empty."""
+        if not v.strip():
+            raise ValueError("Project name cannot be empty")
+        return v

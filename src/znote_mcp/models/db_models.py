@@ -9,7 +9,7 @@ from sqlalchemy.orm import Mapped, Session, declarative_base, relationship, sess
 from sqlalchemy.pool import QueuePool
 
 from znote_mcp.config import config
-from znote_mcp.models.schema import LinkType, NoteType
+from znote_mcp.models.schema import LinkType, NoteType, NotePurpose
 
 # Create base class for SQLAlchemy models
 Base = declarative_base()
@@ -29,9 +29,11 @@ class DBNote(Base):
     title = Column(String(255), nullable=False, index=True)
     content = Column(Text, nullable=False)
     note_type = Column(String(50), default=NoteType.PERMANENT.value, nullable=False, index=True)
+    note_purpose = Column(String(50), default=NotePurpose.GENERAL.value, nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.datetime.now, nullable=False)
     updated_at = Column(DateTime, default=datetime.datetime.now, nullable=False)
     project = Column(String(255), default="general", nullable=False, index=True)
+    plan_id = Column(String(255), nullable=True, index=True)
 
     # Relationships
     tags = relationship(
@@ -100,6 +102,27 @@ class DBLink(Base):
             f"target='{self.target_id}', type='{self.link_type}')>"
         )
 
+
+class DBProject(Base):
+    """Database model for a project in the registry."""
+    __tablename__ = "projects"
+    id = Column(String(255), primary_key=True, index=True)  # e.g., "monorepo/frontend"
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    parent_id = Column(String(255), ForeignKey("projects.id"), nullable=True, index=True)
+    path = Column(String(1024), nullable=True)  # Filesystem path
+    created_at = Column(DateTime, default=datetime.datetime.now, nullable=False)
+    metadata_json = Column(Text, nullable=True)  # JSON string for flexible metadata
+
+    # Self-referential relationship for parent/children
+    parent = relationship("DBProject", remote_side=[id], back_populates="children")
+    children = relationship("DBProject", back_populates="parent")
+
+    def __repr__(self) -> str:
+        """Return string representation of project."""
+        return f"<Project(id='{self.id}', name='{self.name}')>"
+
+
 def init_db() -> None:
     """Initialize the database with hardened configuration.
 
@@ -140,6 +163,7 @@ def init_db() -> None:
 
     # Run migrations for schema updates
     _migrate_add_project_column(engine)
+    _migrate_add_note_purpose_columns(engine)
 
     # Create FTS5 virtual table for full-text search
     init_fts5(engine)
@@ -165,6 +189,31 @@ def _migrate_add_project_column(engine) -> None:
                 "NOT NULL DEFAULT 'general'"
             ))
             conn.commit()
+
+
+def _migrate_add_note_purpose_columns(engine) -> None:
+    """Migration: Add note_purpose and plan_id columns to existing databases.
+
+    These columns support the enhanced Obsidian organization feature.
+    """
+    from sqlalchemy import text, inspect
+
+    inspector = inspect(engine)
+    columns = [col['name'] for col in inspector.get_columns('notes')]
+
+    with engine.connect() as conn:
+        if 'note_purpose' not in columns:
+            conn.execute(text(
+                "ALTER TABLE notes ADD COLUMN note_purpose VARCHAR(50) "
+                "NOT NULL DEFAULT 'general'"
+            ))
+
+        if 'plan_id' not in columns:
+            conn.execute(text(
+                "ALTER TABLE notes ADD COLUMN plan_id VARCHAR(255)"
+            ))
+
+        conn.commit()
 
 
 def init_fts5(engine) -> None:

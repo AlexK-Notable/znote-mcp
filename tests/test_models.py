@@ -6,7 +6,10 @@ import re
 import pytest
 from unittest.mock import patch
 from pydantic import ValidationError
-from znote_mcp.models.schema import Link, LinkType, Note, NoteType, Tag, generate_id
+from znote_mcp.models.schema import (
+    Link, LinkType, Note, NoteType, NotePurpose, Tag, Project,
+    generate_id, validate_project_path
+)
 
 class TestNoteModel:
     """Tests for the Note model."""
@@ -216,10 +219,237 @@ class TestHelperFunctions:
         """Test that ISO 8601 IDs sort chronologically without artificial delays."""
         # Generate multiple IDs in the fastest possible succession
         ids = [generate_id() for _ in range(5)]
-        
+
         # Verify they're all unique
         assert len(set(ids)) == 5
-        
+
         # Verify chronological order matches lexicographical sorting
         sorted_ids = sorted(ids)
         assert sorted_ids == ids, "ISO 8601 IDs should sort chronologically"
+
+
+class TestNotePurpose:
+    """Tests for the NotePurpose enum and related Note fields."""
+
+    def test_note_purpose_enum_values(self):
+        """Test that NotePurpose has expected values."""
+        assert NotePurpose.RESEARCH.value == "research"
+        assert NotePurpose.PLANNING.value == "planning"
+        assert NotePurpose.BUGFIXING.value == "bugfixing"
+        assert NotePurpose.GENERAL.value == "general"
+
+    def test_note_with_purpose(self):
+        """Test creating a note with note_purpose field."""
+        note = Note(
+            title="Planning Note",
+            content="This is a planning note.",
+            note_purpose=NotePurpose.PLANNING
+        )
+        assert note.note_purpose == NotePurpose.PLANNING
+        assert note.note_purpose.value == "planning"
+
+    def test_note_purpose_default(self):
+        """Test that note_purpose defaults to GENERAL."""
+        note = Note(title="Default Note", content="Content")
+        assert note.note_purpose == NotePurpose.GENERAL
+
+    def test_note_with_plan_id(self):
+        """Test creating a note with plan_id field."""
+        note = Note(
+            title="Plan Revision",
+            content="Updated plan details.",
+            note_purpose=NotePurpose.PLANNING,
+            plan_id="plan-20240126-auth"
+        )
+        assert note.plan_id == "plan-20240126-auth"
+
+    def test_plan_id_validation_rejects_path_traversal(self):
+        """Test that plan_id rejects path traversal attempts."""
+        with pytest.raises(ValidationError):
+            Note(title="Bad Plan", content="Content", plan_id="../escape")
+
+    def test_plan_id_default_none(self):
+        """Test that plan_id defaults to None."""
+        note = Note(title="No Plan", content="Content")
+        assert note.plan_id is None
+
+
+class TestProjectPaths:
+    """Tests for project path validation including sub-projects."""
+
+    def test_simple_project_name(self):
+        """Test note with simple project name."""
+        note = Note(title="Test", content="Content", project="my-project")
+        assert note.project == "my-project"
+
+    def test_subproject_path(self):
+        """Test note with sub-project path using slash separator."""
+        note = Note(title="Test", content="Content", project="monorepo/frontend")
+        assert note.project == "monorepo/frontend"
+
+    def test_deep_subproject_path(self):
+        """Test note with deeply nested sub-project path."""
+        note = Note(title="Test", content="Content", project="org/team/project/module")
+        assert note.project == "org/team/project/module"
+
+    def test_project_defaults_to_general(self):
+        """Test that empty project defaults to 'general'."""
+        note = Note(title="Test", content="Content", project="")
+        assert note.project == "general"
+
+        note2 = Note(title="Test", content="Content", project="   ")
+        assert note2.project == "general"
+
+    def test_project_rejects_path_traversal(self):
+        """Test that project rejects path traversal attempts."""
+        with pytest.raises(ValidationError):
+            Note(title="Test", content="Content", project="../escape")
+
+        with pytest.raises(ValidationError):
+            Note(title="Test", content="Content", project="a/../b")
+
+    def test_project_rejects_backslash(self):
+        """Test that project rejects Windows-style backslashes."""
+        with pytest.raises(ValidationError):
+            Note(title="Test", content="Content", project="a\\b")
+
+    def test_project_rejects_leading_slash(self):
+        """Test that project rejects leading slashes."""
+        with pytest.raises(ValidationError):
+            Note(title="Test", content="Content", project="/absolute")
+
+    def test_project_rejects_trailing_slash(self):
+        """Test that project rejects trailing slashes."""
+        with pytest.raises(ValidationError):
+            Note(title="Test", content="Content", project="project/")
+
+    def test_project_rejects_double_slash(self):
+        """Test that project rejects double slashes."""
+        with pytest.raises(ValidationError):
+            Note(title="Test", content="Content", project="a//b")
+
+    def test_project_rejects_special_characters(self):
+        """Test that project rejects special characters in segments."""
+        with pytest.raises(ValidationError):
+            Note(title="Test", content="Content", project="project:name")
+
+        with pytest.raises(ValidationError):
+            Note(title="Test", content="Content", project="project name")  # spaces
+
+
+class TestValidateProjectPath:
+    """Tests for the validate_project_path function directly."""
+
+    def test_valid_simple_path(self):
+        """Test validation of simple project path."""
+        assert validate_project_path("my-project") == "my-project"
+        assert validate_project_path("project_name") == "project_name"
+        assert validate_project_path("Project123") == "Project123"
+
+    def test_valid_hierarchical_path(self):
+        """Test validation of hierarchical project paths."""
+        assert validate_project_path("a/b") == "a/b"
+        assert validate_project_path("org/team/project") == "org/team/project"
+
+    def test_rejects_empty(self):
+        """Test that empty paths are rejected."""
+        with pytest.raises(ValueError, match="cannot be empty"):
+            validate_project_path("")
+
+    def test_rejects_path_traversal(self):
+        """Test rejection of path traversal."""
+        with pytest.raises(ValueError, match="path traversal"):
+            validate_project_path("..")
+        with pytest.raises(ValueError, match="path traversal"):
+            validate_project_path("a/../b")
+
+    def test_rejects_empty_segments(self):
+        """Test rejection of empty segments."""
+        with pytest.raises(ValueError, match="empty segments"):
+            validate_project_path("/leading")
+        with pytest.raises(ValueError, match="empty segments"):
+            validate_project_path("trailing/")
+        with pytest.raises(ValueError, match="empty segments"):
+            validate_project_path("a//b")
+
+    def test_rejects_invalid_characters(self):
+        """Test rejection of invalid characters in segments."""
+        with pytest.raises(ValueError, match="invalid characters"):
+            validate_project_path("has space")
+        with pytest.raises(ValueError, match="invalid characters"):
+            validate_project_path("has:colon")
+        with pytest.raises(ValueError, match="invalid characters"):
+            validate_project_path("has.dot")
+
+
+class TestProjectModel:
+    """Tests for the Project model."""
+
+    def test_project_creation(self):
+        """Test creating a project with valid values."""
+        project = Project(
+            id="my-project",
+            name="My Project",
+            description="A test project"
+        )
+        assert project.id == "my-project"
+        assert project.name == "My Project"
+        assert project.description == "A test project"
+        assert project.parent_id is None
+        assert project.path is None
+        assert isinstance(project.created_at, datetime.datetime)
+        assert project.metadata == {}
+
+    def test_project_with_subproject(self):
+        """Test creating a sub-project with parent reference."""
+        project = Project(
+            id="monorepo/frontend",
+            name="Frontend App",
+            description="React web application",
+            parent_id="monorepo",
+            path="/home/user/monorepo/frontend"
+        )
+        assert project.id == "monorepo/frontend"
+        assert project.parent_id == "monorepo"
+        assert project.path == "/home/user/monorepo/frontend"
+
+    def test_project_with_metadata(self):
+        """Test project with custom metadata."""
+        project = Project(
+            id="my-repo",
+            name="My Repo",
+            metadata={"git_remote": "https://github.com/user/repo.git"}
+        )
+        assert project.metadata["git_remote"] == "https://github.com/user/repo.git"
+
+    def test_project_id_validation(self):
+        """Test that project ID follows path validation rules."""
+        # Valid hierarchical ID
+        project = Project(id="org/team/project", name="Project")
+        assert project.id == "org/team/project"
+
+        # Invalid: path traversal
+        with pytest.raises(ValidationError):
+            Project(id="../escape", name="Bad")
+
+        # Invalid: special characters
+        with pytest.raises(ValidationError):
+            Project(id="has space", name="Bad")
+
+    def test_project_name_required(self):
+        """Test that project name is required and non-empty."""
+        with pytest.raises(ValidationError):
+            Project(id="test", name="")
+
+        with pytest.raises(ValidationError):
+            Project(id="test", name="   ")
+
+    def test_project_parent_id_validation(self):
+        """Test that parent_id follows path validation rules."""
+        # Valid parent
+        project = Project(id="child", name="Child", parent_id="parent/path")
+        assert project.parent_id == "parent/path"
+
+        # Invalid parent: path traversal
+        with pytest.raises(ValidationError):
+            Project(id="child", name="Child", parent_id="../escape")
