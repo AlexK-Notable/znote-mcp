@@ -14,7 +14,7 @@ from znote_mcp.exceptions import (
     LinkError,
     ValidationError,
 )
-from znote_mcp.models.schema import Link, LinkType, Note, NoteType, Tag
+from znote_mcp.models.schema import Link, LinkType, Note, NoteType, NotePurpose, Tag
 from znote_mcp.storage.note_repository import NoteRepository
 
 logger = logging.getLogger(__name__)
@@ -548,3 +548,130 @@ class ZettelService:
             Number of notes successfully updated.
         """
         return self.repository.bulk_update_project(note_ids, project)
+
+    # ========== Migration Methods ==========
+
+    def migrate_notes_add_purpose(
+        self,
+        default_purpose: NotePurpose = NotePurpose.GENERAL
+    ) -> Dict[str, Any]:
+        """Migrate existing notes to include note_purpose field.
+
+        This updates all notes that don't have a note_purpose set to use
+        the specified default. Safe to run multiple times.
+
+        Args:
+            default_purpose: Default purpose to assign.
+
+        Returns:
+            Dict with migration stats: {migrated: int, skipped: int, errors: []}
+        """
+        stats = {"migrated": 0, "skipped": 0, "errors": []}
+        all_notes = self.repository.get_all()
+
+        for note in all_notes:
+            try:
+                # Check if note needs migration (purpose not set or is default)
+                # Since new notes default to GENERAL, we just ensure the field exists
+                # in the markdown file by re-saving
+                if not hasattr(note, 'note_purpose') or note.note_purpose is None:
+                    note.note_purpose = default_purpose
+                    self.repository.update(note)
+                    stats["migrated"] += 1
+                else:
+                    stats["skipped"] += 1
+            except Exception as e:
+                stats["errors"].append({"id": note.id, "error": str(e)})
+                logger.warning(f"Failed to migrate note {note.id}: {e}")
+
+        logger.info(
+            f"Migration complete: {stats['migrated']} migrated, "
+            f"{stats['skipped']} skipped, {len(stats['errors'])} errors"
+        )
+        return stats
+
+    def bulk_update_purpose(
+        self,
+        note_ids: List[str],
+        purpose: NotePurpose
+    ) -> int:
+        """Update note_purpose for multiple notes.
+
+        Args:
+            note_ids: List of note IDs to update.
+            purpose: Target NotePurpose.
+
+        Returns:
+            Number of notes successfully updated.
+        """
+        updated = 0
+        for note_id in note_ids:
+            try:
+                note = self.repository.get(note_id)
+                if note:
+                    note.note_purpose = purpose
+                    self.repository.update(note)
+                    updated += 1
+            except Exception as e:
+                logger.warning(f"Failed to update purpose for {note_id}: {e}")
+        return updated
+
+    def bulk_update_plan_id(
+        self,
+        note_ids: List[str],
+        plan_id: str
+    ) -> int:
+        """Group multiple notes under a plan_id.
+
+        Args:
+            note_ids: List of note IDs to group.
+            plan_id: Plan ID to assign.
+
+        Returns:
+            Number of notes successfully updated.
+        """
+        updated = 0
+        for note_id in note_ids:
+            try:
+                note = self.repository.get(note_id)
+                if note:
+                    note.plan_id = plan_id
+                    self.repository.update(note)
+                    updated += 1
+            except Exception as e:
+                logger.warning(f"Failed to update plan_id for {note_id}: {e}")
+        return updated
+
+    def get_migration_status(self) -> Dict[str, Any]:
+        """Get status of notes for migration purposes.
+
+        Returns:
+            Dict with counts by project, purpose, and notes needing attention.
+        """
+        all_notes = self.repository.get_all()
+
+        # Count by project
+        by_project: Dict[str, int] = {}
+        for note in all_notes:
+            project = getattr(note, 'project', 'general') or 'general'
+            by_project[project] = by_project.get(project, 0) + 1
+
+        # Count by purpose
+        by_purpose: Dict[str, int] = {}
+        for note in all_notes:
+            purpose = getattr(note, 'note_purpose', NotePurpose.GENERAL)
+            if purpose:
+                by_purpose[purpose.value] = by_purpose.get(purpose.value, 0) + 1
+            else:
+                by_purpose['general'] = by_purpose.get('general', 0) + 1
+
+        # Notes in "general" project (potentially needing assignment)
+        unassigned = [n.id for n in all_notes if (getattr(n, 'project', None) or 'general') == 'general']
+
+        return {
+            "total_notes": len(all_notes),
+            "by_project": by_project,
+            "by_purpose": by_purpose,
+            "unassigned_project_count": len(unassigned),
+            "unassigned_note_ids": unassigned[:20]  # First 20 for preview
+        }

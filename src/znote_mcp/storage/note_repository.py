@@ -23,7 +23,7 @@ from znote_mcp.models.db_models import (Base, DBLink, DBNote, DBTag,
                                             get_session_factory, init_db,
                                             note_tags, rebuild_fts_index)
 from znote_mcp.models.schema import (
-    Link, LinkType, Note, NoteType, Tag, validate_safe_path_component,
+    Link, LinkType, Note, NoteType, NotePurpose, Tag, validate_safe_path_component,
     utc_now, ensure_timezone_aware
 )
 from znote_mcp.storage.base import Repository
@@ -651,7 +651,21 @@ class NoteRepository(Repository[Note]):
 
         # Extract project (default to "general" for backwards compatibility)
         project = metadata.get("project", "general")
-        
+
+        # Extract note_purpose (default to GENERAL for backwards compatibility)
+        purpose_str = metadata.get("purpose", NotePurpose.GENERAL.value)
+        try:
+            note_purpose = NotePurpose(purpose_str)
+        except ValueError:
+            logger.warning(
+                f"Unknown note purpose '{purpose_str}' in note {note_id}, "
+                "defaulting to GENERAL"
+            )
+            note_purpose = NotePurpose.GENERAL
+
+        # Extract plan_id (optional)
+        plan_id = metadata.get("plan_id")
+
         # Extract tags
         tags_str = metadata.get("tags", "")
         if isinstance(tags_str, str):
@@ -738,13 +752,15 @@ class NoteRepository(Repository[Note]):
             title=title,
             content=post.content,
             note_type=note_type,
+            note_purpose=note_purpose,
             project=project,
+            plan_id=plan_id,
             tags=tags,
             links=links,
             created_at=created_at,
             updated_at=updated_at,
             metadata={k: v for k, v in metadata.items()
-                     if k not in ["id", "title", "type", "project", "tags", "created", "updated"]}
+                     if k not in ["id", "title", "type", "purpose", "project", "plan_id", "tags", "created", "updated"]}
         )
     
     def _index_note(self, note: Note) -> None:
@@ -757,8 +773,10 @@ class NoteRepository(Repository[Note]):
                 db_note.title = note.title
                 db_note.content = note.content
                 db_note.note_type = note.note_type.value
+                db_note.note_purpose = note.note_purpose.value if note.note_purpose else NotePurpose.GENERAL.value
                 db_note.updated_at = note.updated_at
                 db_note.project = note.project
+                db_note.plan_id = note.plan_id
                 # Clear existing links and tags to rebuild them (parameterized queries)
                 session.execute(text("DELETE FROM links WHERE source_id = :note_id"), {"note_id": note.id})
                 session.execute(text("DELETE FROM note_tags WHERE note_id = :note_id"), {"note_id": note.id})
@@ -769,9 +787,11 @@ class NoteRepository(Repository[Note]):
                     title=note.title,
                     content=note.content,
                     note_type=note.note_type.value,
+                    note_purpose=note.note_purpose.value if note.note_purpose else NotePurpose.GENERAL.value,
                     created_at=note.created_at,
                     updated_at=note.updated_at,
-                    project=note.project
+                    project=note.project,
+                    plan_id=note.plan_id
                 )
                 session.add(db_note)
                 
@@ -835,11 +855,15 @@ class NoteRepository(Repository[Note]):
             "id": note.id,
             "title": note.title,
             "type": note.note_type.value,
+            "purpose": note.note_purpose.value if note.note_purpose else NotePurpose.GENERAL.value,
             "project": note.project,
             "tags": [tag.name for tag in note.tags],
             "created": note.created_at.isoformat(),
             "updated": note.updated_at.isoformat()
         }
+        # Add plan_id if set
+        if note.plan_id:
+            metadata["plan_id"] = note.plan_id
         # Add any custom metadata
         metadata.update(note.metadata)
         
