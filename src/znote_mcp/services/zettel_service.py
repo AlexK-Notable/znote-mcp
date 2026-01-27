@@ -20,6 +20,7 @@ from znote_mcp.models.schema import (
     LinkType,
     Note,
     NoteType,
+    NotePurpose,
     Tag,
     VersionInfo,
     VersionedNote,
@@ -47,10 +48,26 @@ class ZettelService:
         content: str,
         note_type: NoteType = NoteType.PERMANENT,
         project: str = "general",
+        note_purpose: NotePurpose = NotePurpose.GENERAL,
         tags: Optional[List[str]] = None,
+        plan_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None
     ) -> Note:
-        """Create a new note."""
+        """Create a new note.
+
+        Args:
+            title: Note title (required).
+            content: Note content (required).
+            note_type: Zettelkasten note type.
+            project: Project this note belongs to.
+            note_purpose: Workflow purpose (research, planning, bugfixing, general).
+            tags: List of tag names.
+            plan_id: Optional ID of associated plan/task.
+            metadata: Additional metadata dict.
+
+        Returns:
+            Created Note object.
+        """
         if not title:
             raise NoteValidationError(
                 "Title is required",
@@ -70,7 +87,9 @@ class ZettelService:
             content=content,
             note_type=note_type,
             project=project,
+            note_purpose=note_purpose,
             tags=[Tag(name=tag) for tag in (tags or [])],
+            plan_id=plan_id,
             metadata=metadata or {}
         )
 
@@ -92,10 +111,27 @@ class ZettelService:
         content: Optional[str] = None,
         note_type: Optional[NoteType] = None,
         project: Optional[str] = None,
+        note_purpose: Optional[NotePurpose] = None,
         tags: Optional[List[str]] = None,
+        plan_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None
     ) -> Note:
-        """Update an existing note."""
+        """Update an existing note.
+
+        Args:
+            note_id: ID of the note to update.
+            title: New title (optional).
+            content: New content (optional).
+            note_type: New Zettelkasten type (optional).
+            project: New project (optional).
+            note_purpose: New purpose (optional).
+            tags: New list of tag names (optional).
+            plan_id: New plan ID (optional, use empty string to clear).
+            metadata: New metadata dict (optional).
+
+        Returns:
+            Updated Note object.
+        """
         note = self.repository.get(note_id)
         if not note:
             raise NoteNotFoundError(note_id)
@@ -109,8 +145,12 @@ class ZettelService:
             note.note_type = note_type
         if project is not None:
             note.project = project
+        if note_purpose is not None:
+            note.note_purpose = note_purpose
         if tags is not None:
             note.tags = [Tag(name=tag) for tag in tags]
+        if plan_id is not None:
+            note.plan_id = plan_id if plan_id else None  # Empty string clears
         if metadata is not None:
             note.metadata = metadata
 
@@ -499,11 +539,18 @@ class ZettelService:
             if isinstance(note_type, str):
                 note_type = NoteType(note_type)
 
+            # Extract note_purpose (default to GENERAL)
+            note_purpose = data.get("note_purpose", NotePurpose.GENERAL)
+            if isinstance(note_purpose, str):
+                note_purpose = NotePurpose(note_purpose)
+
             note = Note(
                 title=data["title"],
                 content=data["content"],
                 note_type=note_type,
+                note_purpose=note_purpose,
                 project=data.get("project", "general"),
+                plan_id=data.get("plan_id"),
                 tags=[Tag(name=tag) for tag in data.get("tags", [])],
                 metadata=data.get("metadata", {})
             )
@@ -557,6 +604,66 @@ class ZettelService:
             Number of notes successfully updated.
         """
         return self.repository.bulk_update_project(note_ids, project)
+
+    # =========================================================================
+    # Migration Methods
+    # =========================================================================
+
+    def migrate_notes_add_purpose(
+        self,
+        default_purpose: NotePurpose = NotePurpose.GENERAL
+    ) -> Dict[str, Any]:
+        """Migrate existing notes to include note_purpose field.
+
+        This checks the actual markdown file for the 'purpose:' key and adds it
+        if missing. Safe to run multiple times (idempotent).
+
+        Args:
+            default_purpose: Default purpose to assign to notes missing it.
+
+        Returns:
+            Dict with migration stats: {migrated: int, skipped: int, errors: []}
+        """
+        stats = {"migrated": 0, "skipped": 0, "errors": []}
+        all_notes = self.repository.get_all()
+
+        for note in all_notes:
+            try:
+                # Check the actual markdown file to see if 'purpose:' exists
+                note_path = self.repository.notes_dir / f"{note.id}.md"
+                if not note_path.exists():
+                    stats["errors"].append({
+                        "id": note.id,
+                        "error": "Markdown file not found"
+                    })
+                    continue
+
+                content = note_path.read_text(encoding="utf-8")
+
+                # Check if 'purpose:' exists in the frontmatter
+                # Frontmatter is between --- markers
+                if content.startswith("---"):
+                    end_marker = content.find("---", 3)
+                    if end_marker > 0:
+                        frontmatter = content[3:end_marker]
+                        if "purpose:" in frontmatter:
+                            stats["skipped"] += 1
+                            continue
+
+                # Need to migrate - set purpose and re-save
+                note.note_purpose = default_purpose
+                self.repository.update(note)
+                stats["migrated"] += 1
+
+            except Exception as e:
+                stats["errors"].append({"id": note.id, "error": str(e)})
+                logger.warning(f"Failed to migrate note {note.id}: {e}")
+
+        logger.info(
+            f"Migration complete: {stats['migrated']} migrated, "
+            f"{stats['skipped']} skipped, {len(stats['errors'])} errors"
+        )
+        return stats
 
     # =========================================================================
     # Versioned CRUD Operations (with git conflict detection)
@@ -631,7 +738,9 @@ class ZettelService:
         content: Optional[str] = None,
         note_type: Optional[NoteType] = None,
         project: Optional[str] = None,
+        note_purpose: Optional[NotePurpose] = None,
         tags: Optional[List[str]] = None,
+        plan_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         expected_version: Optional[str] = None
     ) -> Union[VersionedNote, ConflictResult]:
@@ -646,7 +755,9 @@ class ZettelService:
             content: New content (optional).
             note_type: New note type (optional).
             project: New project (optional).
+            note_purpose: New purpose (optional).
             tags: New tags list (optional).
+            plan_id: New plan ID (optional, empty string clears).
             metadata: New metadata (optional).
             expected_version: Expected version hash for conflict detection.
 
@@ -669,8 +780,12 @@ class ZettelService:
             note.note_type = note_type
         if project is not None:
             note.project = project
+        if note_purpose is not None:
+            note.note_purpose = note_purpose
         if tags is not None:
             note.tags = [Tag(name=tag) for tag in tags]
+        if plan_id is not None:
+            note.plan_id = plan_id if plan_id else None  # Empty string clears
         if metadata is not None:
             note.metadata = metadata
 

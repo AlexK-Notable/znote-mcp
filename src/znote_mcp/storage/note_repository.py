@@ -23,8 +23,8 @@ from znote_mcp.models.db_models import (Base, DBLink, DBNote, DBTag,
                                             get_session_factory, init_db,
                                             note_tags, rebuild_fts_index)
 from znote_mcp.models.schema import (
-    Link, LinkType, Note, NoteType, Tag, validate_safe_path_component,
-    utc_now, ensure_timezone_aware, VersionInfo, ConflictResult, VersionedNote
+    Link, LinkType, Note, NoteType, NotePurpose, Tag, validate_safe_path_component,
+    validate_project_path, utc_now, ensure_timezone_aware, VersionInfo, ConflictResult, VersionedNote
 )
 from znote_mcp.storage.git_wrapper import GitWrapper, GitConflictError
 from znote_mcp.storage.base import Repository
@@ -37,6 +37,34 @@ from znote_mcp.exceptions import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def escape_like_pattern(value: str) -> str:
+    """Escape SQL LIKE wildcards to treat them as literals.
+
+    Prevents SQL LIKE pattern injection where user input containing
+    '%' or '_' could match unintended patterns.
+
+    Args:
+        value: User input string that may contain LIKE wildcards
+
+    Returns:
+        String with '%', '_', and '\\' escaped for safe use in LIKE clauses
+
+    Example:
+        >>> escape_like_pattern("100% complete")
+        '100\\% complete'
+        >>> escape_like_pattern("file_name")
+        'file\\_name'
+    """
+    # Use str.translate() for single-pass efficiency
+    escape_table = str.maketrans({
+        '\\': '\\\\',  # Escape backslash first
+        '%': '\\%',
+        '_': '\\_',
+    })
+    return value.translate(escape_table)
+
 
 class NoteRepository(Repository[Note]):
     """Repository for note storage and retrieval.
@@ -604,6 +632,8 @@ class NoteRepository(Repository[Note]):
             db_note.title = note.title
             db_note.content = note.content
             db_note.note_type = note.note_type.value
+            db_note.note_purpose = note.note_purpose.value if note.note_purpose else "general"
+            db_note.plan_id = note.plan_id
             db_note.updated_at = note.updated_at
             db_note.project = note.project
             # Clear existing links and tags to rebuild them
@@ -622,6 +652,8 @@ class NoteRepository(Repository[Note]):
                 title=note.title,
                 content=note.content,
                 note_type=note.note_type.value,
+                note_purpose=note.note_purpose.value if note.note_purpose else "general",
+                plan_id=note.plan_id,
                 created_at=note.created_at,
                 updated_at=note.updated_at,
                 project=note.project
@@ -683,7 +715,21 @@ class NoteRepository(Repository[Note]):
 
         # Extract project (default to "general" for backwards compatibility)
         project = metadata.get("project", "general")
-        
+
+        # Extract note_purpose (default to GENERAL for backwards compatibility)
+        purpose_str = metadata.get("purpose", NotePurpose.GENERAL.value)
+        try:
+            note_purpose = NotePurpose(purpose_str)
+        except ValueError:
+            logger.warning(
+                f"Unknown note purpose '{purpose_str}' in note {note_id}, "
+                "defaulting to GENERAL"
+            )
+            note_purpose = NotePurpose.GENERAL
+
+        # Extract plan_id (optional)
+        plan_id = metadata.get("plan_id")
+
         # Extract tags
         tags_str = metadata.get("tags", "")
         if isinstance(tags_str, str):
@@ -770,13 +816,15 @@ class NoteRepository(Repository[Note]):
             title=title,
             content=post.content,
             note_type=note_type,
+            note_purpose=note_purpose,
             project=project,
+            plan_id=plan_id,
             tags=tags,
             links=links,
             created_at=created_at,
             updated_at=updated_at,
             metadata={k: v for k, v in metadata.items()
-                     if k not in ["id", "title", "type", "project", "tags", "created", "updated"]}
+                     if k not in ["id", "title", "type", "purpose", "project", "plan_id", "tags", "created", "updated"]}
         )
     
     def _index_note(self, note: Note) -> None:
@@ -789,8 +837,10 @@ class NoteRepository(Repository[Note]):
                 db_note.title = note.title
                 db_note.content = note.content
                 db_note.note_type = note.note_type.value
+                db_note.note_purpose = note.note_purpose.value if note.note_purpose else NotePurpose.GENERAL.value
                 db_note.updated_at = note.updated_at
                 db_note.project = note.project
+                db_note.plan_id = note.plan_id
                 # Clear existing links and tags to rebuild them (parameterized queries)
                 session.execute(text("DELETE FROM links WHERE source_id = :note_id"), {"note_id": note.id})
                 session.execute(text("DELETE FROM note_tags WHERE note_id = :note_id"), {"note_id": note.id})
@@ -801,9 +851,11 @@ class NoteRepository(Repository[Note]):
                     title=note.title,
                     content=note.content,
                     note_type=note.note_type.value,
+                    note_purpose=note.note_purpose.value if note.note_purpose else NotePurpose.GENERAL.value,
                     created_at=note.created_at,
                     updated_at=note.updated_at,
-                    project=note.project
+                    project=note.project,
+                    plan_id=note.plan_id
                 )
                 session.add(db_note)
                 
@@ -867,11 +919,15 @@ class NoteRepository(Repository[Note]):
             "id": note.id,
             "title": note.title,
             "type": note.note_type.value,
+            "purpose": note.note_purpose.value if note.note_purpose else NotePurpose.GENERAL.value,
             "project": note.project,
             "tags": [tag.name for tag in note.tags],
             "created": note.created_at.isoformat(),
             "updated": note.updated_at.isoformat()
         }
+        # Add plan_id if set
+        if note.plan_id:
+            metadata["plan_id"] = note.plan_id
         # Add any custom metadata
         metadata.update(note.metadata)
         
@@ -957,6 +1013,31 @@ class NoteRepository(Repository[Note]):
         except IOError as e:
             # Log but don't fail - Obsidian mirror is secondary
             logger.warning(f"Failed to mirror note to Obsidian vault: {e}")
+
+    def _delete_from_db(self, note_id: str) -> None:
+        """Delete a note and its relationships from the database.
+
+        This is a low-level helper that only handles DB cleanup.
+        Does NOT delete the file or Obsidian mirror.
+
+        Args:
+            note_id: The note ID to delete from database
+        """
+        with self.session_factory() as session:
+            # Delete note and its relationships (parameterized to prevent SQL injection)
+            session.execute(
+                text("DELETE FROM links WHERE source_id = :note_id OR target_id = :note_id"),
+                {"note_id": note_id}
+            )
+            session.execute(
+                text("DELETE FROM note_tags WHERE note_id = :note_id"),
+                {"note_id": note_id}
+            )
+            session.execute(
+                text("DELETE FROM notes WHERE id = :note_id"),
+                {"note_id": note_id}
+            )
+            session.commit()
 
     def _delete_from_obsidian(self, note_id: str, title: Optional[str] = None,
                                project: Optional[str] = None) -> None:
@@ -1446,53 +1527,61 @@ class NoteRepository(Repository[Note]):
     ) -> Union[VersionInfo, ConflictResult]:
         """Delete a note with version checking.
 
+        Uses per-note locking to prevent race conditions between version check
+        and deletion. When git is enabled, version checking and file deletion
+        are handled atomically by git_wrapper.delete_file().
+
         Args:
             id: The note ID to delete
             expected_version: If provided, check this matches current version before deleting
 
         Returns:
             VersionInfo on success, ConflictResult if version conflict detected
+
+        Raises:
+            ValueError: If note doesn't exist
         """
+        # Validate ID to prevent path traversal
+        validate_safe_path_component(id, "Note ID")
         file_path = self.notes_dir / f"{id}.md"
 
-        # Get note title for commit message before deletion
-        note = self.get(id)
-        title = note.title if note else id
+        # Acquire per-note lock for the entire operation
+        # This prevents race condition between version check and deletion
+        note_lock = self._get_note_lock(id)
+        with note_lock:
+            # Get note info before any deletion (for commit message and cleanup)
+            note = self.get(id)
+            if not note:
+                raise ValueError(f"Note with ID {id} does not exist")
+            title = note.title
+            project = note.project
 
-        # Check version if provided
-        if expected_version and self._git:
-            matches, actual = self._git.check_version_match(file_path, expected_version)
-            if not matches and actual:
-                return ConflictResult(
-                    status="conflict",
-                    note_id=id,
-                    expected_version=expected_version,
-                    actual_version=actual,
-                    message=f"Note was modified. Cannot delete."
-                )
+            if self._git:
+                # Git handles version check + file deletion atomically via git rm
+                try:
+                    version = self._git.delete_file(
+                        file_path,
+                        f"Delete note: {title}",
+                        expected_version=expected_version
+                    )
+                    # Git succeeded (file deleted by git rm) - now cleanup DB and Obsidian
+                    self._delete_from_obsidian(id, title, project)
+                    self._delete_from_db(id)
 
-        # Perform deletion
-        self.delete(id)
-
-        # Commit to git
-        if self._git:
-            try:
-                version = self._git.delete_file(
-                    file_path,
-                    f"Delete note: {title}",
-                    expected_version=expected_version
-                )
-                return VersionInfo.from_git_commit(version.commit_hash, version.timestamp)
-            except GitConflictError as e:
-                return ConflictResult(
-                    status="conflict",
-                    note_id=id,
-                    expected_version=e.expected_version,
-                    actual_version=e.actual_version,
-                    message="Version conflict during delete"
-                )
-
-        return VersionInfo(commit_hash="0000000", timestamp=utc_now())
+                    return VersionInfo.from_git_commit(version.commit_hash, version.timestamp)
+                except GitConflictError as e:
+                    # Version conflict - note was NOT deleted (git rm never ran)
+                    return ConflictResult(
+                        status="conflict",
+                        note_id=id,
+                        expected_version=e.expected_version,
+                        actual_version=e.actual_version,
+                        message="Version conflict during delete. Note was not deleted."
+                    )
+            else:
+                # No git - use regular delete (handles file + DB + Obsidian)
+                self.delete(id)
+                return VersionInfo(commit_hash="0000000", timestamp=utc_now())
 
     def search(
         self,
@@ -1520,18 +1609,18 @@ class NoteRepository(Repository[Note]):
             )
             # Process search criteria
             if "content" in kwargs:
-                search_term = kwargs['content']
+                search_term = escape_like_pattern(kwargs['content'])
                 # Search in both content and title since content might include the title
                 query = query.where(
                     or_(
-                        DBNote.content.like(f"%{search_term}%"),
-                        DBNote.title.like(f"%{search_term}%")
+                        DBNote.content.like(f"%{search_term}%", escape='\\'),
+                        DBNote.title.like(f"%{search_term}%", escape='\\')
                     )
                 )
             if "title" in kwargs:
-                search_title = kwargs['title']
+                search_title = escape_like_pattern(kwargs['title'])
                 # Use case-insensitive search with func.lower()
-                query = query.where(func.lower(DBNote.title).like(f"%{search_title.lower()}%"))
+                query = query.where(func.lower(DBNote.title).like(f"%{search_title.lower()}%", escape='\\'))
             if "note_type" in kwargs:
                 note_type = (
                     kwargs["note_type"].value
@@ -2635,8 +2724,8 @@ class NoteRepository(Repository[Note]):
         for note_id in note_ids:
             validate_safe_path_component(note_id, "Note ID")
 
-        # Also validate the project name
-        validate_safe_path_component(project, "Project name")
+        # Validate the project path (allows hierarchical paths like "monorepo/frontend")
+        validate_project_path(project)
 
         updated_count = 0
         failed_ids = []
@@ -2662,10 +2751,11 @@ class NoteRepository(Repository[Note]):
                             notes_to_update.append({
                                 "note": note,
                                 "old_project": old_project,
-                                "old_title": note.title
+                                "old_title": note.title,
+                                "db_note": db_note
                             })
 
-                        # Update database
+                        # Update database (not committed yet)
                         db_note.project = project
                         db_note.updated_at = utc_now()
                         updated_count += 1
@@ -2673,32 +2763,85 @@ class NoteRepository(Repository[Note]):
                         # Note already in target project - still counts as "processed"
                         updated_count += 1
 
-                # Commit all database changes atomically
+                # Write files FIRST, before committing database
+                # This ensures atomicity: if file writes fail, we rollback DB
+                file_write_errors = []
+                written_files = []  # Track for potential rollback
+
+                with self.file_lock:
+                    for update_info in notes_to_update:
+                        note = update_info["note"]
+                        old_project = update_info["old_project"]
+                        old_title = update_info["old_title"]
+
+                        try:
+                            # Update note's project
+                            note.project = project
+                            note.updated_at = utc_now()
+
+                            # Write updated markdown file
+                            markdown = self._note_to_markdown(note)
+                            file_path = self.notes_dir / f"{note.id}.md"
+
+                            # Keep backup of original content for rollback
+                            original_content = None
+                            if file_path.exists():
+                                original_content = file_path.read_text(encoding="utf-8")
+
+                            with open(file_path, "w", encoding="utf-8") as f:
+                                f.write(markdown)
+
+                            written_files.append({
+                                "path": file_path,
+                                "original": original_content,
+                                "note": note,
+                                "old_project": old_project,
+                                "old_title": old_title
+                            })
+
+                        except Exception as e:
+                            file_write_errors.append((note.id, str(e)))
+                            logger.error(f"Failed to write file for note {note.id}: {e}")
+
+                # If ANY file write failed, rollback all written files and abort
+                if file_write_errors:
+                    logger.warning(f"Rolling back {len(written_files)} file writes due to errors")
+                    for written in written_files:
+                        try:
+                            if written["original"]:
+                                written["path"].write_text(written["original"], encoding="utf-8")
+                            # Don't delete files that existed before
+                        except Exception as rollback_err:
+                            logger.error(f"Rollback failed for {written['path']}: {rollback_err}")
+
+                    # Don't commit - session will rollback on context exit
+                    raise BulkOperationError(
+                        f"File write failed for {len(file_write_errors)} notes, rolled back",
+                        operation="bulk_update_project",
+                        total_count=len(note_ids),
+                        success_count=0,
+                        failed_ids=[e[0] for e in file_write_errors],
+                        code=ErrorCode.BULK_OPERATION_FAILED
+                    )
+
+                # All file writes succeeded - now safe to commit database
                 session.commit()
 
-            # Now update files (database is already committed)
-            # Wrap all file operations in a single lock acquisition
-            with self.file_lock:
-                for update_info in notes_to_update:
-                    note = update_info["note"]
-                    old_project = update_info["old_project"]
-                    old_title = update_info["old_title"]
-
-                    # Delete old Obsidian mirror
-                    self._delete_from_obsidian(note.id, old_title, old_project)
-
-                    # Update note's project
-                    note.project = project
-                    note.updated_at = utc_now()
-
-                    # Write updated markdown file
-                    markdown = self._note_to_markdown(note)
-                    file_path = self.notes_dir / f"{note.id}.md"
-                    with open(file_path, "w", encoding="utf-8") as f:
-                        f.write(markdown)
-
-                    # Mirror to new Obsidian location
-                    self._mirror_to_obsidian(note, markdown)
+                # Update Obsidian mirrors (after successful commit)
+                for written in written_files:
+                    try:
+                        # Delete old Obsidian mirror
+                        self._delete_from_obsidian(
+                            written["note"].id,
+                            written["old_title"],
+                            written["old_project"]
+                        )
+                        # Create new mirror
+                        markdown = self._note_to_markdown(written["note"])
+                        self._mirror_to_obsidian(written["note"], markdown)
+                    except Exception as mirror_err:
+                        # Obsidian mirror failures are non-fatal
+                        logger.warning(f"Obsidian mirror update failed: {mirror_err}")
 
         except BulkOperationError:
             raise

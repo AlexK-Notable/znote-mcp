@@ -285,15 +285,30 @@ class BackupManager:
 
         WARNING: This will overwrite the current database.
 
+        Security: Only backups within the configured backup_dir are allowed.
+        Path traversal attempts (e.g., "../../../etc/passwd") are rejected.
+
         Args:
-            backup_path: Path to the backup file
+            backup_path: Path to the backup file (must be within backup_dir)
 
         Returns:
             True if restore succeeded, False otherwise.
         """
         with self._lock:
             try:
-                backup_path = Path(backup_path)
+                backup_path = Path(backup_path).resolve()
+
+                # Security: Validate backup_path is within backup_dir
+                # This prevents path traversal attacks
+                try:
+                    backup_path.relative_to(self.backup_dir.resolve())
+                except ValueError:
+                    logger.error(
+                        f"Security: Backup path '{backup_path}' is outside "
+                        f"backup directory '{self.backup_dir}'. Restore rejected."
+                    )
+                    return False
+
                 if not backup_path.exists():
                     logger.error(f"Backup not found: {backup_path}")
                     return False
@@ -327,6 +342,8 @@ class BackupManager:
 
 
 # Global backup manager instance
+# Thread-safe: All BackupManager methods use internal locking.
+# Safe to use from multiple MCP tool handlers in the same process.
 backup_manager = BackupManager()
 
 
