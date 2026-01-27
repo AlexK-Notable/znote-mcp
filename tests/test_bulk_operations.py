@@ -332,6 +332,13 @@ class TestBulkCreateNotes:
         assert note.plan_id == "plan-123"
         assert {t.name for t in note.tags} == {"tag1", "tag2"}
 
+        # Verify fields are persisted by reading back from storage
+        retrieved = zettel_service.get_note(note.id)
+        assert retrieved is not None
+        assert retrieved.project == "test-project"
+        assert retrieved.note_purpose == NotePurpose.RESEARCH
+        assert retrieved.plan_id == "plan-123"
+
     def test_bulk_create_notes_empty_list_raises_error(self, zettel_service):
         """Empty list should raise BulkOperationError."""
         with pytest.raises(BulkOperationError) as exc_info:

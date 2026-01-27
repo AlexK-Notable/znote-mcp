@@ -1685,9 +1685,9 @@ class NoteRepository(Repository[Note]):
         with self.session_factory() as session:
             query = select(func.count(DBNote.id.distinct()))
 
-            # Apply same filters as search()
+            # Apply same filters as search() with proper LIKE escaping
             if "content" in kwargs:
-                search_term = kwargs['content']
+                search_term = escape_like_pattern(kwargs['content'])
                 query = query.where(
                     or_(
                         DBNote.content.like(f"%{search_term}%"),
@@ -1695,7 +1695,7 @@ class NoteRepository(Repository[Note]):
                     )
                 )
             if "title" in kwargs:
-                search_title = kwargs['title']
+                search_title = escape_like_pattern(kwargs['title'])
                 query = query.where(func.lower(DBNote.title).like(f"%{search_title.lower()}%"))
             if "note_type" in kwargs:
                 note_type = (
@@ -1970,7 +1970,8 @@ class NoteRepository(Repository[Note]):
             SearchError: If the fallback search also fails.
         """
         results = []
-        search_term = f"%{query}%"
+        escaped_query = escape_like_pattern(query)
+        search_term = f"%{escaped_query}%"
 
         try:
             with self.session_factory() as session:
@@ -2267,12 +2268,15 @@ class NoteRepository(Repository[Note]):
                 # === Phase 2: Commit all database changes atomically ===
                 with self.session_factory() as session:
                     for note in created_notes:
-                        # Create database record
+                        # Create database record with all fields
                         db_note = DBNote(
                             id=note.id,
                             title=note.title,
                             content=note.content,
                             note_type=note.note_type.value,
+                            note_purpose=note.note_purpose.value if note.note_purpose else None,
+                            project=note.project,
+                            plan_id=note.plan_id,
                             created_at=note.created_at,
                             updated_at=note.updated_at
                         )
