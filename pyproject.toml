@@ -60,5 +60,6 @@ python_functions = "test_*"
 
 [dependency-groups]
 dev = [
+    "pytest>=8.3.5",
     "tiktoken>=0.12.0",
 ]

@@ -20,6 +20,8 @@ from znote_mcp.models.schema import (
     LinkType,
     Note,
     NoteType,
+    NotePurpose,
+    Project,
     Tag,
     VersionedNote,
 )
@@ -27,6 +29,7 @@ from znote_mcp.backup import backup_manager
 from znote_mcp.observability import metrics, timed_operation
 from znote_mcp.services.search_service import SearchService
 from znote_mcp.services.zettel_service import ZettelService
+from znote_mcp.storage.project_repository import ProjectRepository
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +44,7 @@ class ZettelkastenMcpServer:
         # Services
         self.zettel_service = ZettelService()
         self.search_service = SearchService(self.zettel_service)
+        self.project_repository = ProjectRepository()
         # Initialize services
         self.initialize()
         # Register tools
@@ -95,7 +99,9 @@ class ZettelkastenMcpServer:
             content: str,
             note_type: str = "permanent",
             project: str = "general",
-            tags: Optional[str] = None
+            note_purpose: str = "general",
+            tags: Optional[str] = None,
+            plan_id: Optional[str] = None
         ) -> str:
             """Create a new Zettelkasten note.
             Args:
@@ -103,7 +109,9 @@ class ZettelkastenMcpServer:
                 content: The main content of the note
                 note_type: Type of note (fleeting, literature, permanent, structure, hub)
                 project: Project this note belongs to (used for Obsidian subdirectory organization)
+                note_purpose: Workflow purpose (research, planning, bugfixing, general) for Obsidian organization
                 tags: Comma-separated list of tags (optional)
+                plan_id: Optional ID to group related planning notes
             """
             with timed_operation("zk_create_note", title=title[:30]) as op:
                 try:
@@ -112,6 +120,12 @@ class ZettelkastenMcpServer:
                         note_type_enum = NoteType(note_type.lower())
                     except ValueError:
                         return f"Invalid note type: {note_type}. Valid types are: {', '.join(t.value for t in NoteType)}"
+
+                    # Convert note_purpose string to enum
+                    try:
+                        purpose_enum = NotePurpose(note_purpose.lower())
+                    except ValueError:
+                        return f"Invalid note purpose: {note_purpose}. Valid purposes are: {', '.join(p.value for p in NotePurpose)}"
 
                     # Convert tags string to list
                     tag_list = []
@@ -124,7 +138,9 @@ class ZettelkastenMcpServer:
                         content=content,
                         note_type=note_type_enum,
                         project=project,
+                        note_purpose=purpose_enum,
                         tags=tag_list,
+                        plan_id=plan_id,
                     )
                     op["note_id"] = note.id
                     return f"Note created successfully with ID: {note.id} (project: {note.project})"
@@ -182,7 +198,9 @@ class ZettelkastenMcpServer:
             content: Optional[str] = None,
             note_type: Optional[str] = None,
             project: Optional[str] = None,
+            note_purpose: Optional[str] = None,
             tags: Optional[str] = None,
+            plan_id: Optional[str] = None,
             expected_version: Optional[str] = None
         ) -> str:
             """Update an existing note with optional version conflict detection.
@@ -192,7 +210,9 @@ class ZettelkastenMcpServer:
                 content: New content (optional)
                 note_type: New note type (optional)
                 project: New project (optional, moves note to different Obsidian subdirectory)
+                note_purpose: New purpose (research, planning, bugfixing, general) - optional
                 tags: New comma-separated list of tags (optional)
+                plan_id: New plan ID (optional, use empty string to clear)
                 expected_version: Version hash from zk_get_note for conflict detection.
                     If provided and doesn't match current version, returns CONFLICT error
                     instead of overwriting (recommended for multi-process safety).
@@ -213,6 +233,14 @@ class ZettelkastenMcpServer:
                     except ValueError:
                         return f"Invalid note type: {note_type}. Valid types are: {', '.join(t.value for t in NoteType)}"
 
+                # Convert note_purpose string to enum if provided
+                purpose_enum = None
+                if note_purpose:
+                    try:
+                        purpose_enum = NotePurpose(note_purpose.lower())
+                    except ValueError:
+                        return f"Invalid note purpose: {note_purpose}. Valid purposes are: {', '.join(p.value for p in NotePurpose)}"
+
                 # Convert tags string to list if provided
                 tag_list = None
                 if tags is not None:  # Allow empty string to clear tags
@@ -225,7 +253,9 @@ class ZettelkastenMcpServer:
                     content=content,
                     note_type=note_type_enum,
                     project=project,
+                    note_purpose=purpose_enum,
                     tags=tag_list,
+                    plan_id=plan_id,
                     expected_version=expected_version
                 )
 
@@ -1142,6 +1172,187 @@ class ZettelkastenMcpServer:
                         op["restored"] = False
                         return f"❌ Restore failed. Check that the backup file exists: {backup_path}"
 
+                except Exception as e:
+                    return self.format_error_response(e)
+
+        # ========== Project Management Tools ==========
+
+        @self.mcp.tool(name="zk_create_project")
+        def zk_create_project(
+            project_id: str,
+            name: str,
+            description: Optional[str] = None,
+            parent_id: Optional[str] = None,
+            path: Optional[str] = None
+        ) -> str:
+            """Create a new project in the registry.
+
+            Projects organize notes and can be hierarchical (sub-projects).
+            Use '/' in project_id for hierarchy: "monorepo/frontend".
+
+            Args:
+                project_id: Unique project ID (use '/' for sub-projects, e.g., "monorepo/frontend")
+                name: Human-readable display name
+                description: Brief description for LLM context (helps route notes correctly)
+                parent_id: Parent project ID for sub-projects (optional)
+                path: Filesystem path associated with project (optional)
+            """
+            with timed_operation("zk_create_project", project_id=project_id) as op:
+                try:
+                    project = Project(
+                        id=project_id,
+                        name=name,
+                        description=description,
+                        parent_id=parent_id,
+                        path=path
+                    )
+                    created = self.project_repository.create(project)
+                    op["created"] = True
+                    return (
+                        f"Project created: {created.id}\n"
+                        f"   Name: {created.name}\n"
+                        f"   Description: {created.description or '(none)'}\n"
+                        f"   Parent: {created.parent_id or '(root project)'}"
+                    )
+                except ValidationError as e:
+                    return f"Error: {e.message}"
+                except Exception as e:
+                    return self.format_error_response(e)
+
+        @self.mcp.tool(name="zk_list_projects")
+        def zk_list_projects(
+            include_note_counts: bool = True
+        ) -> str:
+            """List all projects in the registry.
+
+            Use this to see available projects before creating notes.
+
+            Args:
+                include_note_counts: Include count of notes per project
+            """
+            with timed_operation("zk_list_projects") as op:
+                try:
+                    projects = self.project_repository.get_all()
+                    op["count"] = len(projects)
+
+                    if not projects:
+                        return (
+                            "No projects registered yet.\n\n"
+                            "Use zk_create_project to create one."
+                        )
+
+                    output = f"Projects ({len(projects)}):\n\n"
+                    for p in projects:
+                        indent = "  " * p.id.count("/")
+                        note_count = ""
+                        if include_note_counts:
+                            count = self.project_repository.get_note_count(p.id)
+                            note_count = f" ({count} notes)"
+
+                        output += f"{indent}* {p.id}{note_count}\n"
+                        output += f"{indent}  Name: {p.name}\n"
+                        if p.description:
+                            output += f"{indent}  Description: {p.description}\n"
+                        output += "\n"
+
+                    return output.rstrip()
+                except Exception as e:
+                    return self.format_error_response(e)
+
+        @self.mcp.tool(name="zk_get_project")
+        def zk_get_project(project_id: str) -> str:
+            """Get details of a specific project.
+
+            Args:
+                project_id: The project ID to look up
+            """
+            with timed_operation("zk_get_project", project_id=project_id) as op:
+                try:
+                    project = self.project_repository.get(project_id)
+                    if not project:
+                        return f"Project '{project_id}' not found."
+
+                    note_count = self.project_repository.get_note_count(project_id)
+                    children = self.project_repository.search(parent_id=project_id)
+
+                    output = f"Project: {project.id}\n\n"
+                    output += f"Name: {project.name}\n"
+                    output += f"Description: {project.description or '(none)'}\n"
+                    output += f"Parent: {project.parent_id or '(root project)'}\n"
+                    output += f"Path: {project.path or '(not set)'}\n"
+                    output += f"Notes: {note_count}\n"
+                    output += f"Created: {project.created_at.isoformat()}\n"
+
+                    if children:
+                        output += f"\nSub-projects ({len(children)}):\n"
+                        for child in children:
+                            output += f"  * {child.id}\n"
+
+                    if project.metadata:
+                        output += f"\nMetadata: {json.dumps(project.metadata, indent=2)}\n"
+
+                    return output
+                except Exception as e:
+                    return self.format_error_response(e)
+
+        @self.mcp.tool(name="zk_delete_project")
+        def zk_delete_project(
+            project_id: str,
+            confirm: bool = False
+        ) -> str:
+            """Delete a project from the registry.
+
+            Cannot delete projects that have notes or sub-projects.
+            Move or delete notes first, then delete child projects.
+
+            Args:
+                project_id: The project ID to delete
+                confirm: Must be True to proceed (safety check)
+            """
+            with timed_operation("zk_delete_project", project_id=project_id) as op:
+                try:
+                    project = self.project_repository.get(project_id)
+                    if not project:
+                        return f"Project '{project_id}' not found."
+
+                    if not confirm:
+                        note_count = self.project_repository.get_note_count(project_id)
+                        children = self.project_repository.search(parent_id=project_id)
+                        return (
+                            f"Delete project '{project_id}'?\n\n"
+                            f"Notes in project: {note_count}\n"
+                            f"Sub-projects: {len(children)}\n\n"
+                            "To proceed, call again with confirm=True"
+                        )
+
+                    self.project_repository.delete(project_id)
+                    op["deleted"] = True
+                    return f"Project '{project_id}' deleted."
+                except ValidationError as e:
+                    return f"Error: {e.message}"
+                except Exception as e:
+                    return self.format_error_response(e)
+
+        @self.mcp.tool(name="zk_bulk_update_project")
+        def zk_bulk_update_project(
+            note_ids: str,
+            project: str
+        ) -> str:
+            """Move multiple notes to a different project.
+
+            Args:
+                note_ids: Comma-separated list of note IDs to move
+                project: Target project ID
+            """
+            with timed_operation("zk_bulk_update_project", project=project) as op:
+                try:
+                    ids = [id.strip() for id in note_ids.split(",") if id.strip()]
+                    if not ids:
+                        return "Error: No note IDs provided."
+
+                    updated = self.zettel_service.bulk_update_project(ids, project)
+                    op["updated"] = updated
+                    return f"Moved {updated} notes to project '{project}'."
                 except Exception as e:
                     return self.format_error_response(e)
 

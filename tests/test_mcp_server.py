@@ -5,7 +5,7 @@ import pytest
 from unittest.mock import patch, MagicMock, call
 
 from znote_mcp.server.mcp_server import ZettelkastenMcpServer
-from znote_mcp.models.schema import LinkType, NoteType
+from znote_mcp.models.schema import LinkType, NoteType, NotePurpose
 
 class TestMcpServer:
     """Tests for the ZettelkastenMcpServer class."""
@@ -28,19 +28,22 @@ class TestMcpServer:
             return tool_wrapper
         self.mock_mcp.tool = mock_tool_decorator
         
-        # Mock the ZettelService and SearchService
+        # Mock the ZettelService, SearchService, and ProjectRepository
         self.mock_zettel_service = MagicMock()
         self.mock_search_service = MagicMock()
-        
-        # Create patchers for FastMCP, ZettelService, and SearchService
+        self.mock_project_repository = MagicMock()
+
+        # Create patchers for FastMCP, ZettelService, SearchService, and ProjectRepository
         self.mcp_patcher = patch('znote_mcp.server.mcp_server.FastMCP', return_value=self.mock_mcp)
         self.zettel_patcher = patch('znote_mcp.server.mcp_server.ZettelService', return_value=self.mock_zettel_service)
         self.search_patcher = patch('znote_mcp.server.mcp_server.SearchService', return_value=self.mock_search_service)
-        
+        self.project_patcher = patch('znote_mcp.server.mcp_server.ProjectRepository', return_value=self.mock_project_repository)
+
         # Start the patchers
         self.mcp_patcher.start()
         self.zettel_patcher.start()
         self.search_patcher.start()
+        self.project_patcher.start()
         
         # Create a server instance AFTER setting up the mocks
         self.server = ZettelkastenMcpServer()
@@ -50,6 +53,7 @@ class TestMcpServer:
         self.mcp_patcher.stop()
         self.zettel_patcher.stop()
         self.search_patcher.stop()
+        self.project_patcher.stop()
 
     def test_server_initialization(self):
         """Test server initialization."""
@@ -82,7 +86,9 @@ class TestMcpServer:
             content="Test content",
             note_type=NoteType.PERMANENT,
             project="general",
-            tags=["tag1", "tag2"]
+            note_purpose=NotePurpose.GENERAL,
+            tags=["tag1", "tag2"],
+            plan_id=None
         )
 
     def test_get_note_tool(self):

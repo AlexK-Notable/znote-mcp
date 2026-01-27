@@ -1150,6 +1150,7 @@ dev = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "pytest" },
     { name = "tiktoken" },
 ]
 
@@ -1170,4 +1171,7 @@ requires-dist = [
 provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
-dev = [{ name = "tiktoken", specifier = ">=0.12.0" }]
+dev = [
+    { name = "pytest", specifier = ">=8.3.5" },
+    { name = "tiktoken", specifier = ">=0.12.0" },
+]
