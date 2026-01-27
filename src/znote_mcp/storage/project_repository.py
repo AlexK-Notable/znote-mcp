@@ -12,25 +12,9 @@ from znote_mcp.models.db_models import DBProject, get_session_factory, init_db
 from znote_mcp.models.schema import Project, utc_now
 from znote_mcp.storage.base import Repository
 from znote_mcp.exceptions import ErrorCode, ValidationError
+from znote_mcp.utils import escape_like_pattern
 
 logger = logging.getLogger(__name__)
-
-
-def escape_like_pattern(value: str) -> str:
-    """Escape SQL LIKE wildcards to treat them as literals.
-
-    Args:
-        value: User input string that may contain LIKE wildcards
-
-    Returns:
-        String with '%', '_', and '\\' escaped for safe use in LIKE clauses
-    """
-    escape_table = str.maketrans({
-        '\\': '\\\\',
-        '%': '\\%',
-        '_': '\\_',
-    })
-    return value.translate(escape_table)
 
 
 class ProjectRepository(Repository[Project]):
