@@ -57,3 +57,9 @@ disallow_incomplete_defs = true
 testpaths = ["tests"]
 python_files = "test_*.py"
 python_functions = "test_*"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+    "tiktoken>=0.12.0",
+]

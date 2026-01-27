@@ -15,7 +15,16 @@ from znote_mcp.exceptions import (
     StorageError,
     ValidationError,
 )
-from znote_mcp.models.schema import LinkType, Note, NoteType, NotePurpose, Tag, Project
+from znote_mcp.models.schema import (
+    ConflictResult,
+    LinkType,
+    Note,
+    NoteType,
+    NotePurpose,
+    Project,
+    Tag,
+    VersionedNote,
+)
 from znote_mcp.backup import backup_manager
 from znote_mcp.observability import metrics, timed_operation
 from znote_mcp.services.search_service import SearchService
@@ -95,18 +104,14 @@ class ZettelkastenMcpServer:
             plan_id: Optional[str] = None
         ) -> str:
             """Create a new Zettelkasten note.
-
-            IMPORTANT: Use zk_list_projects to see available projects before creating notes.
-            Projects organize notes and help with Obsidian folder structure.
-
             Args:
                 title: The title of the note
                 content: The main content of the note
-                note_type: Zettelkasten type (fleeting, literature, permanent, structure, hub)
-                project: Project this note belongs to (use zk_list_projects to see available)
-                note_purpose: Workflow purpose (research, planning, bugfixing, general)
+                note_type: Type of note (fleeting, literature, permanent, structure, hub)
+                project: Project this note belongs to (used for Obsidian subdirectory organization)
+                note_purpose: Workflow purpose (research, planning, bugfixing, general) for Obsidian organization
                 tags: Comma-separated list of tags (optional)
-                plan_id: Optional ID of associated plan/task
+                plan_id: Optional ID to group related planning notes
             """
             with timed_operation("zk_create_note", title=title[:30]) as op:
                 try:
@@ -120,12 +125,7 @@ class ZettelkastenMcpServer:
                     try:
                         purpose_enum = NotePurpose(note_purpose.lower())
                     except ValueError:
-                        return f"Invalid purpose: {note_purpose}. Valid values: {', '.join(p.value for p in NotePurpose)}"
-
-                    # Warn if project not in registry (soft enforcement)
-                    project_warning = ""
-                    if not self.project_repository.exists(project):
-                        project_warning = f"\n⚠️ Warning: Project '{project}' not in registry. Consider creating it with zk_create_project."
+                        return f"Invalid note purpose: {note_purpose}. Valid purposes are: {', '.join(p.value for p in NotePurpose)}"
 
                     # Convert tags string to list
                     tag_list = []
@@ -143,7 +143,7 @@ class ZettelkastenMcpServer:
                         plan_id=plan_id,
                     )
                     op["note_id"] = note.id
-                    return f"Note created successfully with ID: {note.id} (project: {note.project}, purpose: {note.note_purpose.value}){project_warning}"
+                    return f"Note created successfully with ID: {note.id} (project: {note.project})"
                 except Exception as e:
                     return self.format_error_response(e)
 
@@ -153,27 +153,35 @@ class ZettelkastenMcpServer:
             """Retrieve a note by ID or title.
             Args:
                 identifier: The ID or title of the note
+            Returns:
+                Note content with version hash (use version in zk_update_note/zk_delete_note
+                for conflict detection when multiple processes may edit the same note).
             """
             with timed_operation("zk_get_note", identifier=identifier[:30]) as op:
                 try:
                     identifier = str(identifier)
-                    # Try to get by ID first
-                    note = self.zettel_service.get_note(identifier)
+                    # Try to get by ID first (with version info)
+                    versioned = self.zettel_service.get_note_versioned(identifier)
                     # If not found, try by title
-                    if not note:
+                    if not versioned:
                         note = self.zettel_service.get_note_by_title(identifier)
-                    if not note:
+                        if note:
+                            versioned = self.zettel_service.get_note_versioned(note.id)
+                    if not versioned:
                         op["found"] = False
                         return f"Note not found: {identifier}"
 
+                    note = versioned.note
+                    version = versioned.version
                     op["found"] = True
                     op["note_id"] = note.id
-                    # Format the note
+                    # Format the note with version info
                     result = f"# {note.title}\n"
                     result += f"ID: {note.id}\n"
+                    result += f"Version: {version.commit_hash}\n"
                     result += f"Type: {note.note_type.value}\n"
                     result += f"Project: {note.project}\n"
-                    result += f"Purpose: {note.note_purpose.value}\n"
+                    result += f"Purpose: {note.note_purpose.value if note.note_purpose else 'general'}\n"
                     if note.plan_id:
                         result += f"Plan ID: {note.plan_id}\n"
                     result += f"Created: {note.created_at.isoformat()}\n"
@@ -196,18 +204,24 @@ class ZettelkastenMcpServer:
             project: Optional[str] = None,
             note_purpose: Optional[str] = None,
             tags: Optional[str] = None,
-            plan_id: Optional[str] = None
+            plan_id: Optional[str] = None,
+            expected_version: Optional[str] = None
         ) -> str:
-            """Update an existing note.
+            """Update an existing note with optional version conflict detection.
             Args:
                 note_id: The ID of the note to update
                 title: New title (optional)
                 content: New content (optional)
-                note_type: New Zettelkasten type (optional)
+                note_type: New note type (optional)
                 project: New project (optional, moves note to different Obsidian subdirectory)
-                note_purpose: New purpose (research, planning, bugfixing, general)
+                note_purpose: New purpose (research, planning, bugfixing, general) - optional
                 tags: New comma-separated list of tags (optional)
-                plan_id: New plan ID (optional)
+                plan_id: New plan ID (optional, use empty string to clear)
+                expected_version: Version hash from zk_get_note for conflict detection.
+                    If provided and doesn't match current version, returns CONFLICT error
+                    instead of overwriting (recommended for multi-process safety).
+            Returns:
+                Success message with new version, or CONFLICT error if version mismatch.
             """
             try:
                 # Get the note
@@ -229,20 +243,15 @@ class ZettelkastenMcpServer:
                     try:
                         purpose_enum = NotePurpose(note_purpose.lower())
                     except ValueError:
-                        return f"Invalid purpose: {note_purpose}. Valid values: {', '.join(p.value for p in NotePurpose)}"
-
-                # Warn if project not in registry (soft enforcement)
-                project_warning = ""
-                if project and not self.project_repository.exists(project):
-                    project_warning = f"\n⚠️ Warning: Project '{project}' not in registry."
+                        return f"Invalid note purpose: {note_purpose}. Valid purposes are: {', '.join(p.value for p in NotePurpose)}"
 
                 # Convert tags string to list if provided
                 tag_list = None
                 if tags is not None:  # Allow empty string to clear tags
                     tag_list = [t.strip() for t in tags.split(",") if t.strip()]
 
-                # Update the note
-                updated_note = self.zettel_service.update_note(
+                # Update the note with version checking
+                result = self.zettel_service.update_note_versioned(
                     note_id=note_id,
                     title=title,
                     content=content,
@@ -250,27 +259,66 @@ class ZettelkastenMcpServer:
                     project=project,
                     note_purpose=purpose_enum,
                     tags=tag_list,
-                    plan_id=plan_id
+                    plan_id=plan_id,
+                    expected_version=expected_version
                 )
-                return f"Note updated successfully: {updated_note.id} (project: {updated_note.project}, purpose: {updated_note.note_purpose.value}){project_warning}"
+
+                # Check for conflict
+                if isinstance(result, ConflictResult):
+                    return (
+                        f"CONFLICT: {result.message}\n"
+                        f"Expected version: {result.expected_version}\n"
+                        f"Actual version: {result.actual_version}\n"
+                        f"Re-read the note with zk_get_note to get the latest version."
+                    )
+
+                # Success - return new version
+                versioned = result
+                return (
+                    f"Note updated successfully: {versioned.note.id}\n"
+                    f"New version: {versioned.version.commit_hash}\n"
+                    f"Project: {versioned.note.project}"
+                )
             except Exception as e:
                 return self.format_error_response(e)
 
         # Delete a note
         @self.mcp.tool(name="zk_delete_note")
-        def zk_delete_note(note_id: str) -> str:
-            """Delete a note.
+        def zk_delete_note(
+            note_id: str,
+            expected_version: Optional[str] = None
+        ) -> str:
+            """Delete a note with optional version conflict detection.
             Args:
                 note_id: The ID of the note to delete
+                expected_version: Version hash from zk_get_note for conflict detection.
+                    If provided and doesn't match current version, returns CONFLICT error
+                    instead of deleting (recommended for multi-process safety).
+            Returns:
+                Success message, or CONFLICT error if version mismatch.
             """
             try:
                 # Check if note exists
                 note = self.zettel_service.get_note(note_id)
                 if not note:
                     return f"Note not found: {note_id}"
-                
-                # Delete the note
-                self.zettel_service.delete_note(str(note_id))
+
+                # Delete the note with version checking
+                result = self.zettel_service.delete_note_versioned(
+                    note_id=str(note_id),
+                    expected_version=expected_version
+                )
+
+                # Check for conflict
+                if isinstance(result, ConflictResult):
+                    return (
+                        f"CONFLICT: {result.message}\n"
+                        f"Expected version: {result.expected_version}\n"
+                        f"Actual version: {result.actual_version}\n"
+                        f"Re-read the note with zk_get_note to verify before deleting."
+                    )
+
+                # Success
                 return f"Note deleted successfully: {note_id}"
             except Exception as e:
                 return self.format_error_response(e)
@@ -1146,9 +1194,6 @@ class ZettelkastenMcpServer:
             Projects organize notes and can be hierarchical (sub-projects).
             Use '/' in project_id for hierarchy: "monorepo/frontend".
 
-            IMPORTANT: Create projects before creating notes. Notes require
-            a valid project from the registry.
-
             Args:
                 project_id: Unique project ID (use '/' for sub-projects, e.g., "monorepo/frontend")
                 name: Human-readable display name
@@ -1168,7 +1213,7 @@ class ZettelkastenMcpServer:
                     created = self.project_repository.create(project)
                     op["created"] = True
                     return (
-                        f"✅ Project created: {created.id}\n"
+                        f"Project created: {created.id}\n"
                         f"   Name: {created.name}\n"
                         f"   Description: {created.description or '(none)'}\n"
                         f"   Parent: {created.parent_id or '(root project)'}"
@@ -1185,8 +1230,6 @@ class ZettelkastenMcpServer:
             """List all projects in the registry.
 
             Use this to see available projects before creating notes.
-            Projects are returned with their descriptions to help you
-            choose the right project for new notes.
 
             Args:
                 include_note_counts: Include count of notes per project
@@ -1199,11 +1242,10 @@ class ZettelkastenMcpServer:
                     if not projects:
                         return (
                             "No projects registered yet.\n\n"
-                            "Use zk_create_project to create one, or zk_configure_projects "
-                            "to auto-detect projects from a repository structure."
+                            "Use zk_create_project to create one."
                         )
 
-                    output = f"📁 Projects ({len(projects)}):\n\n"
+                    output = f"Projects ({len(projects)}):\n\n"
                     for p in projects:
                         indent = "  " * p.id.count("/")
                         note_count = ""
@@ -1211,7 +1253,7 @@ class ZettelkastenMcpServer:
                             count = self.project_repository.get_note_count(p.id)
                             note_count = f" ({count} notes)"
 
-                        output += f"{indent}• {p.id}{note_count}\n"
+                        output += f"{indent}* {p.id}{note_count}\n"
                         output += f"{indent}  Name: {p.name}\n"
                         if p.description:
                             output += f"{indent}  Description: {p.description}\n"
@@ -1237,7 +1279,7 @@ class ZettelkastenMcpServer:
                     note_count = self.project_repository.get_note_count(project_id)
                     children = self.project_repository.search(parent_id=project_id)
 
-                    output = f"📁 Project: {project.id}\n\n"
+                    output = f"Project: {project.id}\n\n"
                     output += f"Name: {project.name}\n"
                     output += f"Description: {project.description or '(none)'}\n"
                     output += f"Parent: {project.parent_id or '(root project)'}\n"
@@ -1248,7 +1290,7 @@ class ZettelkastenMcpServer:
                     if children:
                         output += f"\nSub-projects ({len(children)}):\n"
                         for child in children:
-                            output += f"  • {child.id}\n"
+                            output += f"  * {child.id}\n"
 
                     if project.metadata:
                         output += f"\nMetadata: {json.dumps(project.metadata, indent=2)}\n"
@@ -1281,7 +1323,7 @@ class ZettelkastenMcpServer:
                         note_count = self.project_repository.get_note_count(project_id)
                         children = self.project_repository.search(parent_id=project_id)
                         return (
-                            f"⚠️ Delete project '{project_id}'?\n\n"
+                            f"Delete project '{project_id}'?\n\n"
                             f"Notes in project: {note_count}\n"
                             f"Sub-projects: {len(children)}\n\n"
                             "To proceed, call again with confirm=True"
@@ -1289,49 +1331,9 @@ class ZettelkastenMcpServer:
 
                     self.project_repository.delete(project_id)
                     op["deleted"] = True
-                    return f"✅ Project '{project_id}' deleted."
+                    return f"Project '{project_id}' deleted."
                 except ValidationError as e:
                     return f"Error: {e.message}"
-                except Exception as e:
-                    return self.format_error_response(e)
-
-        @self.mcp.tool(name="zk_migration_status")
-        def zk_migration_status() -> str:
-            """Get migration status for existing notes.
-
-            Shows:
-            - Notes grouped by project (identify notes in 'general')
-            - Notes grouped by purpose
-            - Notes that may need project assignment
-
-            Use this to understand your notes before bulk migration.
-            """
-            with timed_operation("zk_migration_status") as op:
-                try:
-                    status = self.zettel_service.get_migration_status()
-                    op["total_notes"] = status["total_notes"]
-
-                    output = f"📊 Migration Status\n\n"
-                    output += f"Total notes: {status['total_notes']}\n\n"
-
-                    output += "By Project:\n"
-                    for project, count in sorted(status["by_project"].items()):
-                        marker = " ⚠️" if project == "general" else ""
-                        output += f"  • {project}: {count}{marker}\n"
-
-                    output += "\nBy Purpose:\n"
-                    for purpose, count in sorted(status["by_purpose"].items()):
-                        output += f"  • {purpose}: {count}\n"
-
-                    if status["unassigned_project_count"] > 0:
-                        output += f"\n⚠️ {status['unassigned_project_count']} notes in 'general' project\n"
-                        output += "Consider assigning them to specific projects.\n"
-                        if status["unassigned_note_ids"]:
-                            output += f"\nFirst few IDs: {', '.join(status['unassigned_note_ids'][:5])}"
-                            if len(status["unassigned_note_ids"]) > 5:
-                                output += "..."
-
-                    return output
                 except Exception as e:
                     return self.format_error_response(e)
 
@@ -1344,51 +1346,17 @@ class ZettelkastenMcpServer:
 
             Args:
                 note_ids: Comma-separated list of note IDs to move
-                project: Target project ID (must exist in registry)
+                project: Target project ID
             """
             with timed_operation("zk_bulk_update_project", project=project) as op:
                 try:
-                    # Verify project exists
-                    if not self.project_repository.exists(project):
-                        return f"Error: Project '{project}' not found. Create it first with zk_create_project."
-
                     ids = [id.strip() for id in note_ids.split(",") if id.strip()]
                     if not ids:
                         return "Error: No note IDs provided."
 
                     updated = self.zettel_service.bulk_update_project(ids, project)
                     op["updated"] = updated
-                    return f"✅ Moved {updated} notes to project '{project}'."
-                except Exception as e:
-                    return self.format_error_response(e)
-
-        @self.mcp.tool(name="zk_bulk_update_purpose")
-        def zk_bulk_update_purpose(
-            note_ids: str,
-            purpose: str
-        ) -> str:
-            """Update the purpose of multiple notes.
-
-            Args:
-                note_ids: Comma-separated list of note IDs
-                purpose: Target purpose (research, planning, bugfixing, general)
-            """
-            with timed_operation("zk_bulk_update_purpose", purpose=purpose) as op:
-                try:
-                    # Validate purpose
-                    try:
-                        purpose_enum = NotePurpose(purpose.lower())
-                    except ValueError:
-                        valid = ", ".join(p.value for p in NotePurpose)
-                        return f"Invalid purpose: {purpose}. Valid values: {valid}"
-
-                    ids = [id.strip() for id in note_ids.split(",") if id.strip()]
-                    if not ids:
-                        return "Error: No note IDs provided."
-
-                    updated = self.zettel_service.bulk_update_purpose(ids, purpose_enum)
-                    op["updated"] = updated
-                    return f"✅ Updated purpose to '{purpose}' for {updated} notes."
+                    return f"Moved {updated} notes to project '{project}'."
                 except Exception as e:
                     return self.format_error_response(e)
 

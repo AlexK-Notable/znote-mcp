@@ -28,19 +28,22 @@ class TestMcpServer:
             return tool_wrapper
         self.mock_mcp.tool = mock_tool_decorator
         
-        # Mock the ZettelService and SearchService
+        # Mock the ZettelService, SearchService, and ProjectRepository
         self.mock_zettel_service = MagicMock()
         self.mock_search_service = MagicMock()
-        
-        # Create patchers for FastMCP, ZettelService, and SearchService
+        self.mock_project_repository = MagicMock()
+
+        # Create patchers for FastMCP, ZettelService, SearchService, and ProjectRepository
         self.mcp_patcher = patch('znote_mcp.server.mcp_server.FastMCP', return_value=self.mock_mcp)
         self.zettel_patcher = patch('znote_mcp.server.mcp_server.ZettelService', return_value=self.mock_zettel_service)
         self.search_patcher = patch('znote_mcp.server.mcp_server.SearchService', return_value=self.mock_search_service)
-        
+        self.project_patcher = patch('znote_mcp.server.mcp_server.ProjectRepository', return_value=self.mock_project_repository)
+
         # Start the patchers
         self.mcp_patcher.start()
         self.zettel_patcher.start()
         self.search_patcher.start()
+        self.project_patcher.start()
         
         # Create a server instance AFTER setting up the mocks
         self.server = ZettelkastenMcpServer()
@@ -50,6 +53,7 @@ class TestMcpServer:
         self.mcp_patcher.stop()
         self.zettel_patcher.stop()
         self.search_patcher.stop()
+        self.project_patcher.stop()
 
     def test_server_initialization(self):
         """Test server initialization."""
@@ -112,8 +116,17 @@ class TestMcpServer:
         mock_note.tags = [mock_tag1, mock_tag2]
         mock_note.links = []
 
-        # Set up return value for get_note
-        self.mock_zettel_service.get_note.return_value = mock_note
+        # Set up mock version info
+        mock_version = MagicMock()
+        mock_version.commit_hash = "abc1234"
+
+        # Set up mock versioned note
+        mock_versioned_note = MagicMock()
+        mock_versioned_note.note = mock_note
+        mock_versioned_note.version = mock_version
+
+        # Set up return value for get_note_versioned
+        self.mock_zettel_service.get_note_versioned.return_value = mock_versioned_note
 
         # Call the tool function directly
         get_note_func = self.registered_tools['zk_get_note']
@@ -122,12 +135,13 @@ class TestMcpServer:
         # Verify result
         assert "# Test Note" in result
         assert "ID: test123" in result
+        assert "Version: abc1234" in result
         assert "Test content" in result
         assert "Project: test-project" in result
         assert "Purpose: research" in result
 
         # Verify service call
-        self.mock_zettel_service.get_note.assert_called_with("test123")
+        self.mock_zettel_service.get_note_versioned.assert_called_with("test123")
 
     def test_create_link_tool(self):
         """Test the zk_create_link tool."""

@@ -141,6 +141,47 @@ def test_search_notes(note_repository):
     assert len(programming_notes) == 2
     assert {note.id for note in programming_notes} == {saved_note1.id, saved_note2.id}
 
+def test_search_with_like_wildcards(note_repository):
+    """Test that LIKE wildcards in search are properly escaped.
+
+    This verifies the SQL LIKE injection fix - user input containing
+    '%' or '_' characters should be treated as literals, not wildcards.
+    """
+    # Create notes with special characters in content
+    note_with_percent = Note(
+        title="Discount Note",
+        content="This product has 50% off sale.",
+        note_type=NoteType.PERMANENT
+    )
+    note_with_underscore = Note(
+        title="Variable Note",
+        content="Use my_variable_name in the code.",
+        note_type=NoteType.PERMANENT
+    )
+    note_normal = Note(
+        title="Normal Note",
+        content="This is a normal note.",
+        note_type=NoteType.PERMANENT
+    )
+
+    saved_percent = note_repository.create(note_with_percent)
+    saved_underscore = note_repository.create(note_with_underscore)
+    saved_normal = note_repository.create(note_normal)
+
+    # Search for '%' - should find only the percent note, not match everything
+    percent_results = note_repository.search(content="50%")
+    assert len(percent_results) >= 1
+    result_ids = {n.id for n in percent_results}
+    assert saved_percent.id in result_ids
+    # Should NOT match normal note (% would be wildcard without escaping)
+
+    # Search for '_' - should find only underscore note
+    underscore_results = note_repository.search(content="my_variable")
+    assert len(underscore_results) >= 1
+    result_ids = {n.id for n in underscore_results}
+    assert saved_underscore.id in result_ids
+
+
 def test_note_linking(note_repository):
     """Test creating links between notes."""
     # Create test notes

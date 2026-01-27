@@ -114,6 +114,48 @@ This system uses a dual storage approach:
 
 If you edit Markdown files directly outside the system, you'll need to run the `zk_rebuild_index` tool to update the database. The database itself can be deleted at any time - it will be regenerated from your Markdown files.
 
+## Concurrency Model
+
+This system is designed for safe multi-process access, enabling multiple Claude Code instances or other MCP clients to work with your notes simultaneously.
+
+### How It Works
+
+1. **Per-Process In-Memory Database**: Each process maintains its own in-memory SQLite database, eliminating lock contention. The database is rebuilt from markdown files on startup.
+
+2. **Git-Based Version Control**: Notes are versioned using git commits. Each create/update operation produces a commit hash that serves as a version identifier.
+
+3. **Optimistic Concurrency Control**: When updating or deleting notes, you can provide an `expected_version` parameter. If another process modified the note, you'll receive a `CONFLICT` response instead of silently overwriting changes.
+
+### Usage Example
+
+```
+# Read a note (returns version hash)
+zk_get_note("my-note-id")
+# Output includes: Version: abc1234
+
+# Update with version check
+zk_update_note(
+    note_id="my-note-id",
+    content="New content",
+    expected_version="abc1234"  # From zk_get_note
+)
+
+# If another process updated the note, you get:
+# CONFLICT: Note was modified by another process...
+# Re-read the note with zk_get_note to get the latest version.
+```
+
+### Configuration
+
+Control the concurrency features via environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ZETTELKASTEN_GIT_ENABLED` | `true` | Enable git versioning for conflict detection |
+| `ZETTELKASTEN_IN_MEMORY_DB` | `true` | Use per-process in-memory SQLite (recommended) |
+
+See `.env.example` for full documentation.
+
 ## Installation
 
 ```bash

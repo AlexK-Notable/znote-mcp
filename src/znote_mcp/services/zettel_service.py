@@ -14,7 +14,17 @@ from znote_mcp.exceptions import (
     LinkError,
     ValidationError,
 )
-from znote_mcp.models.schema import Link, LinkType, Note, NoteType, NotePurpose, Tag
+from znote_mcp.models.schema import (
+    ConflictResult,
+    Link,
+    LinkType,
+    Note,
+    NoteType,
+    NotePurpose,
+    Tag,
+    VersionInfo,
+    VersionedNote,
+)
 from znote_mcp.storage.note_repository import NoteRepository
 
 logger = logging.getLogger(__name__)
@@ -529,11 +539,18 @@ class ZettelService:
             if isinstance(note_type, str):
                 note_type = NoteType(note_type)
 
+            # Extract note_purpose (default to GENERAL)
+            note_purpose = data.get("note_purpose", NotePurpose.GENERAL)
+            if isinstance(note_purpose, str):
+                note_purpose = NotePurpose(note_purpose)
+
             note = Note(
                 title=data["title"],
                 content=data["content"],
                 note_type=note_type,
+                note_purpose=note_purpose,
                 project=data.get("project", "general"),
+                plan_id=data.get("plan_id"),
                 tags=[Tag(name=tag) for tag in data.get("tags", [])],
                 metadata=data.get("metadata", {})
             )
@@ -588,7 +605,9 @@ class ZettelService:
         """
         return self.repository.bulk_update_project(note_ids, project)
 
-    # ========== Migration Methods ==========
+    # =========================================================================
+    # Migration Methods
+    # =========================================================================
 
     def migrate_notes_add_purpose(
         self,
@@ -596,11 +615,11 @@ class ZettelService:
     ) -> Dict[str, Any]:
         """Migrate existing notes to include note_purpose field.
 
-        This updates all notes that don't have a note_purpose set to use
-        the specified default. Safe to run multiple times.
+        This checks the actual markdown file for the 'purpose:' key and adds it
+        if missing. Safe to run multiple times (idempotent).
 
         Args:
-            default_purpose: Default purpose to assign.
+            default_purpose: Default purpose to assign to notes missing it.
 
         Returns:
             Dict with migration stats: {migrated: int, skipped: int, errors: []}
@@ -610,15 +629,32 @@ class ZettelService:
 
         for note in all_notes:
             try:
-                # Check if note needs migration (purpose not set or is default)
-                # Since new notes default to GENERAL, we just ensure the field exists
-                # in the markdown file by re-saving
-                if not hasattr(note, 'note_purpose') or note.note_purpose is None:
-                    note.note_purpose = default_purpose
-                    self.repository.update(note)
-                    stats["migrated"] += 1
-                else:
-                    stats["skipped"] += 1
+                # Check the actual markdown file to see if 'purpose:' exists
+                note_path = self.repository.notes_dir / f"{note.id}.md"
+                if not note_path.exists():
+                    stats["errors"].append({
+                        "id": note.id,
+                        "error": "Markdown file not found"
+                    })
+                    continue
+
+                content = note_path.read_text(encoding="utf-8")
+
+                # Check if 'purpose:' exists in the frontmatter
+                # Frontmatter is between --- markers
+                if content.startswith("---"):
+                    end_marker = content.find("---", 3)
+                    if end_marker > 0:
+                        frontmatter = content[3:end_marker]
+                        if "purpose:" in frontmatter:
+                            stats["skipped"] += 1
+                            continue
+
+                # Need to migrate - set purpose and re-save
+                note.note_purpose = default_purpose
+                self.repository.update(note)
+                stats["migrated"] += 1
+
             except Exception as e:
                 stats["errors"].append({"id": note.id, "error": str(e)})
                 logger.warning(f"Failed to migrate note {note.id}: {e}")
@@ -629,88 +665,150 @@ class ZettelService:
         )
         return stats
 
-    def bulk_update_purpose(
-        self,
-        note_ids: List[str],
-        purpose: NotePurpose
-    ) -> int:
-        """Update note_purpose for multiple notes.
+    # =========================================================================
+    # Versioned CRUD Operations (with git conflict detection)
+    # =========================================================================
+
+    def get_note_versioned(self, note_id: str) -> Optional[VersionedNote]:
+        """Retrieve a note by ID with its version information.
 
         Args:
-            note_ids: List of note IDs to update.
-            purpose: Target NotePurpose.
+            note_id: The note ID.
 
         Returns:
-            Number of notes successfully updated.
+            VersionedNote if found, None otherwise.
         """
-        updated = 0
-        for note_id in note_ids:
-            try:
-                note = self.repository.get(note_id)
-                if note:
-                    note.note_purpose = purpose
-                    self.repository.update(note)
-                    updated += 1
-            except Exception as e:
-                logger.warning(f"Failed to update purpose for {note_id}: {e}")
-        return updated
+        return self.repository.get_versioned(note_id)
 
-    def bulk_update_plan_id(
+    def create_note_versioned(
         self,
-        note_ids: List[str],
-        plan_id: str
-    ) -> int:
-        """Group multiple notes under a plan_id.
+        title: str,
+        content: str,
+        note_type: NoteType = NoteType.PERMANENT,
+        project: str = "general",
+        tags: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> VersionedNote:
+        """Create a new note with version tracking.
 
         Args:
-            note_ids: List of note IDs to group.
-            plan_id: Plan ID to assign.
+            title: Note title.
+            content: Note content.
+            note_type: Type of note (default: PERMANENT).
+            project: Project name (default: "general").
+            tags: Optional list of tag names.
+            metadata: Optional metadata dictionary.
 
         Returns:
-            Number of notes successfully updated.
-        """
-        updated = 0
-        for note_id in note_ids:
-            try:
-                note = self.repository.get(note_id)
-                if note:
-                    note.plan_id = plan_id
-                    self.repository.update(note)
-                    updated += 1
-            except Exception as e:
-                logger.warning(f"Failed to update plan_id for {note_id}: {e}")
-        return updated
+            VersionedNote with the created note and its version info.
 
-    def get_migration_status(self) -> Dict[str, Any]:
-        """Get status of notes for migration purposes.
+        Raises:
+            NoteValidationError: If title or content is missing.
+        """
+        if not title:
+            raise NoteValidationError(
+                "Title is required",
+                field="title",
+                code=ErrorCode.NOTE_TITLE_REQUIRED
+            )
+        if not content:
+            raise NoteValidationError(
+                "Content is required",
+                field="content",
+                code=ErrorCode.NOTE_CONTENT_REQUIRED
+            )
+
+        # Create note object
+        note = Note(
+            title=title,
+            content=content,
+            note_type=note_type,
+            project=project,
+            tags=[Tag(name=tag) for tag in (tags or [])],
+            metadata=metadata or {}
+        )
+
+        # Save with version tracking
+        return self.repository.create_versioned(note)
+
+    def update_note_versioned(
+        self,
+        note_id: str,
+        title: Optional[str] = None,
+        content: Optional[str] = None,
+        note_type: Optional[NoteType] = None,
+        project: Optional[str] = None,
+        note_purpose: Optional[NotePurpose] = None,
+        tags: Optional[List[str]] = None,
+        plan_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        expected_version: Optional[str] = None
+    ) -> Union[VersionedNote, ConflictResult]:
+        """Update an existing note with version conflict detection.
+
+        If expected_version is provided and doesn't match the current version,
+        returns a ConflictResult instead of updating.
+
+        Args:
+            note_id: The note ID to update.
+            title: New title (optional).
+            content: New content (optional).
+            note_type: New note type (optional).
+            project: New project (optional).
+            note_purpose: New purpose (optional).
+            tags: New tags list (optional).
+            plan_id: New plan ID (optional, empty string clears).
+            metadata: New metadata (optional).
+            expected_version: Expected version hash for conflict detection.
 
         Returns:
-            Dict with counts by project, purpose, and notes needing attention.
+            VersionedNote on success, ConflictResult if version conflict.
+
+        Raises:
+            NoteNotFoundError: If the note doesn't exist.
         """
-        all_notes = self.repository.get_all()
+        note = self.repository.get(note_id)
+        if not note:
+            raise NoteNotFoundError(note_id)
 
-        # Count by project
-        by_project: Dict[str, int] = {}
-        for note in all_notes:
-            project = getattr(note, 'project', 'general') or 'general'
-            by_project[project] = by_project.get(project, 0) + 1
+        # Update fields
+        if title is not None:
+            note.title = title
+        if content is not None:
+            note.content = content
+        if note_type is not None:
+            note.note_type = note_type
+        if project is not None:
+            note.project = project
+        if note_purpose is not None:
+            note.note_purpose = note_purpose
+        if tags is not None:
+            note.tags = [Tag(name=tag) for tag in tags]
+        if plan_id is not None:
+            note.plan_id = plan_id if plan_id else None  # Empty string clears
+        if metadata is not None:
+            note.metadata = metadata
 
-        # Count by purpose
-        by_purpose: Dict[str, int] = {}
-        for note in all_notes:
-            purpose = getattr(note, 'note_purpose', NotePurpose.GENERAL)
-            if purpose:
-                by_purpose[purpose.value] = by_purpose.get(purpose.value, 0) + 1
-            else:
-                by_purpose['general'] = by_purpose.get('general', 0) + 1
+        note.updated_at = datetime.datetime.now(timezone.utc)
 
-        # Notes in "general" project (potentially needing assignment)
-        unassigned = [n.id for n in all_notes if (getattr(n, 'project', None) or 'general') == 'general']
+        # Update with version checking
+        return self.repository.update_versioned(note, expected_version)
 
-        return {
-            "total_notes": len(all_notes),
-            "by_project": by_project,
-            "by_purpose": by_purpose,
-            "unassigned_project_count": len(unassigned),
-            "unassigned_note_ids": unassigned[:20]  # First 20 for preview
-        }
+    def delete_note_versioned(
+        self,
+        note_id: str,
+        expected_version: Optional[str] = None
+    ) -> Union[VersionInfo, ConflictResult]:
+        """Delete a note with version conflict detection.
+
+        If expected_version is provided and doesn't match the current version,
+        returns a ConflictResult instead of deleting.
+
+        Args:
+            note_id: The note ID to delete.
+            expected_version: Expected version hash for conflict detection.
+
+        Returns:
+            VersionInfo on success, ConflictResult if version conflict.
+        """
+        return self.repository.delete_versioned(note_id, expected_version)

@@ -12,6 +12,7 @@ from znote_mcp.models.db_models import DBProject, get_session_factory, init_db
 from znote_mcp.models.schema import Project, utc_now
 from znote_mcp.storage.base import Repository
 from znote_mcp.exceptions import ErrorCode, ValidationError
+from znote_mcp.utils import escape_like_pattern
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,12 @@ class ProjectRepository(Repository[Project]):
 
             # Validate parent exists if specified
             if project.parent_id:
+                # Check for self-reference
+                if project.parent_id == project.id:
+                    raise ValidationError(
+                        f"Project '{project.id}' cannot be its own parent",
+                        code=ErrorCode.VALIDATION_FAILED
+                    )
                 parent = session.get(DBProject, project.parent_id)
                 if not parent:
                     raise ValidationError(
@@ -121,17 +128,35 @@ class ProjectRepository(Repository[Project]):
             if not db_project:
                 raise ValidationError(
                     f"Project '{project.id}' not found",
-                    code=ErrorCode.NOT_FOUND
+                    code=ErrorCode.PROJECT_NOT_FOUND
                 )
 
-            # Validate parent exists if specified
+            # Validate parent exists if specified and check for cycles
             if project.parent_id and project.parent_id != db_project.parent_id:
+                # Check for self-reference
+                if project.parent_id == project.id:
+                    raise ValidationError(
+                        f"Project '{project.id}' cannot be its own parent",
+                        code=ErrorCode.VALIDATION_FAILED
+                    )
                 parent = session.get(DBProject, project.parent_id)
                 if not parent:
                     raise ValidationError(
                         f"Parent project '{project.parent_id}' not found",
                         code=ErrorCode.VALIDATION_FAILED
                     )
+                # Check for circular reference by walking up the parent chain
+                # If we encounter project.id, it would create a cycle
+                visited = {project.id}
+                current = parent
+                while current and current.parent_id:
+                    if current.parent_id in visited:
+                        raise ValidationError(
+                            f"Setting parent to '{project.parent_id}' would create a circular reference",
+                            code=ErrorCode.VALIDATION_FAILED
+                        )
+                    visited.add(current.parent_id)
+                    current = session.get(DBProject, current.parent_id)
 
             # Update fields
             db_project.name = project.name
@@ -158,7 +183,7 @@ class ProjectRepository(Repository[Project]):
             if not db_project:
                 raise ValidationError(
                     f"Project '{id}' not found",
-                    code=ErrorCode.NOT_FOUND
+                    code=ErrorCode.PROJECT_NOT_FOUND
                 )
 
             # Check for child projects
@@ -203,7 +228,8 @@ class ProjectRepository(Repository[Project]):
             query = select(DBProject)
 
             if "name" in kwargs:
-                query = query.where(DBProject.name.ilike(f"%{kwargs['name']}%"))
+                escaped_name = escape_like_pattern(kwargs['name'])
+                query = query.where(DBProject.name.ilike(f"%{escaped_name}%", escape='\\'))
             if "parent_id" in kwargs:
                 query = query.where(DBProject.parent_id == kwargs["parent_id"])
 
