@@ -20,6 +20,7 @@ classifiers = [
 dependencies = [
     "mcp[cli]>=1.2.0",
     "sqlalchemy>=2.0.0",
+    "alembic>=1.13.0",
     "pydantic>=2.0.0",
     "python-frontmatter>=1.0.0",
     "markdown>=3.4.0",
@@ -57,9 +58,35 @@ disallow_incomplete_defs = true
 testpaths = ["tests"]
 python_files = "test_*.py"
 python_functions = "test_*"
+# Note: --cov-fail-under=80 is enforced in CI, not locally by default
+addopts = "-v"
+
+[tool.coverage.run]
+source = ["src/znote_mcp"]
+branch = true
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+    "*/dev.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]
+show_missing = true
 
 [dependency-groups]
 dev = [
     "pytest>=8.3.5",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "mypy>=1.0.0",
+    "pdoc>=14.0.0",
     "tiktoken>=0.12.0",
 ]

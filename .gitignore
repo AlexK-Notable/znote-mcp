@@ -71,5 +71,9 @@ data/notes/*.md
 in-memoria.db
 in-memoria-vectors.db/
 
-# Local scripts
-scripts/
+# Generated API documentation
+docs/api/
+
+# Coverage reports
+htmlcov/
+coverage.xml

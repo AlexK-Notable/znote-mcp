@@ -1,0 +1,32 @@
+# Database Migrations with Alembic
+
+This directory contains database migrations for znote-mcp.
+
+## Common Commands
+
+```bash
+# Check current migration status
+uv run alembic current
+
+# Upgrade to latest migration
+uv run alembic upgrade head
+
+# Downgrade one revision
+uv run alembic downgrade -1
+
+# Create a new migration after model changes
+uv run alembic revision --autogenerate -m "Description of changes"
+
+# View migration history
+uv run alembic history
+```
+
+## Environment Variables
+
+- `ZETTELKASTEN_DATABASE_URL`: Override the database URL (default: sqlite:///data/db/zettelkasten.db)
+
+## Notes
+
+- Migrations use SQLite batch mode for compatibility
+- The initial migration captures the full schema as of v1.3.0
+- Always test migrations on a backup before applying to production data

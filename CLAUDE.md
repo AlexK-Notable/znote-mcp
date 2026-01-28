@@ -36,6 +36,16 @@ ZETTELKASTEN_TEST_PERSIST=1 uv run pytest tests/test_e2e.py -v
 uv run black src/ tests/
 uv run isort src/ tests/
 uv run mypy src/
+
+# Generate API documentation
+./scripts/generate-docs.sh
+# Or manually:
+ZETTELKASTEN_DATABASE_PATH=":memory:" uv run pdoc src/znote_mcp -o docs/api --docformat google
+
+# Database migrations (Alembic)
+uv run alembic current           # Check current migration
+uv run alembic upgrade head      # Apply all migrations
+uv run alembic revision --autogenerate -m "Description"  # Create new migration
 ```
 
 ## Architecture
