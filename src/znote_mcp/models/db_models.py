@@ -1,11 +1,10 @@
 """SQLAlchemy database models for the Zettelkasten MCP server."""
 import datetime
-from typing import List, Optional
+from typing import Optional
 
 from sqlalchemy import (Column, DateTime, ForeignKey, Integer, String, Table,
                        Text, UniqueConstraint, create_engine)
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import Mapped, Session, declarative_base, relationship, sessionmaker
+from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from sqlalchemy.pool import QueuePool, StaticPool
 
 from znote_mcp.config import config

@@ -1366,14 +1366,16 @@ class NoteRepository(Repository[Note]):
             if not file_path.exists():
                 raise ValueError(f"Note with ID {id} does not exist")
 
-            # Get the note's title and project before deleting (for Obsidian mirror)
+            # Get the note's title, project, and purpose before deleting (for Obsidian mirror)
             note_title = None
             note_project = None
+            note_purpose = None
             try:
                 note = self.get(id)
                 if note:
                     note_title = note.title
                     note_project = note.project
+                    note_purpose = note.note_purpose
             except (IOError, OSError, ValueError, yaml.YAMLError) as e:
                 # If we can't read the note, log and continue with deletion
                 # The note file exists but may be corrupted/unreadable
@@ -1388,7 +1390,7 @@ class NoteRepository(Repository[Note]):
                 raise IOError(f"Failed to delete note {id}: {e}")
 
             # Delete from Obsidian vault if configured
-            self._delete_from_obsidian(id, note_title, note_project)
+            self._delete_from_obsidian(id, note_title, note_project, note_purpose)
 
             # Delete from database (using parameterized queries to prevent SQL injection)
             with self.session_factory() as session:
@@ -1559,6 +1561,7 @@ class NoteRepository(Repository[Note]):
                 raise ValueError(f"Note with ID {id} does not exist")
             title = note.title
             project = note.project
+            purpose = note.note_purpose
 
             if self._git:
                 # Git handles version check + file deletion atomically via git rm
@@ -1569,7 +1572,7 @@ class NoteRepository(Repository[Note]):
                         expected_version=expected_version
                     )
                     # Git succeeded (file deleted by git rm) - now cleanup DB and Obsidian
-                    self._delete_from_obsidian(id, title, project)
+                    self._delete_from_obsidian(id, title, project, purpose)
                     self._delete_from_db(id)
 
                     return VersionInfo.from_git_commit(version.commit_hash, version.timestamp)
@@ -1982,7 +1985,7 @@ class NoteRepository(Repository[Note]):
                 sql = text("""
                     SELECT id, title, content
                     FROM notes
-                    WHERE title LIKE :term OR content LIKE :term
+                    WHERE title LIKE :term ESCAPE '\\' OR content LIKE :term ESCAPE '\\'
                     LIMIT :limit
                 """)
                 result = session.execute(sql, {"term": search_term, "limit": limit})
@@ -2403,10 +2406,11 @@ class NoteRepository(Repository[Note]):
                     notes_info.append({
                         "id": note_id,
                         "title": note.title,
-                        "project": note.project
+                        "project": note.project,
+                        "purpose": note.note_purpose
                     })
             except Exception:
-                notes_info.append({"id": note_id, "title": None, "project": None})
+                notes_info.append({"id": note_id, "title": None, "project": None, "purpose": None})
 
         # Delete from database FIRST (atomic transaction)
         try:
@@ -2451,7 +2455,7 @@ class NoteRepository(Repository[Note]):
 
         # Delete from Obsidian
         for info in notes_info:
-            self._delete_from_obsidian(info["id"], info["title"], info["project"])
+            self._delete_from_obsidian(info["id"], info["title"], info["project"], info["purpose"])
 
         if failed_files:
             logger.warning(f"Some files could not be deleted: {failed_files}")
@@ -2760,6 +2764,7 @@ class NoteRepository(Repository[Note]):
                                 "note": note,
                                 "old_project": old_project,
                                 "old_title": note.title,
+                                "old_purpose": note.note_purpose,
                                 "db_note": db_note
                             })
 
@@ -2781,6 +2786,7 @@ class NoteRepository(Repository[Note]):
                         note = update_info["note"]
                         old_project = update_info["old_project"]
                         old_title = update_info["old_title"]
+                        old_purpose = update_info["old_purpose"]
 
                         try:
                             # Update note's project
@@ -2804,7 +2810,8 @@ class NoteRepository(Repository[Note]):
                                 "original": original_content,
                                 "note": note,
                                 "old_project": old_project,
-                                "old_title": old_title
+                                "old_title": old_title,
+                                "old_purpose": old_purpose
                             })
 
                         except Exception as e:
@@ -2842,7 +2849,8 @@ class NoteRepository(Repository[Note]):
                         self._delete_from_obsidian(
                             written["note"].id,
                             written["old_title"],
-                            written["old_project"]
+                            written["old_project"],
+                            written["old_purpose"]
                         )
                         # Create new mirror
                         markdown = self._note_to_markdown(written["note"])
