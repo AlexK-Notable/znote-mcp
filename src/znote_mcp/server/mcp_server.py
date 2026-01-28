@@ -1337,29 +1337,6 @@ class ZettelkastenMcpServer:
                 except Exception as e:
                     return self.format_error_response(e)
 
-        @self.mcp.tool(name="zk_bulk_update_project")
-        def zk_bulk_update_project(
-            note_ids: str,
-            project: str
-        ) -> str:
-            """Move multiple notes to a different project.
-
-            Args:
-                note_ids: Comma-separated list of note IDs to move
-                project: Target project ID
-            """
-            with timed_operation("zk_bulk_update_project", project=project) as op:
-                try:
-                    ids = [id.strip() for id in note_ids.split(",") if id.strip()]
-                    if not ids:
-                        return "Error: No note IDs provided."
-
-                    updated = self.zettel_service.bulk_update_project(ids, project)
-                    op["updated"] = updated
-                    return f"Moved {updated} notes to project '{project}'."
-                except Exception as e:
-                    return self.format_error_response(e)
-
     def _register_resources(self) -> None:
         """Register MCP resources."""
         # Currently, we don't define resources for the Zettelkasten server

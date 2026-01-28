@@ -1023,11 +1023,18 @@ class NoteRepository(Repository[Note]):
             session.commit()
 
     def _delete_from_obsidian(self, note_id: str, title: Optional[str] = None,
-                               project: Optional[str] = None) -> None:
+                               project: Optional[str] = None,
+                               note_purpose: Optional["NotePurpose"] = None) -> None:
         """Delete a note's mirror from the Obsidian vault if configured.
 
         Searches for files with ID suffix pattern: "Title (id_suffix).md"
         Uses recursive glob to find files in project/purpose subdirectories.
+
+        Args:
+            note_id: The note's ID (used for ID suffix matching).
+            title: The note's title (not currently used but available for future).
+            project: The project name for targeted directory search.
+            note_purpose: The note's purpose for targeted directory search.
         """
         if not self.obsidian_vault_path:
             return
@@ -1043,7 +1050,16 @@ class NoteRepository(Repository[Note]):
                 for c in project
             ).strip() or "general"
             project_dir = self.obsidian_vault_path / safe_project
-            if project_dir.exists():
+
+            # If purpose is also specified, search more precisely
+            if note_purpose and project_dir.exists():
+                purpose_dir = project_dir / note_purpose.value
+                if purpose_dir.exists():
+                    search_dirs.append(purpose_dir)
+                else:
+                    # Fall back to project dir if purpose dir doesn't exist
+                    search_dirs.append(project_dir)
+            elif project_dir.exists():
                 search_dirs.append(project_dir)
 
         # If no project specified or project dir doesn't exist, search all subdirs
@@ -1258,9 +1274,11 @@ class NoteRepository(Repository[Note]):
             if not existing_note:
                 raise ValueError(f"Note with ID {note.id} does not exist")
 
-            # If title or project changed, delete old Obsidian mirror (will be recreated)
-            if existing_note.title != note.title or existing_note.project != note.project:
-                self._delete_from_obsidian(note.id, existing_note.title, existing_note.project)
+            # If title, project, or purpose changed, delete old Obsidian mirror (will be recreated)
+            if (existing_note.title != note.title or
+                existing_note.project != note.project or
+                existing_note.note_purpose != note.note_purpose):
+                self._delete_from_obsidian(note.id, existing_note.title, existing_note.project, existing_note.note_purpose)
 
             # Update timestamp
             note.updated_at = utc_now()
@@ -1290,6 +1308,9 @@ class NoteRepository(Repository[Note]):
                         db_note.title = note.title
                         db_note.content = note.content
                         db_note.note_type = note.note_type.value
+                        db_note.note_purpose = note.note_purpose.value
+                        db_note.project = note.project
+                        db_note.plan_id = note.plan_id
                         db_note.updated_at = note.updated_at
 
                         # Clear existing tags
@@ -1673,13 +1694,13 @@ class NoteRepository(Repository[Note]):
                 search_term = escape_like_pattern(kwargs['content'])
                 query = query.where(
                     or_(
-                        DBNote.content.like(f"%{search_term}%"),
-                        DBNote.title.like(f"%{search_term}%")
+                        DBNote.content.like(f"%{search_term}%", escape='\\'),
+                        DBNote.title.like(f"%{search_term}%", escape='\\')
                     )
                 )
             if "title" in kwargs:
                 search_title = escape_like_pattern(kwargs['title'])
-                query = query.where(func.lower(DBNote.title).like(f"%{search_title.lower()}%"))
+                query = query.where(func.lower(DBNote.title).like(f"%{search_title.lower()}%", escape='\\'))
             if "note_type" in kwargs:
                 note_type = (
                     kwargs["note_type"].value

@@ -685,7 +685,9 @@ class ZettelService:
         title: str,
         content: str,
         note_type: NoteType = NoteType.PERMANENT,
+        note_purpose: NotePurpose = NotePurpose.GENERAL,
         project: str = "general",
+        plan_id: Optional[str] = None,
         tags: Optional[List[str]] = None,
         metadata: Optional[Dict[str, Any]] = None
     ) -> VersionedNote:
@@ -695,7 +697,9 @@ class ZettelService:
             title: Note title.
             content: Note content.
             note_type: Type of note (default: PERMANENT).
+            note_purpose: Workflow purpose (default: GENERAL).
             project: Project name (default: "general").
+            plan_id: Optional plan ID for grouping related planning notes.
             tags: Optional list of tag names.
             metadata: Optional metadata dictionary.
 
@@ -723,7 +727,9 @@ class ZettelService:
             title=title,
             content=content,
             note_type=note_type,
+            note_purpose=note_purpose,
             project=project,
+            plan_id=plan_id,
             tags=[Tag(name=tag) for tag in (tags or [])],
             metadata=metadata or {}
         )

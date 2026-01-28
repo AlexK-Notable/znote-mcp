@@ -373,7 +373,7 @@ class TestRestoreToolIntegration:
 
 
 class TestBulkProjectUpdateIntegration:
-    """Integration tests for zk_bulk_update_project tool."""
+    """Integration tests for zk_bulk_move_to_project tool."""
 
     @pytest.fixture
     def setup_services(self, temp_dirs):
@@ -384,7 +384,7 @@ class TestBulkProjectUpdateIntegration:
         return service, repo, notes_dir
 
     def test_bulk_move_notes_to_project(self, setup_services):
-        """zk_bulk_update_project should move multiple notes."""
+        """zk_bulk_move_to_project should move multiple notes."""
         service, repo, notes_dir = setup_services
 
         # Create notes in different projects
