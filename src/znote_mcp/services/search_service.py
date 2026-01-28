@@ -1,15 +1,10 @@
 """Service for searching and discovering notes in the Zettelkasten."""
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
-from sqlalchemy import func, select, text
 
 from znote_mcp.models.schema import LinkType, Note, NoteType, Tag
 from znote_mcp.services.zettel_service import ZettelService
-
-from sqlalchemy import or_
-from sqlalchemy.orm import joinedload
-from znote_mcp.models.db_models import DBLink, DBNote
 
 @dataclass
 class SearchResult:
@@ -117,89 +112,31 @@ class SearchService:
     
     def find_orphaned_notes(self) -> List[Note]:
         """Find notes with no incoming or outgoing links."""
-        orphans = []
-        
-        with self.zettel_service.repository.session_factory() as session:
-            # Subquery for notes with links
-            notes_with_links = (
-                select(DBNote.id)
-                .outerjoin(DBLink, or_(
-                    DBNote.id == DBLink.source_id,
-                    DBNote.id == DBLink.target_id
-                ))
-                .where(or_(
-                    DBLink.source_id != None,
-                    DBLink.target_id != None
-                ))
-                .subquery()
-            )
-            
-            # Query for notes without links
-            query = (
-                select(DBNote)
-                .options(
-                    joinedload(DBNote.tags),
-                    joinedload(DBNote.outgoing_links),
-                    joinedload(DBNote.incoming_links)
-                )
-                .where(DBNote.id.not_in(select(notes_with_links)))
-            )
-            
-            result = session.execute(query)
-            orphaned_db_notes = result.unique().scalars().all()
-            
-            # Convert DB notes to model Notes
-            for db_note in orphaned_db_notes:
-                note = self.zettel_service.get_note(db_note.id)
-                if note:
-                    orphans.append(note)
-                    
-        return orphans
-    
+        orphaned_ids = self.zettel_service.repository.find_orphaned_note_ids()
+        return self.zettel_service.repository.get_by_ids(orphaned_ids)
+
     def find_central_notes(self, limit: int = 10) -> List[Tuple[Note, int]]:
         """Find notes with the most connections (incoming + outgoing links)."""
-        note_connections = []
-        # Direct database query to count connections for all notes at once
-        with self.zettel_service.repository.session_factory() as session:
-            # Use a CTE for better readability and performance
-            query = text("""
-            WITH outgoing AS (
-                SELECT source_id as note_id, COUNT(*) as outgoing_count 
-                FROM links 
-                GROUP BY source_id
-            ),
-            incoming AS (
-                SELECT target_id as note_id, COUNT(*) as incoming_count 
-                FROM links 
-                GROUP BY target_id
-            )
-            SELECT n.id,
-                COALESCE(o.outgoing_count, 0) as outgoing,
-                COALESCE(i.incoming_count, 0) as incoming,
-                (COALESCE(o.outgoing_count, 0) + COALESCE(i.incoming_count, 0)) as total
-            FROM notes n
-            LEFT JOIN outgoing o ON n.id = o.note_id
-            LEFT JOIN incoming i ON n.id = i.note_id
-            WHERE (COALESCE(o.outgoing_count, 0) + COALESCE(i.incoming_count, 0)) > 0
-            ORDER BY total DESC
-            LIMIT :limit
-            """)
-            
-            results = session.execute(query, {"limit": limit}).all()
-            
-            # Process results
-            for note_id, outgoing_count, incoming_count, total_connections in results:
-                total_connections = outgoing_count + incoming_count
-                if total_connections > 0:  # Only include notes with connections
-                    note = self.zettel_service.get_note(note_id)
-                    if note:
-                        note_connections.append((note, total_connections))
-        
-        # Sort by total connections (descending)
-        note_connections.sort(key=lambda x: x[1], reverse=True)
-        
-        # Return top N notes
-        return note_connections[:limit]
+        # Get note IDs with connection counts from repository
+        id_counts = self.zettel_service.repository.find_central_note_ids_with_counts(limit)
+
+        if not id_counts:
+            return []
+
+        # Build connection count map and collect IDs for batch retrieval
+        note_ids = [note_id for note_id, _ in id_counts]
+        connection_counts = {note_id: count for note_id, count in id_counts}
+
+        # Batch retrieve all notes at once
+        notes = self.zettel_service.repository.get_by_ids(note_ids)
+
+        # Build result list preserving SQL ordering
+        note_map = {note.id: note for note in notes}
+        return [
+            (note_map[note_id], connection_counts[note_id])
+            for note_id in note_ids
+            if note_id in note_map
+        ]
     
     def find_notes_by_date_range(
         self,
@@ -218,7 +155,7 @@ class SearchService:
             # Check if in range
             if start_date and date < start_date:
                 continue
-            if end_date and date >= end_date + datetime.timedelta(seconds=1):
+            if end_date and date >= end_date + timedelta(seconds=1):
                 continue
             
             matching_notes.append(note)

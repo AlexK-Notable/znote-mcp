@@ -11,7 +11,6 @@ from znote_mcp.config import config
 from znote_mcp.models.db_models import init_db
 from znote_mcp.observability import configure_logging, metrics
 from znote_mcp.server.mcp_server import ZettelkastenMcpServer
-from znote_mcp.utils import setup_logging
 
 
 def parse_args():
@@ -61,17 +60,19 @@ def main():
     args = parse_args()
     update_config(args)
 
-    # Set up console logging first (for early errors)
-    setup_logging(args.log_level)
-    logger = logging.getLogger(__name__)
-
-    # Configure persistent file logging with rotation
+    # Configure logging (console + persistent file logging with rotation)
     log_level = getattr(logging, args.log_level.upper(), logging.INFO)
     try:
         log_dir = configure_logging(level=log_level, console=True)
-        logger.info(f"Persistent logging enabled: {log_dir}")
     except Exception as e:
-        logger.warning(f"Failed to configure persistent logging: {e}")
+        # Fall back to basic console logging if file logging fails
+        logging.basicConfig(level=log_level)
+        logging.getLogger(__name__).warning(f"Failed to configure file logging: {e}")
+        log_dir = None
+
+    logger = logging.getLogger(__name__)
+    if log_dir:
+        logger.info(f"Persistent logging enabled: {log_dir}")
 
     # Register metrics save on shutdown
     atexit.register(_save_metrics_on_exit)

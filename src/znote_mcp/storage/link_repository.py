@@ -2,11 +2,11 @@
 import logging
 from typing import List, Optional
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy import func, select
 
-from znote_mcp.models.db_models import DBLink, DBNote
+from znote_mcp.models.db_models import DBLink
 from znote_mcp.models.schema import Link, LinkType
+from znote_mcp.exceptions import ErrorCode, LinkError
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +48,12 @@ class LinkRepository:
                 )
             )
             if existing:
-                raise ValueError(
-                    f"Link already exists: {link.source_id} -> {link.target_id} ({link.link_type.value})"
+                raise LinkError(
+                    "Link already exists",
+                    source_id=link.source_id,
+                    target_id=link.target_id,
+                    link_type=link.link_type.value,
+                    code=ErrorCode.LINK_ALREADY_EXISTS
                 )
 
             db_link = DBLink(
@@ -235,39 +239,10 @@ class LinkRepository:
         """
         with self.session_factory() as session:
             outgoing_count = session.scalar(
-                select(DBLink).where(DBLink.source_id == note_id).with_only_columns(
-                    DBLink.id
-                ).count()
+                select(func.count(DBLink.id)).where(DBLink.source_id == note_id)
             ) or 0
             incoming_count = session.scalar(
-                select(DBLink).where(DBLink.target_id == note_id).with_only_columns(
-                    DBLink.id
-                ).count()
+                select(func.count(DBLink.id)).where(DBLink.target_id == note_id)
             ) or 0
 
             return outgoing_count + incoming_count
-
-    def find_orphaned_note_ids(self) -> List[str]:
-        """Find note IDs that have no links (neither incoming nor outgoing).
-
-        Returns:
-            List of orphaned note IDs.
-        """
-        with self.session_factory() as session:
-            # Get all note IDs
-            all_note_ids = set(
-                session.scalars(select(DBNote.id)).all()
-            )
-
-            # Get note IDs that have links
-            linked_as_source = set(
-                session.scalars(select(DBLink.source_id).distinct()).all()
-            )
-            linked_as_target = set(
-                session.scalars(select(DBLink.target_id).distinct()).all()
-            )
-
-            linked_ids = linked_as_source | linked_as_target
-            orphaned_ids = all_note_ids - linked_ids
-
-            return list(orphaned_ids)

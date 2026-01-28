@@ -6,6 +6,7 @@ from sqlalchemy import func, select, text
 
 from znote_mcp.models.db_models import DBNote, DBTag, note_tags
 from znote_mcp.models.schema import Tag
+from znote_mcp.exceptions import NoteNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -193,7 +194,7 @@ class TagRepository:
                 select(DBNote).where(DBNote.id == note_id)
             )
             if not db_note:
-                raise ValueError(f"Note {note_id} not found")
+                raise NoteNotFoundError(note_id)
 
             # Check if association already exists
             if db_tag not in db_note.tags:
@@ -223,7 +224,7 @@ class TagRepository:
                 select(DBNote).where(DBNote.id == note_id)
             )
             if not db_note:
-                raise ValueError(f"Note {note_id} not found")
+                raise NoteNotFoundError(note_id)
 
             # Remove association if it exists
             if db_tag in db_note.tags:

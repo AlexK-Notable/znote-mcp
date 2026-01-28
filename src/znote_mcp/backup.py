@@ -7,7 +7,6 @@ Provides automated and manual backup capabilities for:
 """
 import gzip
 import logging
-import os
 import shutil
 import sqlite3
 from datetime import datetime, timezone
@@ -296,7 +295,18 @@ class BackupManager:
         """
         with self._lock:
             try:
-                backup_path = Path(backup_path).resolve()
+                original_path = Path(backup_path)
+
+                # Security: Reject symlinks to prevent symlink-based path traversal
+                # Symlinks could point outside backup_dir while appearing to be inside
+                if original_path.is_symlink():
+                    logger.error(
+                        f"Security: Backup path '{original_path}' is a symlink. "
+                        "Symlinks are not allowed for restore operations."
+                    )
+                    return False
+
+                backup_path = original_path.resolve()
 
                 # Security: Validate backup_path is within backup_dir
                 # This prevents path traversal attacks

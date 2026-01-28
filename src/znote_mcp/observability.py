@@ -34,6 +34,45 @@ F = TypeVar('F', bound=Callable[..., Any])
 # Global flag to track if logging has been configured
 _logging_configured = False
 
+# Maximum error message length for metrics storage
+_MAX_ERROR_MESSAGE_LENGTH = 200
+
+
+def _sanitize_error_message(error: Optional[str], max_length: int = _MAX_ERROR_MESSAGE_LENGTH) -> Optional[str]:
+    """Sanitize error message for safe storage in metrics.
+
+    Prevents sensitive information leakage by:
+    - Truncating long messages
+    - Replacing home directory paths with ~
+    - Removing newlines that could break log parsing
+
+    Args:
+        error: The error message to sanitize
+        max_length: Maximum message length (default: 200)
+
+    Returns:
+        Sanitized error message, or None if input was None
+    """
+    if error is None:
+        return None
+
+    # Replace home directory with ~ to hide username
+    home_dir = str(Path.home())
+    sanitized = error.replace(home_dir, "~")
+
+    # Remove newlines and carriage returns
+    sanitized = sanitized.replace('\n', ' ').replace('\r', ' ')
+
+    # Collapse multiple spaces
+    while '  ' in sanitized:
+        sanitized = sanitized.replace('  ', ' ')
+
+    # Truncate to max length
+    if len(sanitized) > max_length:
+        sanitized = sanitized[:max_length - 3] + "..."
+
+    return sanitized.strip()
+
 
 def configure_logging(
     log_dir: Optional[Union[str, Path]] = None,
@@ -178,7 +217,7 @@ class MetricsCollector:
                 m.success_count += 1
             else:
                 m.error_count += 1
-                m.last_error = error
+                m.last_error = _sanitize_error_message(error)
                 m.last_error_time = datetime.now(timezone.utc)
 
             # Auto-save periodically
@@ -425,79 +464,3 @@ def traced(operation_name: Optional[str] = None) -> Callable[[F], F]:
 
         return wrapper  # type: ignore
     return decorator
-
-
-def log_context(**context) -> Dict[str, Any]:
-    """Create a structured logging context.
-
-    Args:
-        **context: Key-value pairs to include in the context
-
-    Returns:
-        Dictionary suitable for structured logging
-
-    Example:
-        logger.info("Note created", extra=log_context(note_id=note.id, title=note.title))
-    """
-    return {
-        'timestamp': datetime.now(timezone.utc).isoformat(),
-        **context
-    }
-
-
-class StructuredLogger:
-    """Logger adapter that adds structured context to all messages.
-
-    Wraps the standard logging module to automatically include
-    component name and optional persistent context.
-    """
-
-    def __init__(self, component: str):
-        """Initialize with a component name.
-
-        Args:
-            component: Name of the component (e.g., 'mcp_server', 'repository')
-        """
-        self._logger = logging.getLogger(f"zettelkasten.{component}")
-        self._component = component
-        self._context: Dict[str, Any] = {}
-
-    def set_context(self, **context) -> None:
-        """Set persistent context that will be included in all log messages."""
-        self._context.update(context)
-
-    def clear_context(self) -> None:
-        """Clear the persistent context."""
-        self._context.clear()
-
-    def _format_message(self, msg: str, **extra) -> str:
-        """Format message with context."""
-        all_context = {**self._context, **extra}
-        if all_context:
-            ctx_str = ' '.join(f'{k}={v}' for k, v in all_context.items())
-            return f"[{self._component}] {msg} | {ctx_str}"
-        return f"[{self._component}] {msg}"
-
-    def debug(self, msg: str, **extra) -> None:
-        self._logger.debug(self._format_message(msg, **extra))
-
-    def info(self, msg: str, **extra) -> None:
-        self._logger.info(self._format_message(msg, **extra))
-
-    def warning(self, msg: str, **extra) -> None:
-        self._logger.warning(self._format_message(msg, **extra))
-
-    def error(self, msg: str, exc_info: bool = False, **extra) -> None:
-        self._logger.error(self._format_message(msg, **extra), exc_info=exc_info)
-
-
-def get_logger(component: str) -> StructuredLogger:
-    """Get a structured logger for a component.
-
-    Args:
-        component: Component name (e.g., 'mcp_server', 'repository')
-
-    Returns:
-        A StructuredLogger instance
-    """
-    return StructuredLogger(component)

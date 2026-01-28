@@ -240,7 +240,36 @@ class ZettelService:
     def get_all_tags(self) -> List[Tag]:
         """Get all tags in the system."""
         return self.repository.get_all_tags()
-    
+
+    def get_tags_with_counts(self) -> Dict[str, int]:
+        """Get all tags with their usage counts.
+
+        Returns:
+            Dictionary mapping tag names to their note counts.
+        """
+        return self.repository.get_tags_with_counts()
+
+    def delete_unused_tags(self) -> int:
+        """Delete tags that are not associated with any notes.
+
+        Returns:
+            Number of tags deleted.
+        """
+        return self.repository.delete_unused_tags()
+
+    def get_note_history(self, note_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get version history for a note.
+
+        Args:
+            note_id: The note ID
+            limit: Maximum number of versions to return
+
+        Returns:
+            List of version info dictionaries, most recent first.
+            Empty list if git versioning is not enabled.
+        """
+        return self.repository.get_note_history(note_id, limit)
+
     def create_link(
         self,
         source_id: str,

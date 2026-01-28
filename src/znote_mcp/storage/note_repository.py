@@ -40,6 +40,31 @@ from znote_mcp.utils import escape_like_pattern
 logger = logging.getLogger(__name__)
 
 
+def _sanitize_commit_message(title: str, max_length: int = 100) -> str:
+    """Sanitize note title for use in git commit message.
+
+    Prevents potential issues from malicious or malformed titles:
+    - Truncates to reasonable length
+    - Removes newlines (could corrupt git log parsing)
+    - Prefixes titles starting with dash (could be confused for git flags)
+
+    Args:
+        title: The note title to sanitize.
+        max_length: Maximum length for the sanitized title.
+
+    Returns:
+        Sanitized title safe for use in git commit messages.
+    """
+    # Truncate to reasonable length
+    sanitized = title[:max_length]
+    # Remove/replace newlines and carriage returns
+    sanitized = sanitized.replace('\n', ' ').replace('\r', ' ')
+    # Ensure doesn't start with dash (git flag confusion)
+    if sanitized.startswith('-'):
+        sanitized = '_' + sanitized
+    return sanitized
+
+
 class NoteRepository(Repository[Note]):
     """Repository for note storage and retrieval.
     This implements a dual storage approach:
@@ -1150,7 +1175,38 @@ class NoteRepository(Repository[Note]):
             if not db_note:
                 return None
             return self.get(db_note.id)
-    
+
+    def get_by_ids(self, ids: List[str]) -> List[Note]:
+        """Get multiple notes by their IDs in a batch.
+
+        This method is more efficient than calling get() multiple times
+        when you need to retrieve several notes, as it minimizes I/O overhead.
+
+        Args:
+            ids: List of note IDs to retrieve.
+
+        Returns:
+            List of Note objects for notes that were found.
+            Notes that don't exist are silently skipped.
+
+        Raises:
+            ValueError: If any ID contains invalid characters.
+        """
+        if not ids:
+            return []
+
+        # Validate all IDs first
+        for note_id in ids:
+            validate_safe_path_component(note_id, "Note ID")
+
+        notes = []
+        for note_id in ids:
+            note = self.get(note_id)
+            if note:
+                notes.append(note)
+
+        return notes
+
     def get_all(
         self,
         limit: Optional[int] = None,
@@ -1453,7 +1509,7 @@ class NoteRepository(Repository[Note]):
             file_path = self.notes_dir / f"{created_note.id}.md"
             version = self._git.commit_file(
                 file_path,
-                f"Create note: {created_note.title}"
+                f"Create note: {_sanitize_commit_message(created_note.title)}"
             )
             version_info = VersionInfo.from_git_commit(
                 version.commit_hash,
@@ -1503,7 +1559,7 @@ class NoteRepository(Repository[Note]):
             try:
                 version = self._git.commit_file(
                     file_path,
-                    f"Update note: {updated_note.title}",
+                    f"Update note: {_sanitize_commit_message(updated_note.title)}",
                     expected_version=expected_version
                 )
                 version_info = VersionInfo.from_git_commit(
@@ -2158,6 +2214,141 @@ class NoteRepository(Repository[Note]):
             result = session.execute(select(DBTag))
             db_tags = result.scalars().all()
         return [Tag(name=tag.name) for tag in db_tags]
+
+    def get_tags_with_counts(self) -> Dict[str, int]:
+        """Get all tags with their usage counts.
+
+        Returns:
+            Dictionary mapping tag names to their note counts.
+        """
+        with self.session_factory() as session:
+            result = session.execute(
+                select(DBTag.name, func.count(note_tags.c.note_id))
+                .select_from(DBTag)
+                .outerjoin(note_tags, DBTag.id == note_tags.c.tag_id)
+                .group_by(DBTag.name)
+            ).all()
+
+            return {name: count for name, count in result}
+
+    def delete_unused_tags(self) -> int:
+        """Delete tags that are not associated with any notes.
+
+        Cleans up orphaned tags that were left behind when notes were deleted
+        or had their tags removed.
+
+        Returns:
+            Number of tags deleted.
+        """
+        with self.session_factory() as session:
+            unused_tags = session.scalars(
+                select(DBTag)
+                .outerjoin(note_tags, DBTag.id == note_tags.c.tag_id)
+                .where(note_tags.c.note_id.is_(None))
+            ).all()
+
+            count = len(unused_tags)
+            for tag in unused_tags:
+                session.delete(tag)
+
+            session.commit()
+            return count
+
+    def find_orphaned_note_ids(self) -> List[str]:
+        """Find note IDs that have no incoming or outgoing links.
+
+        Returns:
+            List of note IDs for orphaned notes.
+        """
+        with self.session_factory() as session:
+            # Subquery for notes with links
+            notes_with_links = (
+                select(DBNote.id)
+                .outerjoin(DBLink, or_(
+                    DBNote.id == DBLink.source_id,
+                    DBNote.id == DBLink.target_id
+                ))
+                .where(or_(
+                    DBLink.source_id != None,
+                    DBLink.target_id != None
+                ))
+                .subquery()
+            )
+
+            # Query for orphaned note IDs only (lightweight)
+            query = (
+                select(DBNote.id)
+                .where(DBNote.id.not_in(select(notes_with_links)))
+            )
+
+            return list(session.scalars(query).all())
+
+    def find_central_note_ids_with_counts(self, limit: int = 10) -> List[Tuple[str, int]]:
+        """Find note IDs with the most connections (incoming + outgoing links).
+
+        Args:
+            limit: Maximum number of notes to return.
+
+        Returns:
+            List of (note_id, connection_count) tuples, ordered by count descending.
+        """
+        with self.session_factory() as session:
+            query = text("""
+            WITH outgoing AS (
+                SELECT source_id as note_id, COUNT(*) as outgoing_count
+                FROM links
+                GROUP BY source_id
+            ),
+            incoming AS (
+                SELECT target_id as note_id, COUNT(*) as incoming_count
+                FROM links
+                GROUP BY target_id
+            )
+            SELECT n.id,
+                (COALESCE(o.outgoing_count, 0) + COALESCE(i.incoming_count, 0)) as total
+            FROM notes n
+            LEFT JOIN outgoing o ON n.id = o.note_id
+            LEFT JOIN incoming i ON n.id = i.note_id
+            WHERE (COALESCE(o.outgoing_count, 0) + COALESCE(i.incoming_count, 0)) > 0
+            ORDER BY total DESC
+            LIMIT :limit
+            """)
+
+            results = session.execute(query, {"limit": limit}).all()
+            return [(row[0], row[1]) for row in results]
+
+    def get_note_history(self, note_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get version history for a note.
+
+        Requires git versioning to be enabled.
+
+        Args:
+            note_id: The note ID
+            limit: Maximum number of versions to return
+
+        Returns:
+            List of version dictionaries with 'commit_hash', 'short_hash',
+            and 'timestamp' fields, most recent first. Empty list if git
+            is not enabled or note has no history.
+        """
+        validate_safe_path_component(note_id, "Note ID")
+
+        if not self._git:
+            return []
+
+        file_path = self.notes_dir / f"{note_id}.md"
+        if not file_path.exists():
+            return []
+
+        versions = self._git.get_history(file_path, limit)
+        return [
+            {
+                "commit_hash": v.commit_hash,
+                "short_hash": v.short_hash,
+                "timestamp": v.timestamp.isoformat(),
+            }
+            for v in versions
+        ]
 
     def sync_to_obsidian(self) -> int:
         """Sync all notes to the Obsidian vault.

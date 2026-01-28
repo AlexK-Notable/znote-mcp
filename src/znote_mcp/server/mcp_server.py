@@ -194,6 +194,36 @@ class ZettelkastenMcpServer:
                 except Exception as e:
                     return self.format_error_response(e)
 
+        @self.mcp.tool(name="zk_note_history")
+        def zk_note_history(note_id: str, limit: int = 10) -> str:
+            """Get version history for a note.
+
+            Shows commit history for a note, useful for tracking changes over time.
+            Requires git versioning to be enabled in the notes directory.
+
+            Args:
+                note_id: The ID of the note
+                limit: Maximum number of versions to return (default: 10)
+            """
+            with timed_operation("zk_note_history", note_id=note_id) as op:
+                try:
+                    history = self.zettel_service.get_note_history(str(note_id), limit)
+                    op['version_count'] = len(history)
+
+                    if not history:
+                        return f"No version history for note '{note_id}'. Git versioning may be disabled."
+
+                    result = f"# Version History for {note_id}\n\n"
+                    result += f"**{len(history)} version(s)**\n\n"
+                    result += "| # | Commit | Date |\n"
+                    result += "|---|--------|------|\n"
+                    for i, version in enumerate(history, 1):
+                        result += f"| {i} | {version['short_hash']} | {version['timestamp']} |\n"
+
+                    return result
+                except Exception as e:
+                    return self.format_error_response(e)
+
         # Update a note
         @self.mcp.tool(name="zk_update_note")
         def zk_update_note(
@@ -547,6 +577,25 @@ class ZettelkastenMcpServer:
                 return f"Tag '{tag}' removed from note '{note.title}' (ID: {note.id})"
             except Exception as e:
                 return self.format_error_response(e)
+
+        @self.mcp.tool(name="zk_cleanup_tags")
+        def zk_cleanup_tags() -> str:
+            """Delete tags that are not associated with any notes.
+
+            Cleans up orphaned tags left behind when notes were deleted
+            or had their tags removed. This is a maintenance operation.
+
+            Returns a summary of deleted tags.
+            """
+            with timed_operation("zk_cleanup_tags") as op:
+                try:
+                    count = self.zettel_service.delete_unused_tags()
+                    op['deleted_count'] = count
+                    if count == 0:
+                        return "No unused tags found. Tag database is clean."
+                    return f"Cleaned up {count} unused tag(s)."
+                except Exception as e:
+                    return self.format_error_response(e)
 
         # Export a note
         @self.mcp.tool(name="zk_export_note")
@@ -981,12 +1030,19 @@ class ZettelkastenMcpServer:
 
                     # Tags section
                     if include_all or "tags" in requested:
-                        tags = self.zettel_service.get_all_tags()
-                        output += f"## Tags ({len(tags)} total)\n"
-                        if tags:
-                            tags.sort(key=lambda t: t.name.lower())
-                            tag_names = [tag.name for tag in tags]
-                            output += ", ".join(tag_names) + "\n\n"
+                        tag_counts = self.zettel_service.get_tags_with_counts()
+                        output += f"## Tags ({len(tag_counts)} total)\n"
+                        if tag_counts:
+                            # Sort by usage count (descending), then name (ascending)
+                            sorted_tags = sorted(
+                                tag_counts.items(),
+                                key=lambda x: (-x[1], x[0].lower())
+                            )
+                            output += "| Tag | Notes |\n"
+                            output += "|-----|-------|\n"
+                            for tag_name, count in sorted_tags:
+                                output += f"| {tag_name} | {count} |\n"
+                            output += "\n"
                         else:
                             output += "No tags defined.\n\n"
 
