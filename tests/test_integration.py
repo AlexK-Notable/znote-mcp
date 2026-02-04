@@ -1,6 +1,5 @@
 # tests/test_integration.py
 """Integration tests for the Zettelkasten MCP system."""
-import os
 import tempfile
 from pathlib import Path
 import pytest
@@ -9,6 +8,14 @@ from znote_mcp.models.schema import LinkType, NoteType
 from znote_mcp.server.mcp_server import ZettelkastenMcpServer
 from znote_mcp.services.zettel_service import ZettelService
 from znote_mcp.services.search_service import SearchService
+
+
+def _get_tool(server: ZettelkastenMcpServer, tool_name: str):
+    """Get a tool function from the MCP server by name."""
+    tool = server.mcp._tool_manager.get_tool(tool_name)
+    if tool is None:
+        raise ValueError(f"Tool '{tool_name}' not found")
+    return tool.fn
 
 class TestIntegration:
     """Integration tests for the entire Zettelkasten MCP system."""
@@ -393,11 +400,12 @@ class TestIntegration:
                 )
 
                 # Verify the note was mirrored (filename includes ID suffix for uniqueness)
-                # Format: project/purpose/Title (id_suffix).md
+                # Format: project/purpose/Title-Name_id_suffix.md (terminal-friendly, no spaces)
                 # Purpose defaults to "general" for notes created without explicit purpose
                 purpose_dir = obsidian_path / "test-project" / "general"
                 id_suffix = note.id[-8:]
-                matching_files = list(purpose_dir.glob(f"Obsidian Test Note ({id_suffix}).md"))
+                # New format: hyphens instead of spaces, underscore before ID suffix
+                matching_files = list(purpose_dir.glob(f"Obsidian-Test-Note_{id_suffix}.md"))
                 assert len(matching_files) == 1, f"Expected 1 mirror file, found {len(matching_files)} in {purpose_dir}"
                 expected_file = matching_files[0]
 
@@ -417,7 +425,7 @@ class TestIntegration:
                 # Verify second note mirrored with ID suffix (in purpose subdir)
                 purpose_dir2 = obsidian_path / "another-project" / "general"
                 id_suffix2 = note2.id[-8:]
-                matching_files2 = list(purpose_dir2.glob(f"Second Obsidian Note ({id_suffix2}).md"))
+                matching_files2 = list(purpose_dir2.glob(f"Second-Obsidian-Note_{id_suffix2}.md"))
                 assert len(matching_files2) == 1
 
                 # Test bulk sync
@@ -431,7 +439,7 @@ class TestIntegration:
     def test_obsidian_title_collision(self):
         """Test that notes with colliding sanitized titles create separate files.
 
-        Titles like "Hello: World" and "Hello; World" both sanitize to "Hello_ World"
+        Titles like "Hello: World" and "Hello; World" both sanitize to "Hello-World"
         but should create unique files via the ID suffix mechanism.
         """
         with tempfile.TemporaryDirectory() as temp_obsidian_dir:
@@ -440,15 +448,15 @@ class TestIntegration:
 
             try:
                 # Create two notes with titles that sanitize to the same string
-                # Colon (:) and semicolon (;) both become underscore (_)
+                # Colon (:) and semicolon (;) both become word separators -> "Hello-World"
                 note1 = self.zettel_service.create_note(
-                    title="Hello: World",  # Sanitizes to "Hello_ World"
+                    title="Hello: World",  # Sanitizes to "Hello-World"
                     content="First note with colon in title.",
                     project="collision-test"
                 )
 
                 note2 = self.zettel_service.create_note(
-                    title="Hello; World",  # Also sanitizes to "Hello_ World"
+                    title="Hello; World",  # Also sanitizes to "Hello-World"
                     content="Second note with semicolon in title.",
                     project="collision-test"
                 )
@@ -457,12 +465,12 @@ class TestIntegration:
                 # Purpose defaults to "general" when not specified
                 purpose_dir = obsidian_path / "collision-test" / "general"
 
-                # Find files for each note by their ID suffix
+                # Find files for each note by their ID suffix (new format: *_id_suffix.md)
                 id_suffix1 = note1.id[-8:]
                 id_suffix2 = note2.id[-8:]
 
-                files1 = list(purpose_dir.glob(f"*({id_suffix1}).md"))
-                files2 = list(purpose_dir.glob(f"*({id_suffix2}).md"))
+                files1 = list(purpose_dir.glob(f"*_{id_suffix1}.md"))
+                files2 = list(purpose_dir.glob(f"*_{id_suffix2}.md"))
 
                 assert len(files1) == 1, f"Note 1 should have exactly 1 file, found {len(files1)}"
                 assert len(files2) == 1, f"Note 2 should have exactly 1 file, found {len(files2)}"
@@ -482,6 +490,65 @@ class TestIntegration:
                 # Verify total files (should be exactly 2)
                 all_files = list(purpose_dir.glob("*.md"))
                 assert len(all_files) == 2, f"Expected 2 files, found {len(all_files)}: {all_files}"
+
+            finally:
+                self.zettel_service.repository.obsidian_vault_path = None
+
+    def test_obsidian_link_rewriting(self):
+        """Test that wikilinks are rewritten from IDs to Obsidian-compatible format.
+
+        Links like [[20260128T072243924474000000]] should become
+        [[Note-Title_74000000]] to match Obsidian filenames.
+        """
+        with tempfile.TemporaryDirectory() as temp_obsidian_dir:
+            obsidian_path = Path(temp_obsidian_dir)
+            self.zettel_service.repository.obsidian_vault_path = obsidian_path
+
+            try:
+                # Create a target note that will be linked to
+                target_note = self.zettel_service.create_note(
+                    title="Target: Important Note",
+                    content="This is the target of a link.",
+                    project="link-test"
+                )
+
+                # Create a source note with a link to the target
+                source_note = self.zettel_service.create_note(
+                    title="Source Note",
+                    content="This note links to another.",
+                    project="link-test"
+                )
+
+                # Create the link
+                self.zettel_service.create_link(
+                    source_id=source_note.id,
+                    target_id=target_note.id,
+                    link_type="reference",
+                    description="links to target"
+                )
+
+                # Re-export to trigger link rewriting
+                self.zettel_service.sync_to_obsidian()
+
+                # Find the source note's Obsidian file
+                purpose_dir = obsidian_path / "link-test" / "general"
+                source_suffix = source_note.id[-8:]
+                source_files = list(purpose_dir.glob(f"*_{source_suffix}.md"))
+                assert len(source_files) == 1, f"Expected 1 source file, found {len(source_files)}"
+
+                # Read the content and verify the link was rewritten
+                with open(source_files[0], "r") as f:
+                    content = f.read()
+
+                # The link should NOT contain the full ID
+                assert target_note.id not in content, \
+                    f"Full ID {target_note.id} should be rewritten"
+
+                # The link SHOULD contain the target's title-based format
+                target_suffix = target_note.id[-8:]
+                expected_link = f"[[Target-Important-Note_{target_suffix}]]"
+                assert expected_link in content, \
+                    f"Expected link {expected_link} not found in content"
 
             finally:
                 self.zettel_service.repository.obsidian_vault_path = None
@@ -675,3 +742,317 @@ class TestIntegration:
         # find_central_notes returns List[Tuple[Note, int]] (note, connection_count)
         central_ids = [n[0].id for n in central]
         assert hub.id in central_ids
+
+
+class TestDatetimeComparisonRegression:
+    """Regression tests for timezone-naive vs timezone-aware datetime bug.
+
+    Bug: zk_list_notes failed with "can't compare offset-naive and
+    offset-aware datetimes" across all modes and sort options. Notes
+    created via the service use utc_now() (timezone-aware), but user
+    input dates were parsed without timezone info (naive).
+
+    See: mcp_server.py:820,823 and search_service.py:156,158
+    """
+
+    @pytest.fixture(autouse=True)
+    def setup_test_environment(self):
+        """Set up test environment using temporary directories."""
+        self.temp_notes_dir = tempfile.TemporaryDirectory()
+        self.temp_db_dir = tempfile.TemporaryDirectory()
+
+        self.notes_dir = Path(self.temp_notes_dir.name)
+        self.database_path = Path(self.temp_db_dir.name) / "test_zettelkasten.db"
+
+        self.original_notes_dir = config.notes_dir
+        self.original_database_path = config.database_path
+
+        config.notes_dir = self.notes_dir
+        config.database_path = self.database_path
+
+        self.zettel_service = ZettelService()
+        self.zettel_service.initialize()
+        self.search_service = SearchService(self.zettel_service)
+
+        # Wire the server to use the same services as the test
+        self.server = ZettelkastenMcpServer()
+        self.server.zettel_service = self.zettel_service
+        self.server.search_service = self.search_service
+
+        yield
+
+        config.notes_dir = self.original_notes_dir
+        config.database_path = self.original_database_path
+        self.temp_notes_dir.cleanup()
+        self.temp_db_dir.cleanup()
+
+    def test_list_notes_by_date_with_start_date(self):
+        """Reproduce: zk_list_notes(mode="by_date", start_date="2026-02-03")
+
+        Previously raised TypeError because start_date was parsed as a
+        naive datetime and compared against timezone-aware note.created_at.
+        """
+        self.zettel_service.create_note(
+            title="Date Filter Test",
+            content="Note for date filtering.",
+        )
+
+        list_notes = _get_tool(self.server, "zk_list_notes")
+        # This raised TypeError before the fix
+        result = list_notes(mode="by_date", start_date="2026-02-01")
+        assert isinstance(result, str)
+        assert "Date Filter Test" in result
+
+    def test_list_notes_by_date_with_end_date(self):
+        """Test by_date mode with end_date parameter."""
+        self.zettel_service.create_note(
+            title="End Date Test",
+            content="Note for end date filtering.",
+        )
+
+        list_notes = _get_tool(self.server, "zk_list_notes")
+        result = list_notes(mode="by_date", end_date="2099-12-31")
+        assert isinstance(result, str)
+        assert "End Date Test" in result
+
+    def test_list_notes_by_date_with_both_dates(self):
+        """Test by_date mode with both start_date and end_date."""
+        self.zettel_service.create_note(
+            title="Range Test",
+            content="Note for date range filtering.",
+        )
+
+        list_notes = _get_tool(self.server, "zk_list_notes")
+        result = list_notes(
+            mode="by_date",
+            start_date="2026-01-01",
+            end_date="2099-12-31",
+        )
+        assert isinstance(result, str)
+        assert "Range Test" in result
+
+    def test_list_notes_sort_by_created_at(self):
+        """Reproduce: zk_list_notes(mode="all", sort_by="created_at")
+
+        Sorting should not raise TypeError when all notes have
+        timezone-aware created_at values.
+        """
+        for i in range(3):
+            self.zettel_service.create_note(
+                title=f"Sort Created {i}",
+                content=f"Note {i} for created_at sorting.",
+            )
+
+        list_notes = _get_tool(self.server, "zk_list_notes")
+        result = list_notes(mode="all", sort_by="created_at")
+        assert isinstance(result, str)
+        assert "Sort Created" in result
+
+    def test_list_notes_sort_by_updated_at(self):
+        """Reproduce: zk_list_notes(mode="all", sort_by="updated_at")
+
+        Same class of bug as created_at sorting.
+        """
+        for i in range(3):
+            self.zettel_service.create_note(
+                title=f"Sort Updated {i}",
+                content=f"Note {i} for updated_at sorting.",
+            )
+
+        list_notes = _get_tool(self.server, "zk_list_notes")
+        result = list_notes(mode="all", sort_by="updated_at")
+        assert isinstance(result, str)
+        assert "Sort Updated" in result
+
+    def test_list_notes_sort_with_naive_frontmatter_datetime(self):
+        """Test sorting when markdown frontmatter contains naive datetimes.
+
+        Simulates externally-edited markdown files that have datetime
+        strings without timezone suffixes in their YAML frontmatter.
+        Before the fix, loading such notes produced naive datetimes
+        that couldn't be sorted alongside service-created aware datetimes.
+        """
+        # Create a note via the service (gets timezone-aware datetime)
+        self.zettel_service.create_note(
+            title="Service Created Note",
+            content="Created through the service.",
+        )
+
+        # Manually write a markdown file with a NAIVE datetime in frontmatter
+        # (no +00:00 suffix — simulates external editing)
+        naive_note_id = "20260203T120000000000000000"
+        naive_note_path = self.notes_dir / f"{naive_note_id}.md"
+        # Use quoted datetime strings (matching real PyYAML output) WITHOUT
+        # timezone suffix — simulates notes created before utc_now() was used.
+        naive_note_path.write_text(
+            "---\n"
+            f"id: {naive_note_id}\n"
+            "title: Manually Created Note\n"
+            "type: permanent\n"
+            "created: '2026-02-03T12:00:00'\n"
+            "updated: '2026-02-03T12:00:00'\n"
+            "tags: []\n"
+            "links: []\n"
+            "---\n"
+            "# Manually Created Note\n\n"
+            "This note has naive datetimes in its frontmatter.\n"
+        )
+
+        # Rebuild index to pick up the manual note
+        self.zettel_service.rebuild_index()
+
+        list_notes = _get_tool(self.server, "zk_list_notes")
+
+        # Sorting must not raise TypeError from mixed naive/aware datetimes
+        result = list_notes(mode="all", sort_by="created_at")
+        assert "Service Created Note" in result
+        assert "Manually Created Note" in result
+
+        result = list_notes(mode="all", sort_by="updated_at")
+        assert "Service Created Note" in result
+        assert "Manually Created Note" in result
+
+    def test_by_date_filter_with_naive_frontmatter_datetime(self):
+        """Test date filtering when a note has naive datetimes from frontmatter.
+
+        The date comparison in search_service.find_notes_by_date_range must
+        handle notes loaded from markdown that originally had naive datetimes.
+        """
+        naive_note_id = "20260203T100000000000000000"
+        naive_note_path = self.notes_dir / f"{naive_note_id}.md"
+        # Use quoted datetime strings without timezone suffix
+        naive_note_path.write_text(
+            "---\n"
+            f"id: {naive_note_id}\n"
+            "title: Naive Frontmatter Note\n"
+            "type: fleeting\n"
+            "created: '2026-02-03T10:00:00'\n"
+            "updated: '2026-02-03T10:00:00'\n"
+            "tags: []\n"
+            "links: []\n"
+            "---\n"
+            "# Naive Frontmatter Note\n\n"
+            "Note with naive datetime in frontmatter.\n"
+        )
+
+        self.zettel_service.rebuild_index()
+
+        list_notes = _get_tool(self.server, "zk_list_notes")
+        result = list_notes(
+            mode="by_date",
+            start_date="2026-02-01",
+            end_date="2026-02-28",
+        )
+        assert isinstance(result, str)
+        assert "Naive Frontmatter Note" in result
+
+
+class TestFtsSearchRegression:
+    """Regression tests for FTS5 search degradation.
+
+    Bug: zk_fts_search(query="2026-02-03") fell back to basic text
+    matching instead of using FTS5.
+    """
+
+    @pytest.fixture(autouse=True)
+    def setup_test_environment(self):
+        """Set up test environment using temporary directories."""
+        self.temp_notes_dir = tempfile.TemporaryDirectory()
+        self.temp_db_dir = tempfile.TemporaryDirectory()
+
+        self.notes_dir = Path(self.temp_notes_dir.name)
+        self.database_path = Path(self.temp_db_dir.name) / "test_zettelkasten.db"
+
+        self.original_notes_dir = config.notes_dir
+        self.original_database_path = config.database_path
+
+        config.notes_dir = self.notes_dir
+        config.database_path = self.database_path
+
+        self.zettel_service = ZettelService()
+        self.zettel_service.initialize()
+        self.search_service = SearchService(self.zettel_service)
+
+        # Wire the server to use the same services as the test
+        self.server = ZettelkastenMcpServer()
+        self.server.zettel_service = self.zettel_service
+        self.server.search_service = self.search_service
+
+        yield
+
+        config.notes_dir = self.original_notes_dir
+        config.database_path = self.original_database_path
+        self.temp_notes_dir.cleanup()
+        self.temp_db_dir.cleanup()
+
+    def test_fts_search_date_string_query(self):
+        """Reproduce: zk_fts_search(query="2026-02-03")
+
+        A date string query should either use FTS5 successfully or
+        at minimum return results. The fallback warning indicates
+        FTS5 failed entirely for this query.
+        """
+        self.zettel_service.create_note(
+            title="Meeting Notes 2026-02-03",
+            content="Notes from the meeting on 2026-02-03 about project planning.",
+        )
+
+        fts_search = _get_tool(self.server, "zk_fts_search")
+        result = fts_search(query="2026-02-03", limit=10, highlight=True)
+        assert isinstance(result, str)
+        # The note should be found regardless of search mode
+        assert "Meeting Notes" in result
+
+    def test_fts_search_date_string_uses_fts5(self):
+        """Verify FTS5 is actually used (not fallback) for date queries.
+
+        Tests at the repository level to inspect search_mode directly.
+        Previously failed with 'no such column: 02' because hyphens in
+        '2026-02-03' were interpreted as FTS5 column-prefix syntax.
+        Fixed by wrapping escaped queries as quoted phrases.
+        """
+        self.zettel_service.create_note(
+            title="Daily Log 2026-02-03",
+            content="Work log for 2026-02-03 covering code review tasks.",
+        )
+
+        results = self.zettel_service.repository.fts_search(
+            "2026-02-03", limit=10, highlight=False
+        )
+        # Should get results
+        assert len(results) > 0
+        # Check if FTS5 was used (not fallback)
+        for r in results:
+            if r.get("search_mode") == "fallback":
+                pytest.fail(
+                    "FTS5 search fell back to basic text matching for "
+                    "date query '2026-02-03'. Check FTS5 index population "
+                    "and query escaping."
+                )
+
+    def test_fts_search_hyphenated_terms(self):
+        """Test that hyphenated terms don't cause FTS5 syntax errors.
+
+        Hyphens can be misinterpreted by FTS5 as operators. The query
+        escaping logic should handle this.
+        """
+        self.zettel_service.create_note(
+            title="Self-Referential Patterns",
+            content="Discussion of self-referential and meta-cognitive patterns.",
+        )
+
+        fts_search = _get_tool(self.server, "zk_fts_search")
+        result = fts_search(query="self-referential", limit=10, highlight=True)
+        assert isinstance(result, str)
+
+    def test_fts_available_after_init(self):
+        """Verify FTS5 is available after normal initialization.
+
+        If _fts_available is False after init, all FTS queries silently
+        degrade to LIKE-based fallback.
+        """
+        assert self.zettel_service.repository._fts_available is True, (
+            "FTS5 should be available after normal initialization. "
+            "Check init_fts5() in db_models.py and health check in "
+            "note_repository.py."
+        )

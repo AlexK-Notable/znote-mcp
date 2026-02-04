@@ -65,6 +65,47 @@ def _sanitize_commit_message(title: str, max_length: int = 100) -> str:
     return sanitized
 
 
+def _sanitize_for_terminal(text: str) -> str:
+    """Sanitize text for terminal-friendly filenames and directory names.
+
+    Converts text to a format that:
+    - Contains no spaces (uses hyphens between words)
+    - Uses only alphanumeric characters, hyphens, and underscores
+    - Is easy to type and tab-complete in terminal
+
+    Examples:
+        "Architecture Plan: znote-anamnesis Integration" -> "Architecture-Plan-Znote-Anamnesis-Integration"
+        "Hub: My Notes" -> "Hub-My-Notes"
+        "test_note" -> "test_note"
+
+    Args:
+        text: The text to sanitize.
+
+    Returns:
+        Terminal-friendly string with no spaces.
+    """
+    if not text:
+        return ""
+
+    # Replace common separators and special chars with spaces first (for word splitting)
+    result = text.replace(':', ' ').replace(';', ' ').replace('/', ' ').replace('\\', ' ')
+
+    # Split into words, filter empty, rejoin with hyphens
+    words = result.split()
+
+    # Sanitize each word: keep only alphanumeric, hyphens, underscores
+    sanitized_words = []
+    for word in words:
+        sanitized_word = "".join(
+            c if c.isalnum() or c in "-_" else ""
+            for c in word
+        )
+        if sanitized_word:
+            sanitized_words.append(sanitized_word)
+
+    return "-".join(sanitized_words)
+
+
 class NoteRepository(Repository[Note]):
     """Repository for note storage and retrieval.
     This implements a dual storage approach:
@@ -798,13 +839,13 @@ class NoteRepository(Repository[Note]):
         # Extract timestamps
         created_str = metadata.get("created")
         created_at = (
-            datetime.datetime.fromisoformat(created_str)
+            ensure_timezone_aware(datetime.datetime.fromisoformat(created_str))
             if created_str
             else utc_now()
         )
         updated_str = metadata.get("updated")
         updated_at = (
-            datetime.datetime.fromisoformat(updated_str)
+            ensure_timezone_aware(datetime.datetime.fromisoformat(updated_str))
             if updated_str
             else created_at
         )
@@ -968,45 +1009,81 @@ class NoteRepository(Repository[Note]):
         post = frontmatter.Post(content, **metadata)
         return frontmatter.dumps(post)
 
+    def _build_obsidian_filename(self, title: str, note_id: str) -> str:
+        """Build a terminal-friendly Obsidian filename from title and ID.
+
+        Format: Sanitized-Title_id_suffix
+        Example: "Architecture Plan: Integration" with ID "...74000000"
+                 becomes "Architecture-Plan-Integration_74000000"
+
+        Args:
+            title: The note title.
+            note_id: The note's full ID.
+
+        Returns:
+            Terminal-friendly filename (without .md extension).
+        """
+        safe_title = _sanitize_for_terminal(title)
+        id_suffix = note_id[-8:] if len(note_id) >= 8 else note_id
+
+        if safe_title:
+            return f"{safe_title}_{id_suffix}"
+        else:
+            return note_id
+
+    def _rewrite_links_for_obsidian(self, markdown: str) -> str:
+        """Rewrite ID-based wikilinks to Obsidian-compatible title-based links.
+
+        Converts [[full_note_id]] to [[Sanitized-Title_id_suffix]] format
+        that Obsidian can resolve to actual files.
+
+        Args:
+            markdown: The markdown content with ID-based wikilinks.
+
+        Returns:
+            Markdown with Obsidian-compatible wikilinks.
+        """
+        # Pattern matches znote IDs in two formats:
+        # - ISO-ish with T: [[20260128T072243924474000000]] (YYYYMMDD + T + timestamp)
+        # - Pure numeric: [[20251226222122655378000]] (all digits)
+        # The key is: starts with 20 (century), followed by date/time digits
+        id_pattern = re.compile(r'\[\[(20\d{6}T\d{9,}|20\d{17,})\]\]')
+
+        def replace_link(match: re.Match) -> str:
+            note_id = match.group(1)
+            try:
+                linked_note = self.get(note_id)
+                if linked_note:
+                    obsidian_name = self._build_obsidian_filename(
+                        linked_note.title, linked_note.id
+                    )
+                    return f"[[{obsidian_name}]]"
+            except Exception as e:
+                logger.debug(f"Could not resolve note {note_id} for link rewrite: {e}")
+            # Keep original if note not found or error
+            return match.group(0)
+
+        return id_pattern.sub(replace_link, markdown)
+
     def _mirror_to_obsidian(self, note: Note, markdown: str) -> None:
         """Mirror a note to the Obsidian vault if configured.
 
         Creates a copy of the note in the Obsidian vault using the note's project
-        and purpose as subdirectories. Filename includes sanitized title + ID suffix
-        to prevent collisions (e.g., "Hello: World" and "Hello; World" both sanitize
-        to "Hello_ World" but get unique filenames via ID suffix).
+        and purpose as subdirectories. Uses terminal-friendly filenames with no
+        spaces (hyphens between words, underscore before ID suffix).
 
-        Directory structure: obsidian_vault/project/purpose/Title (id_suffix).md
+        Directory structure: obsidian_vault/project/purpose/Title-Name_id_suffix.md
         """
         if not self.obsidian_vault_path:
             return
 
-        # Sanitize the project name for use as a directory
-        safe_project = "".join(
-            c if c.isalnum() or c in " -_" else "_"
-            for c in note.project
-        ).strip() or "general"
-
-        # Sanitize the purpose for use as a directory
+        # Sanitize project and purpose for directory names (terminal-friendly)
+        safe_project = _sanitize_for_terminal(note.project) or "general"
         purpose_value = note.note_purpose.value if note.note_purpose else "general"
-        safe_purpose = "".join(
-            c if c.isalnum() or c in " -_" else "_"
-            for c in purpose_value
-        ).strip() or "general"
+        safe_purpose = _sanitize_for_terminal(purpose_value) or "general"
 
-        # Sanitize the title for use as a filename
-        safe_title = "".join(
-            c if c.isalnum() or c in " -_" else "_"
-            for c in note.title
-        ).strip()
-
-        # Create unique filename with ID suffix to prevent title collisions
-        # Use last 8 chars of ID for brevity while maintaining uniqueness
-        id_suffix = note.id[-8:] if len(note.id) >= 8 else note.id
-        if safe_title:
-            safe_filename = f"{safe_title} ({id_suffix})"
-        else:
-            safe_filename = note.id
+        # Build terminal-friendly filename
+        safe_filename = self._build_obsidian_filename(note.title, note.id)
 
         # Create project/purpose subdirectory structure
         purpose_dir = self.obsidian_vault_path / safe_project / safe_purpose
@@ -1014,9 +1091,12 @@ class NoteRepository(Repository[Note]):
 
         obsidian_file_path = purpose_dir / f"{safe_filename}.md"
 
+        # Rewrite links to use Obsidian-compatible format
+        obsidian_markdown = self._rewrite_links_for_obsidian(markdown)
+
         try:
             with open(obsidian_file_path, "w", encoding="utf-8") as f:
-                f.write(markdown)
+                f.write(obsidian_markdown)
             logger.debug(f"Mirrored note to Obsidian: {obsidian_file_path}")
         except IOError as e:
             # Log but don't fail - Obsidian mirror is secondary
@@ -1052,7 +1132,7 @@ class NoteRepository(Repository[Note]):
                                note_purpose: Optional["NotePurpose"] = None) -> None:
         """Delete a note's mirror from the Obsidian vault if configured.
 
-        Searches for files with ID suffix pattern: "Title (id_suffix).md"
+        Searches for files with ID suffix pattern: "Title_id_suffix.md"
         Uses recursive glob to find files in project/purpose subdirectories.
 
         Args:
@@ -1070,15 +1150,13 @@ class NoteRepository(Repository[Note]):
         # Determine which directories to search
         search_dirs: List[Path] = []
         if project:
-            safe_project = "".join(
-                c if c.isalnum() or c in " -_" else "_"
-                for c in project
-            ).strip() or "general"
+            safe_project = _sanitize_for_terminal(project) or "general"
             project_dir = self.obsidian_vault_path / safe_project
 
             # If purpose is also specified, search more precisely
             if note_purpose and project_dir.exists():
-                purpose_dir = project_dir / note_purpose.value
+                safe_purpose = _sanitize_for_terminal(note_purpose.value)
+                purpose_dir = project_dir / safe_purpose
                 if purpose_dir.exists():
                     search_dirs.append(purpose_dir)
                 else:
@@ -1096,8 +1174,8 @@ class NoteRepository(Repository[Note]):
 
         # Search for file with matching ID suffix pattern (recursive for project/purpose structure)
         for search_dir in search_dirs:
-            # Recursive glob to find in purpose subdirectories
-            for file_path in search_dir.glob(f"**/*({id_suffix}).md"):
+            # Recursive glob to find in purpose subdirectories (new format: *_id_suffix.md)
+            for file_path in search_dir.glob(f"**/*_{id_suffix}.md"):
                 try:
                     file_path.unlink()
                     logger.debug(f"Deleted Obsidian mirror: {file_path}")
@@ -1105,7 +1183,17 @@ class NoteRepository(Repository[Note]):
                 except OSError as e:
                     logger.warning(f"Failed to delete Obsidian mirror {file_path}: {e}")
 
-            # Fallback: Check for legacy filename (just ID, no title)
+            # Fallback: Check for legacy filename formats
+            # Old format with parentheses: "Title (id_suffix).md"
+            for file_path in search_dir.glob(f"**/*({id_suffix}).md"):
+                try:
+                    file_path.unlink()
+                    logger.debug(f"Deleted legacy Obsidian mirror (parens format): {file_path}")
+                    return
+                except OSError as e:
+                    logger.warning(f"Failed to delete legacy Obsidian mirror {file_path}: {e}")
+
+            # Very old format: just ID as filename
             legacy_path = search_dir / f"{note_id}.md"
             if legacy_path.exists():
                 try:
@@ -1831,8 +1919,10 @@ class NoteRepository(Repository[Note]):
     def _escape_fts5_query(self, query: str) -> str:
         """Escape FTS5 special characters for literal matching.
 
-        Transforms the query so that FTS5 operators and special characters
-        are treated as literal text rather than query syntax.
+        Wraps the query as a quoted phrase so FTS5 treats all characters
+        as literal text rather than query syntax. This prevents hyphens
+        from being interpreted as column-prefix operators (e.g. '2026-02-03'
+        would otherwise cause 'no such column: 02').
 
         Args:
             query: The search query to escape.
@@ -1840,17 +1930,14 @@ class NoteRepository(Repository[Note]):
         Returns:
             Escaped query safe for FTS5 literal matching.
         """
-        # Escape double quotes
+        # Escape double quotes (FTS5 uses "" inside phrases for literal ")
         result = query.replace('"', '""')
 
         # Remove wildcards and boost operators that could cause syntax errors
         result = re.sub(r'[*^]', '', result)
 
-        # Wrap FTS5 keywords in quotes to literalize them
-        for kw in ['AND', 'OR', 'NOT', 'NEAR']:
-            result = re.sub(rf'\b{kw}\b', f'"{kw}"', result, flags=re.IGNORECASE)
-
-        return result
+        # Wrap as a quoted phrase for fully literal matching
+        return f'"{result}"'
 
     def fts_search(
         self,

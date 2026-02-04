@@ -817,10 +817,10 @@ class ZettelkastenMcpServer:
                     elif mode == "by_date":
                         start_datetime = None
                         if start_date:
-                            start_datetime = datetime.fromisoformat(f"{start_date}T00:00:00")
+                            start_datetime = datetime.fromisoformat(f"{start_date}T00:00:00+00:00")
                         end_datetime = None
                         if end_date:
-                            end_datetime = datetime.fromisoformat(f"{end_date}T23:59:59")
+                            end_datetime = datetime.fromisoformat(f"{end_date}T23:59:59+00:00")
 
                         notes = self.search_service.find_notes_by_date_range(
                             start_date=start_datetime,
