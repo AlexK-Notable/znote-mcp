@@ -29,6 +29,59 @@ from znote_mcp.storage.note_repository import NoteRepository
 
 logger = logging.getLogger(__name__)
 
+# Keywords for auto-purpose inference (checked against title, tags, and first 200 chars of content)
+_PURPOSE_KEYWORDS: Dict[NotePurpose, List[str]] = {
+    NotePurpose.BUGFIXING: [
+        "bug", "fix", "debug", "error", "issue", "crash", "broken",
+        "regression", "patch", "hotfix", "traceback", "exception",
+        "stack trace", "segfault", "failing", "failure",
+    ],
+    NotePurpose.PLANNING: [
+        "plan", "design", "architect", "proposal", "rfc", "spec",
+        "blueprint", "roadmap", "milestone", "phase", "implementation plan",
+        "sprint", "epic", "strategy", "scope",
+    ],
+    NotePurpose.RESEARCH: [
+        "research", "analysis", "investigation", "study", "exploration",
+        "comparison", "evaluate", "assessment", "survey", "literature review",
+        "findings", "benchmark", "experiment", "hypothesis",
+    ],
+}
+
+
+def _infer_purpose(title: str, content: str, tags: Optional[List[str]] = None) -> NotePurpose:
+    """Infer note purpose from title, content, and tags using keyword matching.
+
+    Only the first 200 characters of content are checked to keep inference fast
+    and focused on the note's introductory framing rather than deep body text.
+
+    Args:
+        title: The note title.
+        content: The note content (only first 200 chars examined).
+        tags: Optional list of tag names.
+
+    Returns:
+        Inferred NotePurpose, or GENERAL if no strong signal found.
+    """
+    # Build search text: title + tags + content prefix (all lowercased)
+    search_parts = [title.lower()]
+    if tags:
+        search_parts.extend(t.lower() for t in tags)
+    search_parts.append(content[:200].lower())
+    search_text = " ".join(search_parts)
+
+    # Score each purpose by keyword matches
+    best_purpose = NotePurpose.GENERAL
+    best_score = 0
+
+    for purpose, keywords in _PURPOSE_KEYWORDS.items():
+        score = sum(1 for kw in keywords if kw in search_text)
+        if score > best_score:
+            best_score = score
+            best_purpose = purpose
+
+    return best_purpose
+
 class ZettelService:
     """Service for managing Zettelkasten notes."""
     
@@ -80,6 +133,13 @@ class ZettelService:
                 field="content",
                 code=ErrorCode.NOTE_CONTENT_REQUIRED
             )
+
+        # Auto-infer purpose when left at default
+        if note_purpose == NotePurpose.GENERAL:
+            inferred = _infer_purpose(title, content, tags)
+            if inferred != NotePurpose.GENERAL:
+                note_purpose = inferred
+                logger.debug(f"Auto-inferred purpose '{note_purpose.value}' for note '{title}'")
 
         # Create note object
         note = Note(
@@ -573,6 +633,14 @@ class ZettelService:
             if isinstance(note_purpose, str):
                 note_purpose = NotePurpose(note_purpose)
 
+            # Auto-infer purpose when left at default
+            if note_purpose == NotePurpose.GENERAL:
+                inferred = _infer_purpose(
+                    data["title"], data["content"], data.get("tags")
+                )
+                if inferred != NotePurpose.GENERAL:
+                    note_purpose = inferred
+
             note = Note(
                 title=data["title"],
                 content=data["content"],
@@ -750,6 +818,13 @@ class ZettelService:
                 field="content",
                 code=ErrorCode.NOTE_CONTENT_REQUIRED
             )
+
+        # Auto-infer purpose when left at default
+        if note_purpose == NotePurpose.GENERAL:
+            inferred = _infer_purpose(title, content, tags)
+            if inferred != NotePurpose.GENERAL:
+                note_purpose = inferred
+                logger.debug(f"Auto-inferred purpose '{note_purpose.value}' for note '{title}'")
 
         # Create note object
         note = Note(

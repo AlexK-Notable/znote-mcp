@@ -108,8 +108,8 @@ class ZettelkastenMcpServer:
                 title: The title of the note
                 content: The main content of the note
                 note_type: Type of note (fleeting, literature, permanent, structure, hub)
-                project: Project this note belongs to (used for Obsidian subdirectory organization)
-                note_purpose: Workflow purpose (research, planning, bugfixing, general) for Obsidian organization
+                project: Project this note belongs to (organizes notes into project directories)
+                note_purpose: Workflow category (research, planning, bugfixing, general). Auto-inferred from content if left as 'general' - set explicitly only when the auto-inference would be wrong
                 tags: Comma-separated list of tags (optional)
                 plan_id: Optional ID to group related planning notes
             """
@@ -243,8 +243,8 @@ class ZettelkastenMcpServer:
                 title: New title (optional)
                 content: New content (optional)
                 note_type: New note type (optional)
-                project: New project (optional, moves note to different Obsidian subdirectory)
-                note_purpose: New purpose (research, planning, bugfixing, general) - optional
+                project: New project (optional, moves note to different project directory)
+                note_purpose: New workflow category (research, planning, bugfixing, general) - optional
                 tags: New comma-separated list of tags (optional)
                 plan_id: New plan ID (optional, use empty string to clear)
                 expected_version: Version hash from zk_get_note for conflict detection.
@@ -1118,7 +1118,10 @@ class ZettelkastenMcpServer:
 
                     elif action == "sync":
                         synced_count = self.zettel_service.sync_to_obsidian()
-                        return f"Successfully synced {synced_count} notes to Obsidian vault."
+                        return (
+                            f"Successfully synced {synced_count} notes to Obsidian vault.\n"
+                            f"Old mirror files were cleaned before re-sync to prevent duplicates."
+                        )
 
                     elif action == "backup":
                         result = backup_manager.create_full_backup(label=backup_label)

@@ -1009,16 +1009,22 @@ class NoteRepository(Repository[Note]):
         post = frontmatter.Post(content, **metadata)
         return frontmatter.dumps(post)
 
-    def _build_obsidian_filename(self, title: str, note_id: str) -> str:
-        """Build a terminal-friendly Obsidian filename from title and ID.
+    def _build_obsidian_filename(
+        self,
+        title: str,
+        note_id: str,
+        created_at: Optional[datetime.datetime] = None,
+    ) -> str:
+        """Build a terminal-friendly Obsidian filename from title, ID, and date.
 
-        Format: Sanitized-Title_id_suffix
-        Example: "Architecture Plan: Integration" with ID "...74000000"
-                 becomes "Architecture-Plan-Integration_74000000"
+        Format: YYYY-MM-DD_Sanitized-Title_id_suffix
+        Example: "Architecture Plan: Integration" created 2026-02-08 with ID "...74000000"
+                 becomes "2026-02-08_Architecture-Plan-Integration_74000000"
 
         Args:
             title: The note title.
             note_id: The note's full ID.
+            created_at: Note creation datetime (used for date prefix).
 
         Returns:
             Terminal-friendly filename (without .md extension).
@@ -1026,10 +1032,15 @@ class NoteRepository(Repository[Note]):
         safe_title = _sanitize_for_terminal(title)
         id_suffix = note_id[-8:] if len(note_id) >= 8 else note_id
 
+        # Build date prefix from created_at
+        date_prefix = ""
+        if created_at:
+            date_prefix = created_at.strftime("%Y-%m-%d") + "_"
+
         if safe_title:
-            return f"{safe_title}_{id_suffix}"
+            return f"{date_prefix}{safe_title}_{id_suffix}"
         else:
-            return note_id
+            return f"{date_prefix}{note_id}"
 
     def _rewrite_links_for_obsidian(self, markdown: str) -> str:
         """Rewrite ID-based wikilinks to Obsidian-compatible title-based links.
@@ -1055,7 +1066,7 @@ class NoteRepository(Repository[Note]):
                 linked_note = self.get(note_id)
                 if linked_note:
                     obsidian_name = self._build_obsidian_filename(
-                        linked_note.title, linked_note.id
+                        linked_note.title, linked_note.id, linked_note.created_at
                     )
                     return f"[[{obsidian_name}]]"
             except Exception as e:
@@ -1065,6 +1076,62 @@ class NoteRepository(Repository[Note]):
 
         return id_pattern.sub(replace_link, markdown)
 
+    @staticmethod
+    def _normalize_markdown_for_obsidian(markdown: str) -> str:
+        """Normalize agent-generated markdown for proper Obsidian rendering.
+
+        Fixes common issues with markdown tables that agents produce:
+        1. Fragmented header separators (|--- split across multiple lines)
+        2. Missing header separators entirely
+
+        Args:
+            markdown: Raw markdown content.
+
+        Returns:
+            Normalized markdown with Obsidian-compatible tables.
+        """
+        lines = markdown.split("\n")
+        result: List[str] = []
+        i = 0
+
+        while i < len(lines):
+            line = lines[i]
+
+            # Detect a table header row: line with multiple pipe-separated cells
+            # e.g. "| Header1 | Header2 | Header3 |"
+            if re.match(r'^\s*\|(.+\|){2,}\s*$', line):
+                # Count columns in header
+                cols = line.count('|') - 1  # subtract 1 for trailing pipe
+                # Count more precisely: split by | and filter non-empty
+                cells = [c for c in line.split('|') if c.strip()]
+                col_count = len(cells)
+
+                result.append(line)
+                i += 1
+
+                # Check if next lines are fragmented separator pieces
+                # Pattern: lines that are just "|------" or "|------|" or "|"
+                separator_fragments = []
+                while i < len(lines) and re.match(r'^\s*\|[\s\-:]*$', lines[i]):
+                    separator_fragments.append(lines[i])
+                    i += 1
+
+                if separator_fragments:
+                    # Replace fragmented separators with a proper single-line separator
+                    sep_cell = "------"
+                    proper_separator = "| " + " | ".join([sep_cell] * col_count) + " |"
+                    result.append(proper_separator)
+                elif i < len(lines) and re.match(r'^\s*\|[\s\-:]+(\|[\s\-:]+)+\|\s*$', lines[i]):
+                    # Already a proper separator line - keep it
+                    result.append(lines[i])
+                    i += 1
+                # else: not a table after all (no separator follows), just continue
+            else:
+                result.append(line)
+                i += 1
+
+        return "\n".join(result)
+
     def _mirror_to_obsidian(self, note: Note, markdown: str) -> None:
         """Mirror a note to the Obsidian vault if configured.
 
@@ -1072,7 +1139,7 @@ class NoteRepository(Repository[Note]):
         and purpose as subdirectories. Uses terminal-friendly filenames with no
         spaces (hyphens between words, underscore before ID suffix).
 
-        Directory structure: obsidian_vault/project/purpose/Title-Name_id_suffix.md
+        Directory structure: obsidian_vault/project/purpose/YYYY-MM-DD_Title-Name_id_suffix.md
         """
         if not self.obsidian_vault_path:
             return
@@ -1082,8 +1149,8 @@ class NoteRepository(Repository[Note]):
         purpose_value = note.note_purpose.value if note.note_purpose else "general"
         safe_purpose = _sanitize_for_terminal(purpose_value) or "general"
 
-        # Build terminal-friendly filename
-        safe_filename = self._build_obsidian_filename(note.title, note.id)
+        # Build terminal-friendly filename with date prefix
+        safe_filename = self._build_obsidian_filename(note.title, note.id, note.created_at)
 
         # Create project/purpose subdirectory structure
         purpose_dir = self.obsidian_vault_path / safe_project / safe_purpose
@@ -1093,6 +1160,9 @@ class NoteRepository(Repository[Note]):
 
         # Rewrite links to use Obsidian-compatible format
         obsidian_markdown = self._rewrite_links_for_obsidian(markdown)
+
+        # Normalize markdown for Obsidian rendering (fix broken tables, etc.)
+        obsidian_markdown = self._normalize_markdown_for_obsidian(obsidian_markdown)
 
         try:
             with open(obsidian_file_path, "w", encoding="utf-8") as f:
@@ -2441,7 +2511,8 @@ class NoteRepository(Repository[Note]):
         """Sync all notes to the Obsidian vault.
 
         Re-mirrors all existing notes to the configured Obsidian vault directory.
-        Uses note titles as filenames, so existing files are overwritten (no duplicates).
+        Removes old-format files before re-mirroring to prevent duplicates from
+        filename format changes (e.g., adding date prefixes).
 
         Returns:
             Number of notes synced, or 0 if Obsidian vault is not configured.
@@ -2454,6 +2525,23 @@ class NoteRepository(Repository[Note]):
                 "Obsidian vault not configured. "
                 "Set ZETTELKASTEN_OBSIDIAN_VAULT in your .env file."
             )
+
+        # Clean existing Obsidian mirror files before full re-sync.
+        # This prevents duplicate files when filename format changes
+        # (e.g., adding date prefix). Only removes .md files, preserves
+        # directories and non-markdown files (Obsidian config, etc.).
+        cleaned = 0
+        for md_file in self.obsidian_vault_path.glob("**/*.md"):
+            # Skip Obsidian internal files
+            if md_file.name.startswith("."):
+                continue
+            try:
+                md_file.unlink()
+                cleaned += 1
+            except OSError as e:
+                logger.warning(f"Failed to clean old mirror file {md_file}: {e}")
+        if cleaned:
+            logger.info(f"Cleaned {cleaned} old mirror files before re-sync")
 
         # Get all notes from the file system
         note_files = list(self.notes_dir.glob("*.md"))
