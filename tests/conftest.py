@@ -8,6 +8,7 @@ from znote_mcp.config import config
 from znote_mcp.models.db_models import Base
 from znote_mcp.services.zettel_service import ZettelService
 from znote_mcp.storage.note_repository import NoteRepository
+from tests.fakes import FakeEmbeddingProvider, FakeRerankerProvider
 
 @pytest.fixture
 def temp_dirs():
@@ -54,3 +55,38 @@ def zettel_service(note_repository):
     service = ZettelService(repository=note_repository)
     # Initialize is handled in constructor
     yield service
+
+
+# =============================================================================
+# Shared Embedding Test Fixtures
+# =============================================================================
+
+
+@pytest.fixture
+def _enable_embeddings():
+    """Temporarily enable embeddings in global config."""
+    original = config.embeddings_enabled
+    config.embeddings_enabled = True
+    yield
+    config.embeddings_enabled = original
+
+
+@pytest.fixture
+def _disable_embeddings():
+    """Temporarily disable embeddings in global config."""
+    original = config.embeddings_enabled
+    config.embeddings_enabled = False
+    yield
+    config.embeddings_enabled = original
+
+
+@pytest.fixture
+def fake_embedder():
+    """Create a FakeEmbeddingProvider matching the default vec0 dimension (768)."""
+    return FakeEmbeddingProvider(dim=768)
+
+
+@pytest.fixture
+def fake_reranker():
+    """Create a FakeRerankerProvider for testing."""
+    return FakeRerankerProvider()

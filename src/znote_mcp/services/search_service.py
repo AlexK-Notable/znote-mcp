@@ -61,7 +61,12 @@ class SearchService:
         """
         self.zettel_service = zettel_service or ZettelService()
         self._embedding_service = embedding_service
-    
+
+    @property
+    def has_semantic_search(self) -> bool:
+        """Whether semantic search is available (embedding service configured and enabled)."""
+        return self._embedding_service is not None and config.embeddings_enabled
+
     def initialize(self) -> None:
         """Initialize the service and dependencies."""
         # Initialize the zettel service if it hasn't been initialized

@@ -222,6 +222,7 @@ class TestMcpServer:
             query="test query",
             tags="tag1, tag2",
             note_type="permanent",
+            mode="text",
             limit=10
         )
         
@@ -435,6 +436,18 @@ Some content here.
     def test_status_all_sections(self):
         """Test zk_status with all sections."""
         assert 'zk_status' in self.registered_tools
+
+        # Set up mocks for status tool dependencies
+        self.mock_zettel_service.get_all_notes.return_value = []
+        self.mock_zettel_service.get_tags_with_counts.return_value = {}
+        self.mock_zettel_service.check_database_health.return_value = {
+            "healthy": True, "sqlite_ok": True, "fts_ok": True,
+            "note_count": 0, "file_count": 0, "issues": [],
+        }
+        self.mock_zettel_service.count_notes.return_value = 0
+        self.mock_zettel_service.repository.count_embeddings.return_value = 0
+        self.mock_search_service.find_central_notes.return_value = []
+        self.mock_search_service.find_orphaned_notes.return_value = []
 
         status_func = self.registered_tools['zk_status']
         result = status_func(sections="all")

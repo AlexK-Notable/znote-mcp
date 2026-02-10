@@ -214,12 +214,26 @@ class ZettelService:
         all_notes = self.repository.get_all()
         stats["total"] = len(all_notes)
 
-        for note in all_notes:
+        if not all_notes:
+            return stats
+
+        # Prepare texts for batch embedding
+        texts = [f"{note.title}\n{note.content}" for note in all_notes]
+
+        # Batch embed (handles internal batching via config.embedding_batch_size)
+        try:
+            vectors = self._embedding_service.embed_batch(
+                texts, batch_size=config.embedding_batch_size
+            )
+        except Exception as e:
+            logger.error(f"Batch embedding failed during reindex: {e}")
+            stats["failed"] = len(all_notes)
+            return stats
+
+        # Store results (per-note to isolate individual failures)
+        for note, vector in zip(all_notes, vectors):
             try:
                 content_hash = self._content_hash(note.title, note.content)
-                vector = self._embedding_service.embed(
-                    f"{note.title}\n{note.content}"
-                )
                 stored = self.repository.store_embedding(
                     note_id=note.id,
                     embedding=vector,
@@ -231,7 +245,7 @@ class ZettelService:
                 else:
                     stats["skipped"] += 1
             except Exception as e:
-                logger.warning(f"Failed to embed note {note.id} during reindex: {e}")
+                logger.warning(f"Failed to store embedding for note {note.id}: {e}")
                 stats["failed"] += 1
 
         logger.info(

@@ -424,7 +424,9 @@ class TestEmbeddingConfig:
 
     def test_defaults(self):
         cfg = ZettelkastenConfig()
-        assert cfg.embeddings_enabled is True
+        # Default is False (safe for users without semantic deps);
+        # main.py auto-enables when ensure_semantic_deps() succeeds.
+        assert cfg.embeddings_enabled is False
         assert cfg.embedding_model == "Alibaba-NLP/gte-modernbert-base"
         assert cfg.reranker_model == "Alibaba-NLP/gte-reranker-modernbert-base"
         assert cfg.embedding_dim == 768

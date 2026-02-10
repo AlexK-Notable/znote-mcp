@@ -1,4 +1,5 @@
 """MCP server implementation for the Zettelkasten."""
+import atexit
 import json
 import logging
 import uuid
@@ -53,6 +54,8 @@ class ZettelkastenMcpServer:
         self.project_repository = ProjectRepository()
         # Initialize services
         self.initialize()
+        # Register shutdown hook for resource cleanup
+        atexit.register(self._shutdown)
         # Register tools
         self._register_tools()
         self._register_resources()
@@ -63,6 +66,10 @@ class ZettelkastenMcpServer:
         self.zettel_service.initialize()
         self.search_service.initialize()
         logger.info("Zettelkasten MCP server initialized")
+
+    def _shutdown(self) -> None:
+        """Clean up resources on server exit."""
+        self.zettel_service.shutdown()
 
     def format_error_response(self, error: Exception) -> str:
         """Format an error response in a consistent way.
@@ -484,7 +491,7 @@ class ZettelkastenMcpServer:
             query: Optional[str] = None,
             tags: Optional[str] = None,
             note_type: Optional[str] = None,
-            mode: str = "semantic",
+            mode: str = "auto",
             limit: int = 10
         ) -> str:
             """Search for notes by text, tags, or type.
@@ -493,17 +500,36 @@ class ZettelkastenMcpServer:
                 tags: Comma-separated list of tags to filter by
                 note_type: Type of note to filter by
                 mode: Search mode:
-                    - "semantic": Embedding-based similarity search (default).
+                    - "auto": Automatically picks the best strategy (default).
+                      Uses semantic search when embeddings are available and no
+                      tag/type filters are set; otherwise uses text search.
+                    - "semantic": Embedding-based similarity search.
                       Finds conceptually related notes even without exact keyword matches.
-                      Falls back to "text" mode when embeddings are not enabled.
-                    - "text": Keyword matching in titles/content.
+                      Does not support tag/type filtering.
+                    - "text": Keyword matching in titles/content with tag/type filters.
                 limit: Maximum number of results to return
             """
             with timed_operation("zk_search_notes", query=query[:30] if query else None, mode=mode) as op:
                 try:
+                    if mode == "auto":
+                        has_filters = tags or note_type
+                        if (
+                            self.search_service.has_semantic_search
+                            and query and query.strip()
+                            and not has_filters
+                        ):
+                            mode = "semantic"
+                        else:
+                            mode = "text"
+
                     if mode == "semantic":
+                        if tags or note_type:
+                            return (
+                                "Error: tag and note_type filters are not yet supported "
+                                "in semantic mode. Use mode='text' or mode='auto'."
+                            )
                         # Fall back to text mode when embeddings unavailable
-                        if not config.embeddings_enabled or self.search_service._embedding_service is None:
+                        if not self.search_service.has_semantic_search:
                             mode = "text"
                         elif not query or not query.strip():
                             return "Error: query is required for semantic search."
@@ -578,7 +604,7 @@ class ZettelkastenMcpServer:
                         return output
 
                     else:
-                        return f"Invalid mode: '{mode}'. Valid modes: text, semantic"
+                        return f"Invalid mode: '{mode}'. Valid modes: auto, text, semantic"
 
                 except Exception as e:
                     return self.format_error_response(e)

@@ -84,6 +84,10 @@ def main():
     deps_ok = ensure_semantic_deps(project_root, __version__)
     logger.info("Semantic deps available: %s", deps_ok)
 
+    # Auto-enable embeddings when deps are available and user hasn't explicitly set the env var
+    if deps_ok and not os.getenv("ZETTELKASTEN_EMBEDDINGS_ENABLED"):
+        config.embeddings_enabled = True
+
     # Pre-download embedding models in background so first search is fast
     if deps_ok and config.embeddings_enabled:
         warmup_models_background(

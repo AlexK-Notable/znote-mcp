@@ -340,9 +340,9 @@ class OnnxRerankerProvider:
 
         # Pad to max length in batch
         max_len = max(len(e.ids) for e in encodings)
-        input_ids = np.zeros((len(pairs), max_len), dtype=np.int64)
-        attention_mask = np.zeros((len(pairs), max_len), dtype=np.int64)
-        token_type_ids = np.zeros((len(pairs), max_len), dtype=np.int64)
+        input_ids = np.zeros((len(encodings), max_len), dtype=np.int64)
+        attention_mask = np.zeros((len(encodings), max_len), dtype=np.int64)
+        token_type_ids = np.zeros((len(encodings), max_len), dtype=np.int64)
 
         for i, encoding in enumerate(encodings):
             length = len(encoding.ids)

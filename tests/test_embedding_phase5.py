@@ -13,7 +13,6 @@ since the MCP protocol layer is a thin formatting wrapper over the services.
 """
 import pytest
 
-from tests.fakes import FakeEmbeddingProvider, FakeRerankerProvider
 from znote_mcp.config import config
 from znote_mcp.services.embedding_service import EmbeddingService
 from znote_mcp.services.search_service import SearchService
@@ -22,34 +21,9 @@ from znote_mcp.storage.note_repository import NoteRepository
 
 
 # =============================================================================
-# Fixtures
+# Fixtures (shared _enable/_disable_embeddings, fake_embedder, fake_reranker
+# are in conftest.py)
 # =============================================================================
-
-
-@pytest.fixture
-def _enable_embeddings():
-    original = config.embeddings_enabled
-    config.embeddings_enabled = True
-    yield
-    config.embeddings_enabled = original
-
-
-@pytest.fixture
-def _disable_embeddings():
-    original = config.embeddings_enabled
-    config.embeddings_enabled = False
-    yield
-    config.embeddings_enabled = original
-
-
-@pytest.fixture
-def fake_embedder():
-    return FakeEmbeddingProvider(dim=768)
-
-
-@pytest.fixture
-def fake_reranker():
-    return FakeRerankerProvider()
 
 
 @pytest.fixture

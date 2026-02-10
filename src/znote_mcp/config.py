@@ -61,7 +61,7 @@ class ZettelkastenConfig(BaseModel):
     # Embedding / semantic search configuration
     embeddings_enabled: bool = Field(
         default_factory=lambda: os.getenv(
-            "ZETTELKASTEN_EMBEDDINGS_ENABLED", "true"
+            "ZETTELKASTEN_EMBEDDINGS_ENABLED", "false"
         ).lower() in ("true", "1", "yes")
     )
     embedding_model: str = Field(
