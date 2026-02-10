@@ -63,6 +63,13 @@ class ErrorCode(Enum):
     INVALID_DIRECTION = 7004
     PATH_TRAVERSAL_DETECTED = 7005
 
+    # Embedding errors (8xxx)
+    EMBEDDING_UNAVAILABLE = 8001
+    EMBEDDING_MODEL_LOAD_FAILED = 8002
+    EMBEDDING_INFERENCE_FAILED = 8003
+    VECTOR_STORE_ERROR = 8004
+    RERANKER_FAILED = 8005
+
 
 class ZettelkastenError(Exception):
     """Base exception for all Zettelkasten errors.
@@ -347,3 +354,28 @@ class BulkOperationError(ZettelkastenError):
     def failed_count(self) -> int:
         """Number of items that failed (computed from total - success)."""
         return self.total_count - self.success_count
+
+
+class EmbeddingError(ZettelkastenError):
+    """Raised for embedding and semantic search errors.
+
+    Covers model loading failures, inference errors, vector store issues,
+    and reranker failures.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        code: ErrorCode = ErrorCode.EMBEDDING_UNAVAILABLE,
+        operation: Optional[str] = None,
+        original_error: Optional[Exception] = None
+    ):
+        details: Dict[str, Any] = {}
+        if operation:
+            details["operation"] = operation
+        if original_error:
+            details["original_error"] = str(original_error)[:200]
+
+        super().__init__(message, code=code, details=details)
+        self.operation = operation
+        self.original_error = original_error

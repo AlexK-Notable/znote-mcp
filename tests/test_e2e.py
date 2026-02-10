@@ -16,8 +16,8 @@ from pathlib import Path
 
 from znote_mcp.models.schema import LinkType, NoteType
 
-# Import fixtures from conftest_e2e (use relative import)
-from conftest_e2e import (
+# Import fixtures from conftest_e2e
+from tests.conftest_e2e import (
     isolated_env,
     e2e_zettel_service,
     e2e_search_service,

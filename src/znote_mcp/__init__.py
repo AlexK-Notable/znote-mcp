@@ -6,4 +6,9 @@ to form a network of knowledge.
 
 This version uses synchronous operations.
 """
-__version__ = "1.2.1"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("znote-mcp")
+except PackageNotFoundError:
+    __version__ = "1.4.0"

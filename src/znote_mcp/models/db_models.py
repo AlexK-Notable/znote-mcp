@@ -1,6 +1,9 @@
 """SQLAlchemy database models for the Zettelkasten MCP server."""
 import datetime
+import logging
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy import (Column, DateTime, ForeignKey, Integer, String, Table,
                        Text, UniqueConstraint, create_engine)
@@ -202,6 +205,13 @@ def init_db(in_memory: bool = False) -> None:
     # (works for both in-memory and persistent)
     init_fts5(engine)
 
+    # Initialize sqlite-vec for vector search (optional, graceful fallback)
+    vec_ok = init_sqlite_vec(engine)
+    if vec_ok:
+        logger.info("sqlite-vec initialized successfully")
+    else:
+        logger.info("sqlite-vec not available — semantic search disabled")
+
     return engine
 
 
@@ -330,6 +340,86 @@ def rebuild_fts_index(engine) -> int:
         count = count_result.scalar()
 
     return count
+
+
+def init_sqlite_vec(engine, dimension: int = 768) -> bool:
+    """Initialize sqlite-vec extension for vector search.
+
+    Loads the sqlite-vec extension and creates the vec0 virtual table
+    for storing note embeddings, plus a metadata table for tracking
+    model info and content hashes.
+
+    This follows the same graceful degradation pattern as FTS5:
+    if the extension isn't available, the system works without it.
+
+    Args:
+        engine: SQLAlchemy engine.
+        dimension: Embedding vector dimensionality (default 768 for gte-modernbert-base).
+
+    Returns:
+        True if sqlite-vec was initialized successfully, False otherwise.
+    """
+    from sqlalchemy import text, event
+
+    try:
+        import sqlite_vec
+    except ImportError:
+        logger.debug("sqlite-vec package not installed — vector search disabled")
+        return False
+
+    # Register extension loading on every new connection
+    @event.listens_for(engine, "connect")
+    def _load_sqlite_vec(dbapi_connection, connection_record):
+        try:
+            dbapi_connection.enable_load_extension(True)
+            sqlite_vec.load(dbapi_connection)
+            dbapi_connection.enable_load_extension(False)
+        except Exception as e:
+            logger.warning(f"Failed to load sqlite-vec extension: {e}")
+
+    # Create the vec0 virtual table and metadata table
+    try:
+        with engine.connect() as conn:
+            # Force-load extension on this connection (the event listener
+            # handles future connections, but this one may already be open)
+            raw_conn = conn.connection.dbapi_connection
+            raw_conn.enable_load_extension(True)
+            sqlite_vec.load(raw_conn)
+            raw_conn.enable_load_extension(False)
+
+            # vec0 virtual table for vector storage + KNN search
+            conn.execute(text(f"""
+                CREATE VIRTUAL TABLE IF NOT EXISTS note_embeddings
+                USING vec0(
+                    note_id TEXT PRIMARY KEY,
+                    embedding float[{dimension}]
+                )
+            """))
+
+            # Metadata table for tracking model/hash info per embedding
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS embedding_metadata (
+                    note_id TEXT PRIMARY KEY,
+                    model_name TEXT NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    dimension INTEGER NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
+                )
+            """))
+
+            # Index on content_hash for fast change detection
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_embedding_metadata_hash
+                ON embedding_metadata(content_hash)
+            """))
+
+            conn.commit()
+            return True
+
+    except Exception as e:
+        logger.warning(f"Failed to initialize sqlite-vec tables: {e}")
+        return False
 
 
 def get_session_factory(engine=None):

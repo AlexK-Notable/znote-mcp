@@ -1,5 +1,6 @@
 """Service layer for Zettelkasten operations."""
 import datetime
+import hashlib
 from datetime import timezone
 import logging
 from pathlib import Path
@@ -84,16 +85,161 @@ def _infer_purpose(title: str, content: str, tags: Optional[List[str]] = None) -
 
 class ZettelService:
     """Service for managing Zettelkasten notes."""
-    
-    def __init__(self, repository: Optional[NoteRepository] = None):
-        """Initialize the service."""
+
+    def __init__(
+        self,
+        repository: Optional[NoteRepository] = None,
+        embedding_service: Optional["EmbeddingService"] = None,
+    ):
+        """Initialize the service.
+
+        Args:
+            repository: Note storage backend. Created with defaults if None.
+            embedding_service: Optional embedding service for semantic search.
+                When provided and config.embeddings_enabled is True, notes
+                are automatically embedded on create/update and embeddings
+                are cleaned up on delete.
+        """
         self.repository = repository or NoteRepository()
-    
+        self._embedding_service = embedding_service
+
     def initialize(self) -> None:
         """Initialize the service and dependencies."""
         # Nothing to do here for synchronous implementation
         # The repository is initialized in its constructor
         pass
+
+    # =========================================================================
+    # Embedding Helpers (fire-and-forget — never fail the main operation)
+    # =========================================================================
+
+    @staticmethod
+    def _content_hash(title: str, content: str) -> str:
+        """Compute a deterministic SHA-256 hash of embeddable content.
+
+        Used for change detection: if the hash hasn't changed since the last
+        embedding, we skip re-embedding to save compute.
+
+        Args:
+            title: Note title.
+            content: Note body content.
+
+        Returns:
+            Hex digest string (64 characters).
+        """
+        return hashlib.sha256(f"{title}\n{content}".encode("utf-8")).hexdigest()
+
+    def _embed_note(self, note: Note) -> None:
+        """Embed a note and store the vector.  Fire-and-forget.
+
+        Skips embedding if:
+        - No embedding service is configured
+        - embeddings_enabled is False
+        - The content hash hasn't changed since the last embedding
+        - sqlite-vec is unavailable in the repository
+
+        Errors are logged but never propagated — embedding failures must
+        not break normal CRUD operations.
+        """
+        if self._embedding_service is None or not config.embeddings_enabled:
+            return
+
+        try:
+            content_hash = self._content_hash(note.title, note.content)
+
+            # Check if we already have an up-to-date embedding
+            meta = self.repository.get_embedding_metadata(note.id)
+            if meta and meta["content_hash"] == content_hash:
+                logger.debug(f"Embedding unchanged for note {note.id}, skipping")
+                return
+
+            # Generate and store embedding
+            vector = self._embedding_service.embed(
+                f"{note.title}\n{note.content}"
+            )
+            self.repository.store_embedding(
+                note_id=note.id,
+                embedding=vector,
+                model_name=config.embedding_model,
+                content_hash=content_hash,
+            )
+            logger.debug(f"Embedded note {note.id}")
+        except Exception as e:
+            logger.warning(f"Failed to embed note {note.id}: {e}")
+
+    def _delete_embedding(self, note_id: str) -> None:
+        """Delete a note's embedding.  Fire-and-forget."""
+        if self._embedding_service is None or not config.embeddings_enabled:
+            return
+        try:
+            self.repository.delete_embedding(note_id)
+        except Exception as e:
+            logger.warning(f"Failed to delete embedding for note {note_id}: {e}")
+
+    def shutdown(self) -> None:
+        """Shut down the service and release resources."""
+        if self._embedding_service is not None:
+            self._embedding_service.shutdown()
+            logger.info("Embedding service shut down")
+
+    def reindex_embeddings(self) -> Dict[str, int]:
+        """Rebuild all note embeddings from scratch.
+
+        Clears existing embeddings, then re-embeds every note.  Useful after
+        model changes, dimension changes, or if the embedding index becomes
+        inconsistent.
+
+        Returns:
+            Dict with keys: total, embedded, skipped, failed.
+
+        Raises:
+            EmbeddingError: If no embedding service is configured.
+        """
+        from znote_mcp.exceptions import EmbeddingError
+
+        if self._embedding_service is None:
+            raise EmbeddingError(
+                "No embedding service configured",
+                code=ErrorCode.EMBEDDING_UNAVAILABLE,
+                operation="reindex_embeddings",
+            )
+
+        stats = {"total": 0, "embedded": 0, "skipped": 0, "failed": 0}
+
+        # Clear existing embeddings
+        cleared = self.repository.clear_all_embeddings()
+        logger.info(f"Cleared {cleared} existing embeddings")
+
+        # Get all notes (no pagination limit — we need them all)
+        all_notes = self.repository.get_all()
+        stats["total"] = len(all_notes)
+
+        for note in all_notes:
+            try:
+                content_hash = self._content_hash(note.title, note.content)
+                vector = self._embedding_service.embed(
+                    f"{note.title}\n{note.content}"
+                )
+                stored = self.repository.store_embedding(
+                    note_id=note.id,
+                    embedding=vector,
+                    model_name=config.embedding_model,
+                    content_hash=content_hash,
+                )
+                if stored:
+                    stats["embedded"] += 1
+                else:
+                    stats["skipped"] += 1
+            except Exception as e:
+                logger.warning(f"Failed to embed note {note.id} during reindex: {e}")
+                stats["failed"] += 1
+
+        logger.info(
+            f"Reindex complete: {stats['embedded']} embedded, "
+            f"{stats['skipped']} skipped, {stats['failed']} failed "
+            f"out of {stats['total']} total"
+        )
+        return stats
     
     def create_note(
         self,
@@ -154,8 +300,13 @@ class ZettelService:
         )
 
         # Save to repository
-        return self.repository.create(note)
-    
+        created = self.repository.create(note)
+
+        # Auto-embed (fire-and-forget)
+        self._embed_note(created)
+
+        return created
+
     def get_note(self, note_id: str) -> Optional[Note]:
         """Retrieve a note by ID."""
         return self.repository.get(note_id)
@@ -217,11 +368,17 @@ class ZettelService:
         note.updated_at = datetime.datetime.now(timezone.utc)
 
         # Save to repository
-        return self.repository.update(note)
-    
+        updated = self.repository.update(note)
+
+        # Re-embed if content changed (fire-and-forget)
+        self._embed_note(updated)
+
+        return updated
+
     def delete_note(self, note_id: str) -> None:
         """Delete a note."""
         self.repository.delete(note_id)
+        self._delete_embedding(note_id)
     
     def get_all_notes(
         self,
@@ -653,7 +810,13 @@ class ZettelService:
             )
             notes.append(note)
 
-        return self.repository.bulk_create_notes(notes)
+        created = self.repository.bulk_create_notes(notes)
+
+        # Auto-embed all created notes (fire-and-forget per note)
+        for note in created:
+            self._embed_note(note)
+
+        return created
 
     def bulk_delete_notes(self, note_ids: List[str]) -> int:
         """Delete multiple notes in a single batch operation.
@@ -664,7 +827,13 @@ class ZettelService:
         Returns:
             Number of notes successfully deleted.
         """
-        return self.repository.bulk_delete_notes(note_ids)
+        count = self.repository.bulk_delete_notes(note_ids)
+
+        # Clean up embeddings (fire-and-forget per note)
+        for nid in note_ids:
+            self._delete_embedding(nid)
+
+        return count
 
     def bulk_add_tags(self, note_ids: List[str], tags: List[str]) -> int:
         """Add tags to multiple notes.
@@ -839,7 +1008,12 @@ class ZettelService:
         )
 
         # Save with version tracking
-        return self.repository.create_versioned(note)
+        result = self.repository.create_versioned(note)
+
+        # Auto-embed (fire-and-forget)
+        self._embed_note(result.note)
+
+        return result
 
     def update_note_versioned(
         self,
@@ -902,7 +1076,13 @@ class ZettelService:
         note.updated_at = datetime.datetime.now(timezone.utc)
 
         # Update with version checking
-        return self.repository.update_versioned(note, expected_version)
+        result = self.repository.update_versioned(note, expected_version)
+
+        # Re-embed if update succeeded (not a conflict)
+        if isinstance(result, VersionedNote):
+            self._embed_note(result.note)
+
+        return result
 
     def delete_note_versioned(
         self,
@@ -921,4 +1101,10 @@ class ZettelService:
         Returns:
             VersionInfo on success, ConflictResult if version conflict.
         """
-        return self.repository.delete_versioned(note_id, expected_version)
+        result = self.repository.delete_versioned(note_id, expected_version)
+
+        # Clean up embedding if delete succeeded (not a conflict)
+        if isinstance(result, VersionInfo):
+            self._delete_embedding(note_id)
+
+        return result

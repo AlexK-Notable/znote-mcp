@@ -194,6 +194,11 @@ class NoteRepository(Repository[Note]):
         # FTS5 availability tracking - allows graceful degradation when corrupted
         self._fts_available: bool = True
 
+        # sqlite-vec availability tracking - allows graceful degradation
+        # Detected from engine: if init_sqlite_vec() succeeded during init_db(),
+        # the vec0 table exists and the extension is loaded on every connection.
+        self._vec_available: bool = self._detect_vec_available()
+
         # Clean up any orphaned staging files from previous failed operations
         self._cleanup_staging()
 
@@ -203,6 +208,15 @@ class NoteRepository(Repository[Note]):
             self.rebuild_index()
         else:
             self._initialize_with_health_check()
+
+    def _detect_vec_available(self) -> bool:
+        """Check if sqlite-vec virtual table exists and is usable."""
+        try:
+            with self.engine.connect() as conn:
+                conn.execute(text("SELECT count(*) FROM note_embeddings WHERE 0"))
+                return True
+        except Exception:
+            return False
 
     def _validate_notes_dir(self) -> None:
         """Validate that notes_dir looks like a valid notes directory.
@@ -3263,3 +3277,242 @@ class NoteRepository(Repository[Note]):
                 )
 
         return updated_count
+
+    # =========================================================================
+    # Vector / Embedding Operations (sqlite-vec)
+    # =========================================================================
+
+    def store_embedding(
+        self,
+        note_id: str,
+        embedding: "np.ndarray",
+        model_name: str,
+        content_hash: str,
+    ) -> bool:
+        """Store or update an embedding for a note.
+
+        Uses UPSERT semantics: if an embedding already exists for this note_id,
+        it is replaced.  Writes to both the vec0 virtual table (for KNN search)
+        and the metadata table (for change-detection / provenance).
+
+        Args:
+            note_id: The note ID.
+            embedding: A 1-D numpy float32 array (must match configured dimension).
+            model_name: Model that produced the embedding.
+            content_hash: SHA-256 hex digest of the content that was embedded.
+
+        Returns:
+            True on success, False if sqlite-vec is unavailable.
+        """
+        if not self._vec_available:
+            return False
+
+        import numpy as np
+
+        blob = embedding.astype(np.float32).tobytes()
+
+        with self.engine.connect() as conn:
+            # vec0 UPSERT: delete-then-insert (vec0 doesn't support ON CONFLICT)
+            conn.execute(
+                text("DELETE FROM note_embeddings WHERE note_id = :nid"),
+                {"nid": note_id},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO note_embeddings(note_id, embedding) "
+                    "VALUES (:nid, :emb)"
+                ),
+                {"nid": note_id, "emb": blob},
+            )
+
+            # Metadata UPSERT via INSERT OR REPLACE
+            conn.execute(
+                text(
+                    "INSERT OR REPLACE INTO embedding_metadata"
+                    "(note_id, model_name, content_hash, dimension, created_at) "
+                    "VALUES (:nid, :model, :hash, :dim, datetime('now'))"
+                ),
+                {
+                    "nid": note_id,
+                    "model": model_name,
+                    "hash": content_hash,
+                    "dim": embedding.shape[0],
+                },
+            )
+            conn.commit()
+
+        return True
+
+    def get_embedding(self, note_id: str) -> "Optional[np.ndarray]":
+        """Retrieve the stored embedding vector for a note.
+
+        Args:
+            note_id: The note ID.
+
+        Returns:
+            A 1-D float32 numpy array, or None if not found / vec unavailable.
+        """
+        if not self._vec_available:
+            return None
+
+        import numpy as np
+
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT embedding FROM note_embeddings "
+                    "WHERE note_id = :nid"
+                ),
+                {"nid": note_id},
+            ).fetchone()
+
+        if row is None:
+            return None
+
+        return np.frombuffer(row[0], dtype=np.float32).copy()
+
+    def get_embedding_metadata(self, note_id: str) -> "Optional[dict]":
+        """Retrieve embedding metadata (model, hash, dimension, timestamp).
+
+        Args:
+            note_id: The note ID.
+
+        Returns:
+            A dict with keys model_name, content_hash, dimension, created_at,
+            or None if not found.
+        """
+        if not self._vec_available:
+            return None
+
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT model_name, content_hash, dimension, created_at "
+                    "FROM embedding_metadata WHERE note_id = :nid"
+                ),
+                {"nid": note_id},
+            ).fetchone()
+
+        if row is None:
+            return None
+
+        return {
+            "model_name": row[0],
+            "content_hash": row[1],
+            "dimension": row[2],
+            "created_at": row[3],
+        }
+
+    def delete_embedding(self, note_id: str) -> bool:
+        """Delete the embedding (and metadata) for a note.
+
+        Returns:
+            True if a row was deleted, False if nothing existed or vec unavailable.
+        """
+        if not self._vec_available:
+            return False
+
+        with self.engine.connect() as conn:
+            result = conn.execute(
+                text("DELETE FROM note_embeddings WHERE note_id = :nid"),
+                {"nid": note_id},
+            )
+            conn.execute(
+                text("DELETE FROM embedding_metadata WHERE note_id = :nid"),
+                {"nid": note_id},
+            )
+            conn.commit()
+
+        return result.rowcount > 0
+
+    def vec_similarity_search(
+        self,
+        query_embedding: "np.ndarray",
+        limit: int = 10,
+        exclude_ids: "Optional[list[str]]" = None,
+    ) -> "list[tuple[str, float]]":
+        """Find notes whose embeddings are closest to *query_embedding*.
+
+        sqlite-vec uses L2 distance.  Because our embeddings are L2-normalised,
+        the ranking is equivalent to cosine similarity:
+            cosine_sim = 1 - (l2_dist² / 2)
+
+        Args:
+            query_embedding: 1-D float32 numpy array.
+            limit: Maximum number of results.
+            exclude_ids: Note IDs to exclude from results.
+
+        Returns:
+            List of (note_id, distance) tuples ordered by ascending distance
+            (most similar first).  Empty list if vec unavailable.
+        """
+        if not self._vec_available:
+            return []
+
+        import numpy as np
+
+        blob = query_embedding.astype(np.float32).tobytes()
+
+        # sqlite-vec KNN query.  The `k` parameter is the KNN limit.
+        # We request extra rows to compensate for exclusions, then trim.
+        fetch_limit = limit + (len(exclude_ids) if exclude_ids else 0)
+
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT note_id, distance "
+                    "FROM note_embeddings "
+                    "WHERE embedding MATCH :qvec "
+                    "AND k = :k "
+                    "ORDER BY distance"
+                ),
+                {"qvec": blob, "k": fetch_limit},
+            ).fetchall()
+
+        results: list[tuple[str, float]] = []
+        exclude_set = set(exclude_ids) if exclude_ids else set()
+        for row in rows:
+            if row[0] in exclude_set:
+                continue
+            results.append((row[0], float(row[1])))
+            if len(results) >= limit:
+                break
+
+        return results
+
+    def count_embeddings(self) -> int:
+        """Return the number of stored embeddings.
+
+        Returns:
+            Count of embeddings, or 0 if vec unavailable.
+        """
+        if not self._vec_available:
+            return 0
+
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT count(*) FROM embedding_metadata")
+            ).fetchone()
+
+        return row[0] if row else 0
+
+    def clear_all_embeddings(self) -> int:
+        """Delete all embeddings and metadata.  Used for reindexing.
+
+        Returns:
+            Number of embeddings deleted, or 0 if vec unavailable.
+        """
+        if not self._vec_available:
+            return 0
+
+        with self.engine.connect() as conn:
+            count_row = conn.execute(
+                text("SELECT count(*) FROM embedding_metadata")
+            ).fetchone()
+            count = count_row[0] if count_row else 0
+
+            conn.execute(text("DELETE FROM note_embeddings"))
+            conn.execute(text("DELETE FROM embedding_metadata"))
+            conn.commit()
+
+        return count

@@ -7,10 +7,12 @@ import os
 import sys
 from pathlib import Path
 
+from znote_mcp import __version__
 from znote_mcp.config import config
 from znote_mcp.models.db_models import init_db
 from znote_mcp.observability import configure_logging, metrics
 from znote_mcp.server.mcp_server import ZettelkastenMcpServer
+from znote_mcp.setup_manager import ensure_semantic_deps, warmup_models_background
 
 
 def parse_args():
@@ -76,6 +78,21 @@ def main():
 
     # Register metrics save on shutdown
     atexit.register(_save_metrics_on_exit)
+
+    # Auto-install semantic search dependencies if needed
+    project_root = Path(__file__).resolve().parent.parent.parent
+    deps_ok = ensure_semantic_deps(project_root, __version__)
+    logger.info("Semantic deps available: %s", deps_ok)
+
+    # Pre-download embedding models in background so first search is fast
+    if deps_ok and config.embeddings_enabled:
+        warmup_models_background(
+            venv_dir=project_root / ".venv",
+            version=__version__,
+            embedding_model=config.embedding_model,
+            reranker_model=config.reranker_model,
+            cache_dir=config.embedding_model_cache_dir,
+        )
 
     # Ensure directories exist
     notes_dir = config.get_absolute_path(config.notes_dir)

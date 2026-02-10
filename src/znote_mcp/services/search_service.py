@@ -1,10 +1,20 @@
 """Service for searching and discovering notes in the Zettelkasten."""
+from __future__ import annotations
+
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
 
+from znote_mcp.config import config
 from znote_mcp.models.schema import LinkType, Note, NoteType, Tag
 from znote_mcp.services.zettel_service import ZettelService
+
+if TYPE_CHECKING:
+    from znote_mcp.services.embedding_service import EmbeddingService
+
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class SearchResult:
@@ -14,12 +24,43 @@ class SearchResult:
     matched_terms: Set[str]
     matched_context: str
 
+
+@dataclass
+class SemanticSearchResult:
+    """A semantic search result with vector distance and optional rerank score.
+
+    Attributes:
+        note: The matched note.
+        distance: L2 distance from sqlite-vec (lower = more similar).
+            For L2-normalised vectors: cosine_sim = 1 - (distance² / 2).
+        score: Final relevance score (rerank score if reranked, else
+            1 / (1 + distance) as a simple monotonic transform).
+        reranked: Whether the result was refined by the cross-encoder reranker.
+    """
+    note: Note
+    distance: float
+    score: float
+    reranked: bool = False
+
+
 class SearchService:
     """Service for searching notes in the Zettelkasten."""
-    
-    def __init__(self, zettel_service: Optional[ZettelService] = None):
-        """Initialize the search service."""
+
+    def __init__(
+        self,
+        zettel_service: Optional[ZettelService] = None,
+        embedding_service: Optional[EmbeddingService] = None,
+    ):
+        """Initialize the search service.
+
+        Args:
+            zettel_service: Zettel CRUD service.
+            embedding_service: Optional embedding service for semantic search.
+                When provided and config.embeddings_enabled is True, enables
+                semantic_search() and find_related().
+        """
         self.zettel_service = zettel_service or ZettelService()
+        self._embedding_service = embedding_service
     
     def initialize(self) -> None:
         """Initialize the service and dependencies."""
@@ -171,7 +212,223 @@ class SearchService:
     def find_similar_notes(self, note_id: str) -> List[Tuple[Note, float]]:
         """Find notes similar to the given note based on shared tags and links."""
         return self.zettel_service.find_similar_notes(note_id)
-    
+
+    # =========================================================================
+    # Semantic Search (embedding-powered)
+    # =========================================================================
+
+    def semantic_search(
+        self,
+        query: str,
+        limit: int = 10,
+        use_reranker: bool = True,
+        exclude_ids: Optional[List[str]] = None,
+    ) -> List[SemanticSearchResult]:
+        """Search notes by semantic similarity using embeddings.
+
+        Embeds the query text, runs a KNN search via sqlite-vec, retrieves
+        full Note objects, and optionally refines ranking with the cross-encoder
+        reranker.
+
+        Gracefully returns an empty list when:
+        - No embedding service is configured
+        - embeddings_enabled is False in config
+        - sqlite-vec is unavailable in the repository
+
+        Args:
+            query: Natural language search query.
+            limit: Maximum number of results to return.
+            use_reranker: Whether to refine results with the reranker.
+                Only applies if a reranker provider is configured.
+            exclude_ids: Note IDs to exclude from results.
+
+        Returns:
+            List of SemanticSearchResult, ordered by relevance (best first).
+        """
+        if self._embedding_service is None or not config.embeddings_enabled:
+            return []
+
+        if not query.strip():
+            return []
+
+        try:
+            # 1. Embed the query
+            query_vector = self._embedding_service.embed(query)
+
+            # 2. KNN search — fetch extra candidates for reranking
+            repo = self.zettel_service.repository
+            fetch_limit = limit * 3 if use_reranker else limit
+            raw_results = repo.vec_similarity_search(
+                query_vector, limit=fetch_limit, exclude_ids=exclude_ids,
+            )
+
+            if not raw_results:
+                return []
+
+            # 3. Retrieve full Note objects
+            result_ids = [nid for nid, _ in raw_results]
+            notes = repo.get_by_ids(result_ids)
+            note_map = {n.id: n for n in notes}
+            dist_map = {nid: dist for nid, dist in raw_results}
+
+            # 4. Optionally rerank with cross-encoder
+            if (
+                use_reranker
+                and self._embedding_service.has_reranker
+                and len(notes) > 1
+            ):
+                return self._rerank_results(
+                    query, result_ids, note_map, dist_map, limit
+                )
+
+            # 5. Without reranker: score = 1 / (1 + distance)
+            results = []
+            for nid in result_ids:
+                note = note_map.get(nid)
+                if note is None:
+                    continue
+                dist = dist_map[nid]
+                results.append(SemanticSearchResult(
+                    note=note,
+                    distance=dist,
+                    score=1.0 / (1.0 + dist),
+                    reranked=False,
+                ))
+            return results[:limit]
+
+        except Exception as e:
+            logger.warning(f"Semantic search failed: {e}")
+            return []
+
+    def find_related(
+        self,
+        note_id: str,
+        limit: int = 10,
+        use_reranker: bool = False,
+    ) -> List[SemanticSearchResult]:
+        """Find notes semantically related to the given note.
+
+        Retrieves the note's stored embedding and searches for nearest
+        neighbours.  This is the "more like this" feature.
+
+        Falls back to an empty list if the note has no embedding or
+        the embedding service is unavailable.
+
+        Args:
+            note_id: ID of the seed note.
+            limit: Maximum number of related notes to return.
+            use_reranker: Whether to refine results with the reranker.
+
+        Returns:
+            List of SemanticSearchResult (excluding the seed note).
+        """
+        if self._embedding_service is None or not config.embeddings_enabled:
+            return []
+
+        repo = self.zettel_service.repository
+
+        try:
+            # Get the stored embedding for this note
+            embedding = repo.get_embedding(note_id)
+            if embedding is None:
+                return []
+
+            # KNN search, excluding the seed note
+            fetch_limit = limit * 3 if use_reranker else limit
+            raw_results = repo.vec_similarity_search(
+                embedding, limit=fetch_limit, exclude_ids=[note_id],
+            )
+
+            if not raw_results:
+                return []
+
+            # Retrieve full Note objects
+            result_ids = [nid for nid, _ in raw_results]
+            notes = repo.get_by_ids(result_ids)
+            note_map = {n.id: n for n in notes}
+            dist_map = {nid: dist for nid, dist in raw_results}
+
+            # Optionally rerank
+            if (
+                use_reranker
+                and self._embedding_service.has_reranker
+                and len(notes) > 1
+            ):
+                # Use the seed note's content as the query for reranking
+                seed_note = self.zettel_service.get_note(note_id)
+                if seed_note is not None:
+                    query_text = f"{seed_note.title}\n{seed_note.content}"
+                    return self._rerank_results(
+                        query_text, result_ids, note_map, dist_map, limit
+                    )
+
+            # Without reranker
+            results = []
+            for nid in result_ids:
+                note = note_map.get(nid)
+                if note is None:
+                    continue
+                dist = dist_map[nid]
+                results.append(SemanticSearchResult(
+                    note=note,
+                    distance=dist,
+                    score=1.0 / (1.0 + dist),
+                    reranked=False,
+                ))
+            return results[:limit]
+
+        except Exception as e:
+            logger.warning(f"find_related failed for note {note_id}: {e}")
+            return []
+
+    def _rerank_results(
+        self,
+        query: str,
+        result_ids: List[str],
+        note_map: Dict[str, Note],
+        dist_map: Dict[str, float],
+        limit: int,
+    ) -> List[SemanticSearchResult]:
+        """Rerank KNN candidates using the cross-encoder reranker.
+
+        Args:
+            query: The search query or seed text.
+            result_ids: Ordered list of note IDs from KNN search.
+            note_map: Mapping of note ID → Note object.
+            dist_map: Mapping of note ID → L2 distance.
+            limit: Max results to return after reranking.
+
+        Returns:
+            Reranked list of SemanticSearchResult.
+        """
+        # Build document texts for the reranker
+        doc_ids: List[str] = []
+        doc_texts: List[str] = []
+        for nid in result_ids:
+            note = note_map.get(nid)
+            if note is None:
+                continue
+            doc_ids.append(nid)
+            doc_texts.append(f"{note.title}\n{note.content}")
+
+        if not doc_texts:
+            return []
+
+        # Rerank returns (original_index, score) sorted by score desc
+        ranked = self._embedding_service.rerank(query, doc_texts, top_k=limit)
+
+        results = []
+        for idx, rerank_score in ranked:
+            nid = doc_ids[idx]
+            note = note_map[nid]
+            results.append(SemanticSearchResult(
+                note=note,
+                distance=dist_map[nid],
+                score=rerank_score,
+                reranked=True,
+            ))
+        return results
+
     def search_combined(
         self,
         text: Optional[str] = None,

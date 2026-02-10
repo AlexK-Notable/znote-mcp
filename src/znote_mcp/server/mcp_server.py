@@ -41,9 +41,15 @@ class ZettelkastenMcpServer:
             config.server_name,
             version=config.server_version
         )
+        # Conditionally create embedding service
+        embedding_service = self._create_embedding_service()
+
         # Services
-        self.zettel_service = ZettelService()
-        self.search_service = SearchService(self.zettel_service)
+        self.zettel_service = ZettelService(embedding_service=embedding_service)
+        self.search_service = SearchService(
+            self.zettel_service,
+            embedding_service=embedding_service,
+        )
         self.project_repository = ProjectRepository()
         # Initialize services
         self.initialize()
@@ -89,6 +95,55 @@ class ZettelkastenMcpServer:
             # Unexpected errors - log with full stack trace but return generic message
             logger.error(f"Unexpected error [{error_id}]: {str(error)}", exc_info=True)
             return f"Error: {str(error)}"
+
+    @staticmethod
+    def _create_embedding_service():
+        """Create an EmbeddingService if embeddings are enabled and deps are available.
+
+        Returns None (gracefully) if:
+        - config.embeddings_enabled is False
+        - The [semantic] optional dependencies are not installed
+        """
+        if not config.embeddings_enabled:
+            logger.info("Embeddings disabled (ZETTELKASTEN_EMBEDDINGS_ENABLED=false)")
+            return None
+
+        try:
+            from znote_mcp.services.embedding_service import EmbeddingService
+            from znote_mcp.services.onnx_providers import (
+                OnnxEmbeddingProvider,
+                OnnxRerankerProvider,
+            )
+
+            embedder = OnnxEmbeddingProvider(
+                model_id=config.embedding_model,
+                max_length=config.embedding_max_tokens,
+                cache_dir=config.embedding_model_cache_dir,
+            )
+            reranker = OnnxRerankerProvider(
+                model_id=config.reranker_model,
+                max_length=config.embedding_max_tokens,
+                cache_dir=config.embedding_model_cache_dir,
+            )
+            service = EmbeddingService(
+                embedder=embedder,
+                reranker=reranker,
+                reranker_idle_timeout=config.reranker_idle_timeout,
+            )
+            logger.info(
+                f"Embedding service created (model={config.embedding_model}, "
+                f"dim={config.embedding_dim})"
+            )
+            return service
+        except ImportError as e:
+            logger.warning(
+                f"Embedding dependencies not available: {e}. "
+                "Install with: pip install znote-mcp[semantic]"
+            )
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to create embedding service: {e}")
+            return None
 
     def _register_tools(self) -> None:
         """Register MCP tools."""
@@ -429,6 +484,7 @@ class ZettelkastenMcpServer:
             query: Optional[str] = None,
             tags: Optional[str] = None,
             note_type: Optional[str] = None,
+            mode: str = "semantic",
             limit: int = 10
         ) -> str:
             """Search for notes by text, tags, or type.
@@ -436,50 +492,94 @@ class ZettelkastenMcpServer:
                 query: Text to search for in titles and content
                 tags: Comma-separated list of tags to filter by
                 note_type: Type of note to filter by
+                mode: Search mode:
+                    - "semantic": Embedding-based similarity search (default).
+                      Finds conceptually related notes even without exact keyword matches.
+                      Falls back to "text" mode when embeddings are not enabled.
+                    - "text": Keyword matching in titles/content.
                 limit: Maximum number of results to return
             """
-            with timed_operation("zk_search_notes", query=query[:30] if query else None) as op:
+            with timed_operation("zk_search_notes", query=query[:30] if query else None, mode=mode) as op:
                 try:
-                    # Convert tags string to list if provided
-                    tag_list = None
-                    if tags:
-                        tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+                    if mode == "semantic":
+                        # Fall back to text mode when embeddings unavailable
+                        if not config.embeddings_enabled or self.search_service._embedding_service is None:
+                            mode = "text"
+                        elif not query or not query.strip():
+                            return "Error: query is required for semantic search."
 
-                    # Convert note_type string to enum if provided
-                    note_type_enum = None
-                    if note_type:
-                        try:
-                            note_type_enum = NoteType(note_type.lower())
-                        except ValueError:
-                            return f"Invalid note type: {note_type}. Valid types are: {', '.join(t.value for t in NoteType)}"
+                    if mode == "semantic":
+                        results = self.search_service.semantic_search(
+                            query=query.strip(),
+                            limit=limit,
+                            use_reranker=True,
+                        )
+                        op["result_count"] = len(results)
 
-                    # Perform search
-                    results = self.search_service.search_combined(
-                        text=query,
-                        tags=tag_list,
-                        note_type=note_type_enum
-                    )
+                        if not results:
+                            return "No semantically similar notes found."
 
-                    # Limit results
-                    results = results[:limit]
-                    op["result_count"] = len(results)
-                    if not results:
-                        return "No matching notes found."
+                        output = f"Found {len(results)} semantically similar notes:\n\n"
+                        for i, result in enumerate(results, 1):
+                            note = result.note
+                            output += f"{i}. {note.title} (ID: {note.id})\n"
+                            output += f"   Score: {result.score:.3f}"
+                            if result.reranked:
+                                output += " (reranked)"
+                            output += "\n"
+                            if note.tags:
+                                output += f"   Tags: {', '.join(tag.name for tag in note.tags)}\n"
+                            content_preview = note.content[:150].replace("\n", " ")
+                            if len(note.content) > 150:
+                                content_preview += "..."
+                            output += f"   Preview: {content_preview}\n\n"
+                        return output
 
-                    # Format results
-                    output = f"Found {len(results)} matching notes:\n\n"
-                    for i, result in enumerate(results, 1):
-                        note = result.note
-                        output += f"{i}. {note.title} (ID: {note.id})\n"
-                        if note.tags:
-                            output += f"   Tags: {', '.join(tag.name for tag in note.tags)}\n"
-                        output += f"   Created: {note.created_at.strftime('%Y-%m-%d')}\n"
-                        # Add a snippet of content (first 150 chars)
-                        content_preview = note.content[:150].replace("\n", " ")
-                        if len(note.content) > 150:
-                            content_preview += "..."
-                        output += f"   Preview: {content_preview}\n\n"
-                    return output
+                    elif mode == "text":
+                        # Convert tags string to list if provided
+                        tag_list = None
+                        if tags:
+                            tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+
+                        # Convert note_type string to enum if provided
+                        note_type_enum = None
+                        if note_type:
+                            try:
+                                note_type_enum = NoteType(note_type.lower())
+                            except ValueError:
+                                return f"Invalid note type: {note_type}. Valid types are: {', '.join(t.value for t in NoteType)}"
+
+                        # Perform search
+                        results = self.search_service.search_combined(
+                            text=query,
+                            tags=tag_list,
+                            note_type=note_type_enum
+                        )
+
+                        # Limit results
+                        results = results[:limit]
+                        op["result_count"] = len(results)
+                        if not results:
+                            return "No matching notes found."
+
+                        # Format results
+                        output = f"Found {len(results)} matching notes:\n\n"
+                        for i, result in enumerate(results, 1):
+                            note = result.note
+                            output += f"{i}. {note.title} (ID: {note.id})\n"
+                            if note.tags:
+                                output += f"   Tags: {', '.join(tag.name for tag in note.tags)}\n"
+                            output += f"   Created: {note.created_at.strftime('%Y-%m-%d')}\n"
+                            # Add a snippet of content (first 150 chars)
+                            content_preview = note.content[:150].replace("\n", " ")
+                            if len(note.content) > 150:
+                                content_preview += "..."
+                            output += f"   Preview: {content_preview}\n\n"
+                        return output
+
+                    else:
+                        return f"Invalid mode: '{mode}'. Valid modes: text, semantic"
+
                 except Exception as e:
                     return self.format_error_response(e)
 
@@ -913,6 +1013,8 @@ class ZettelkastenMcpServer:
                 mode: Relation type:
                     - "linked": Notes connected via links
                     - "similar": Notes with shared tags/links (similarity score)
+                    - "semantic": Notes with similar meaning via embeddings (requires embeddings enabled).
+                      Finds conceptually related notes regardless of shared tags or links.
                 direction: Link direction for mode="linked" (outgoing, incoming, both)
                 threshold: Similarity threshold 0.0-1.0 for mode="similar"
                 limit: Maximum results to return
@@ -969,8 +1071,36 @@ class ZettelkastenMcpServer:
                             output += "\n"
                         return output
 
+                    elif mode == "semantic":
+                        results = self.search_service.find_related(
+                            note_id, limit=limit, use_reranker=True,
+                        )
+                        op["result_count"] = len(results)
+
+                        if not results:
+                            if not config.embeddings_enabled:
+                                return (
+                                    "Semantic search unavailable: embeddings are disabled.\n"
+                                    "Set ZETTELKASTEN_EMBEDDINGS_ENABLED=true and install "
+                                    "the [semantic] extra to enable."
+                                )
+                            return f"No semantically related notes found for '{note.title}'"
+
+                        output = f"Notes semantically related to '{note.title}':\n\n"
+                        for i, result in enumerate(results, 1):
+                            r_note = result.note
+                            output += f"{i}. {r_note.title} (ID: {r_note.id})\n"
+                            output += f"   Score: {result.score:.3f}"
+                            if result.reranked:
+                                output += " (reranked)"
+                            output += "\n"
+                            if r_note.tags:
+                                output += f"   Tags: {', '.join(tag.name for tag in r_note.tags)}\n"
+                            output += "\n"
+                        return output
+
                     else:
-                        return f"Invalid mode: '{mode}'. Valid modes: linked, similar"
+                        return f"Invalid mode: '{mode}'. Valid modes: linked, similar, semantic"
 
                 except Exception as e:
                     return self.format_error_response(e)
@@ -984,6 +1114,7 @@ class ZettelkastenMcpServer:
                     - "summary": Note counts by type and project
                     - "tags": All tags with usage counts
                     - "health": Database integrity status
+                    - "embeddings": Embedding system status
                     - "metrics": Server performance metrics
                     - "all": Include all sections (default)
             """
@@ -1059,6 +1190,21 @@ class ZettelkastenMcpServer:
                             output += f"**Issues:** {', '.join(health['issues'])}\n"
                         output += "\n"
 
+                    # Embeddings section
+                    if include_all or "embeddings" in requested:
+                        output += "## Embeddings\n"
+                        output += f"**Enabled:** {'Yes' if config.embeddings_enabled else 'No'}\n"
+                        if config.embeddings_enabled:
+                            output += f"**Model:** {config.embedding_model}\n"
+                            output += f"**Dimension:** {config.embedding_dim}\n"
+                            emb_count = self.zettel_service.repository.count_embeddings()
+                            total_notes = self.zettel_service.count_notes()
+                            output += f"**Indexed:** {emb_count}/{total_notes} notes\n"
+                            if total_notes > 0:
+                                pct = emb_count / total_notes * 100
+                                output += f"**Coverage:** {pct:.0f}%\n"
+                        output += "\n"
+
                     # Metrics section
                     if include_all or "metrics" in requested:
                         summary = metrics.get_summary()
@@ -1099,6 +1245,8 @@ class ZettelkastenMcpServer:
                     - "list_backups": List available backups
                     - "health": Detailed health check
                     - "reset_fts": Reset FTS5 availability after manual repair
+                    - "reindex_embeddings": Rebuild all note embeddings from scratch
+                      (use after model changes or to fix inconsistencies)
                 backup_label: Optional label for backup (e.g., "pre-migration")
             """
             with timed_operation("zk_system", action=action) as op:
@@ -1174,10 +1322,30 @@ class ZettelkastenMcpServer:
                         else:
                             return "FTS5 reset failed. The index may still be corrupted."
 
+                    elif action == "reindex_embeddings":
+                        if not config.embeddings_enabled:
+                            return (
+                                "Embeddings are disabled.\n"
+                                "Set ZETTELKASTEN_EMBEDDINGS_ENABLED=true and install "
+                                "the [semantic] extra to enable."
+                            )
+                        try:
+                            stats = self.zettel_service.reindex_embeddings()
+                            return (
+                                f"Embedding reindex complete.\n"
+                                f"Total notes: {stats['total']}\n"
+                                f"Embedded: {stats['embedded']}\n"
+                                f"Skipped: {stats['skipped']}\n"
+                                f"Failed: {stats['failed']}"
+                            )
+                        except Exception as reindex_err:
+                            return f"Reindex failed: {reindex_err}"
+
                     else:
                         return (
                             f"Invalid action: '{action}'. Valid actions: "
-                            "rebuild, sync, backup, list_backups, health, reset_fts"
+                            "rebuild, sync, backup, list_backups, health, "
+                            "reset_fts, reindex_embeddings"
                         )
 
                 except ValueError as e:
