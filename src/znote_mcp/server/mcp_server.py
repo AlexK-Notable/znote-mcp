@@ -97,11 +97,11 @@ class ZettelkastenMcpServer:
         elif isinstance(error, (IOError, OSError)):
             # File system errors - don't expose paths or detailed error messages
             logger.error(f"File system error [{error_id}]: {str(error)}", exc_info=True)
-            return f"Error: {str(error)}"
+            return f"Error: A file system error occurred (ref: {error_id})"
         else:
             # Unexpected errors - log with full stack trace but return generic message
             logger.error(f"Unexpected error [{error_id}]: {str(error)}", exc_info=True)
-            return f"Error: {str(error)}"
+            return f"Error: An unexpected error occurred (ref: {error_id})"
 
     @staticmethod
     def _create_embedding_service():
@@ -477,8 +477,6 @@ class ZettelkastenMcpServer:
             try:
                 # Convert link_type string to enum
                 try:
-                    source_id_str = str(source_id)
-                    target_id_str = str(target_id)
                     link_type_enum = LinkType(link_type.lower())
                 except ValueError:
                     return f"Invalid link type: {link_type}. Valid types are: {', '.join(t.value for t in LinkType)}"
@@ -809,7 +807,6 @@ class ZettelkastenMcpServer:
                     - project (optional): Project name (default: "general")
                     - tags (optional): Array of tag names
             """
-            import json
             with timed_operation("zk_bulk_create_notes") as op:
                 try:
                     notes_data = json.loads(notes)

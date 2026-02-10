@@ -240,20 +240,22 @@ class TestMcpServer:
 
     def test_error_handling(self):
         """Test error handling in the server."""
-        # Test ValueError handling
+        # Test ValueError handling - safe to expose (domain validation)
         value_error = ValueError("Invalid input")
         result = self.server.format_error_response(value_error)
         assert "Error: Invalid input" in result
 
-        # Test IOError handling
-        io_error = IOError("File not found")
+        # Test IOError handling - should NOT expose internal details
+        io_error = IOError("/home/user/.zettelkasten/notes/secret.md not found")
         result = self.server.format_error_response(io_error)
-        assert "Error: File not found" in result
+        assert "file system error" in result.lower()
+        assert "/home/user" not in result  # path must not leak
 
-        # Test general exception handling
-        general_error = Exception("Something went wrong")
+        # Test general exception handling - should NOT expose internal details
+        general_error = Exception("DatabaseError: connection string xyz")
         result = self.server.format_error_response(general_error)
-        assert "Error: Something went wrong" in result
+        assert "unexpected error" in result.lower()
+        assert "DatabaseError" not in result  # internals must not leak
 
     def test_list_notes_tool(self):
         """Test the zk_list_notes tool with mode='all'."""
