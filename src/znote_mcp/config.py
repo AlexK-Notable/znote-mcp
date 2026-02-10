@@ -8,8 +8,11 @@ from pydantic import BaseModel, Field
 
 from znote_mcp import __version__
 
-# Load environment variables
-load_dotenv()
+# Load environment variables from the project root .env file.
+# Anchored to __file__ so it works regardless of the process CWD
+# (e.g. when launched as a Claude Code plugin subprocess).
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+load_dotenv(_PROJECT_ROOT / ".env")
 
 class ZettelkastenConfig(BaseModel):
     """Configuration for the Zettelkasten server."""
