@@ -1654,13 +1654,6 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-dev = [
-    { name = "black" },
-    { name = "isort" },
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-]
 semantic = [
     { name = "huggingface-hub" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -1687,24 +1680,19 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1.13.0" },
-    { name = "black", marker = "extra == 'dev'", specifier = ">=23.0.0" },
     { name = "huggingface-hub", marker = "extra == 'semantic'", specifier = ">=0.20.0" },
-    { name = "isort", marker = "extra == 'dev'", specifier = ">=5.12.0" },
     { name = "markdown", specifier = ">=3.4.0" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.2.0" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "numpy", marker = "extra == 'semantic'", specifier = ">=1.24.0" },
     { name = "onnxruntime", marker = "extra == 'semantic'", specifier = ">=1.17.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-frontmatter", specifier = ">=1.0.0" },
     { name = "sqlalchemy", specifier = ">=2.0.0" },
     { name = "sqlite-vec", marker = "extra == 'semantic'", specifier = ">=0.1.6" },
     { name = "tokenizers", marker = "extra == 'semantic'", specifier = ">=0.15.0" },
 ]
-provides-extras = ["dev", "semantic"]
+provides-extras = ["semantic"]
 
 [package.metadata.requires-dev]
 dev = [

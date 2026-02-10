@@ -400,12 +400,12 @@ class TestIntegration:
                 )
 
                 # Verify the note was mirrored (filename includes ID suffix for uniqueness)
-                # Format: project/purpose/Title-Name_id_suffix.md (terminal-friendly, no spaces)
+                # Format: project/purpose/YYYY-MM-DD_Title-Name_id_suffix.md
                 # Purpose defaults to "general" for notes created without explicit purpose
                 purpose_dir = obsidian_path / "test-project" / "general"
                 id_suffix = note.id[-8:]
-                # New format: hyphens instead of spaces, underscore before ID suffix
-                matching_files = list(purpose_dir.glob(f"Obsidian-Test-Note_{id_suffix}.md"))
+                # Glob with wildcard for the date prefix (e.g. "2026-02-10_")
+                matching_files = list(purpose_dir.glob(f"*Obsidian-Test-Note_{id_suffix}.md"))
                 assert len(matching_files) == 1, f"Expected 1 mirror file, found {len(matching_files)} in {purpose_dir}"
                 expected_file = matching_files[0]
 
@@ -425,7 +425,7 @@ class TestIntegration:
                 # Verify second note mirrored with ID suffix (in purpose subdir)
                 purpose_dir2 = obsidian_path / "another-project" / "general"
                 id_suffix2 = note2.id[-8:]
-                matching_files2 = list(purpose_dir2.glob(f"Second-Obsidian-Note_{id_suffix2}.md"))
+                matching_files2 = list(purpose_dir2.glob(f"*Second-Obsidian-Note_{id_suffix2}.md"))
                 assert len(matching_files2) == 1
 
                 # Test bulk sync
@@ -545,8 +545,10 @@ class TestIntegration:
                     f"Full ID {target_note.id} should be rewritten"
 
                 # The link SHOULD contain the target's title-based format
+                # with date prefix from _build_obsidian_filename
                 target_suffix = target_note.id[-8:]
-                expected_link = f"[[Target-Important-Note_{target_suffix}]]"
+                date_prefix = target_note.created_at.strftime("%Y-%m-%d") + "_"
+                expected_link = f"[[{date_prefix}Target-Important-Note_{target_suffix}]]"
                 assert expected_link in content, \
                     f"Expected link {expected_link} not found in content"
 

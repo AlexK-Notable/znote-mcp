@@ -1,5 +1,6 @@
 """Data models for the Zettelkasten MCP server."""
 import datetime
+import os
 from datetime import timezone
 from enum import Enum
 from dataclasses import dataclass
@@ -126,10 +127,10 @@ def ensure_timezone_aware(dt_value: datetime.datetime) -> datetime.datetime:
     return dt_value
 
 
-# Thread-safe counter for uniqueness
+# Thread-safe counter for uniqueness (seeded from PID for cross-process safety)
 _id_lock = threading.Lock()
 _last_timestamp = 0
-_counter = 0
+_counter = (os.getpid() * 7) % 1_000_000  # PID-based seed prevents multiprocess collisions
 
 def generate_id() -> str:
     """Generate an ISO 8601 compliant timestamp-based ID with guaranteed uniqueness.
@@ -140,10 +141,11 @@ def generate_id() -> str:
         - T is the ISO 8601 date/time separator
         - HHMMSS is the time (hours, minutes, seconds)
         - ssssss is the 6-digit microsecond component
-        - cccccc is a 6-digit counter for uniqueness within the same microsecond
+        - cccccc is a 6-digit counter for cross-process and same-microsecond uniqueness
 
-    The format follows ISO 8601 basic format with extended precision,
-    allowing up to 1 trillion unique IDs per second (1 million per microsecond).
+    The counter is seeded from the process ID so that separate processes
+    (e.g. multiprocessing.Pool workers) produce different IDs even when
+    they call generate_id() at the exact same microsecond.
     """
     global _last_timestamp, _counter
 
@@ -158,7 +160,7 @@ def generate_id() -> str:
             _counter += 1
         else:
             _last_timestamp = current_timestamp
-            _counter = 0
+            _counter = (os.getpid() * 7) % 1_000_000  # Re-seed from PID on new microsecond
 
         # Ensure counter doesn't overflow our 6 digits (supports 1M IDs/microsecond)
         _counter %= 1_000_000
