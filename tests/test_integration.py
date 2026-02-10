@@ -310,11 +310,11 @@ class TestIntegration:
         )
 
         # Search by content
-        content_results = self.search_service.search_by_text("Python")
+        content_results = self.search_service.search_combined(text="Python")
         assert len(content_results) >= 3  # Should find note1, note3, note4
 
         # Search by tag
-        tag_results = self.search_service.search_by_tag("programming")
+        tag_results = self.search_service.search_combined(tags=["programming"])
         assert len(tag_results) == 3  # note1, note2, note3
 
         # Search by note type using combined search

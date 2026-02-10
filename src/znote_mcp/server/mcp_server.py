@@ -211,10 +211,13 @@ class ZettelkastenMcpServer:
 
         # Get a note by ID or title
         @self.mcp.tool(name="zk_get_note")
-        def zk_get_note(identifier: str) -> str:
+        def zk_get_note(identifier: str, format: str = "summary") -> str:
             """Retrieve a note by ID or title.
             Args:
                 identifier: The ID or title of the note
+                format: Output format:
+                    - "summary" (default): Structured overview with metadata
+                    - "markdown": Raw markdown with YAML frontmatter (for export/backup)
             Returns:
                 Note content with version hash (use version in zk_update_note/zk_delete_note
                 for conflict detection when multiple processes may edit the same note).
@@ -237,7 +240,12 @@ class ZettelkastenMcpServer:
                     version = versioned.version
                     op["found"] = True
                     op["note_id"] = note.id
-                    # Format the note with version info
+
+                    # Markdown export format
+                    if format == "markdown":
+                        return self.zettel_service.export_note(note.id, "markdown")
+
+                    # Default summary format
                     result = f"# {note.title}\n"
                     result += f"ID: {note.id}\n"
                     result += f"Version: {version.commit_hash}\n"
@@ -723,20 +731,6 @@ class ZettelkastenMcpServer:
                 except Exception as e:
                     return self.format_error_response(e)
 
-        # Export a note
-        @self.mcp.tool(name="zk_export_note")
-        def zk_export_note(note_id: str, format: str = "markdown") -> str:
-            """Export a note in the specified format.
-            Args:
-                note_id: The ID of the note to export
-                format: Export format (currently only 'markdown' is supported)
-            """
-            try:
-                content = self.zettel_service.export_note(str(note_id), format)
-                return content
-            except Exception as e:
-                return self.format_error_response(e)
-
         # ========== Bulk Operations ==========
 
         @self.mcp.tool(name="zk_bulk_create_notes")
@@ -1212,8 +1206,13 @@ class ZettelkastenMcpServer:
                         output += f"**SQLite:** {'OK' if health['sqlite_ok'] else 'ERROR'}\n"
                         output += f"**FTS5:** {'OK' if health['fts_ok'] else 'Degraded'}\n"
                         output += f"**DB Notes:** {health['note_count']} | **Files:** {health['file_count']}\n"
+                        output += f"**Sync Needed:** {'Yes' if health.get('needs_sync') else 'No'}\n"
                         if health.get("issues"):
                             output += f"**Issues:** {', '.join(health['issues'])}\n"
+                        if health.get("critical_issues"):
+                            output += "**Critical Issues:**\n"
+                            for issue in health["critical_issues"]:
+                                output += f"  - {issue}\n"
                         output += "\n"
 
                     # Embeddings section
@@ -1269,7 +1268,6 @@ class ZettelkastenMcpServer:
                     - "sync": Sync notes to Obsidian vault
                     - "backup": Create database and notes backup
                     - "list_backups": List available backups
-                    - "health": Detailed health check
                     - "reset_fts": Reset FTS5 availability after manual repair
                     - "reindex_embeddings": Rebuild all note embeddings from scratch
                       (use after model changes or to fix inconsistencies)
@@ -1320,27 +1318,6 @@ class ZettelkastenMcpServer:
                             output += f"   Created: {b['created_at']}\n\n"
                         return output
 
-                    elif action == "health":
-                        health = self.zettel_service.check_database_health()
-                        output = "## Detailed Health Check\n\n"
-                        output += f"**SQLite Integrity:** {'PASS' if health['sqlite_ok'] else 'FAIL'}\n"
-                        output += f"**FTS5 Integrity:** {'PASS' if health['fts_ok'] else 'FAIL'}\n"
-                        output += f"**Notes in DB:** {health['note_count']}\n"
-                        output += f"**Markdown Files:** {health['file_count']}\n"
-                        output += f"**Sync Needed:** {'Yes' if health.get('needs_sync') else 'No'}\n"
-
-                        if health.get("issues"):
-                            output += f"\n**Issues:**\n"
-                            for issue in health["issues"]:
-                                output += f"  - {issue}\n"
-
-                        if health.get("critical_issues"):
-                            output += f"\n**Critical Issues:**\n"
-                            for issue in health["critical_issues"]:
-                                output += f"  - ⚠️ {issue}\n"
-
-                        return output
-
                     elif action == "reset_fts":
                         success = self.zettel_service.reset_fts_availability()
                         if success:
@@ -1370,7 +1347,7 @@ class ZettelkastenMcpServer:
                     else:
                         return (
                             f"Invalid action: '{action}'. Valid actions: "
-                            "rebuild, sync, backup, list_backups, health, "
+                            "rebuild, sync, backup, list_backups, "
                             "reset_fts, reindex_embeddings"
                         )
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
 from znote_mcp.config import config
 from znote_mcp.models.schema import LinkType, Note, NoteType, Tag
@@ -71,90 +71,6 @@ class SearchService:
         """Initialize the service and dependencies."""
         # Initialize the zettel service if it hasn't been initialized
         self.zettel_service.initialize()
-    
-    def search_by_text(
-        self, query: str, include_content: bool = True, include_title: bool = True
-    ) -> List[SearchResult]:
-        """Search for notes by text content."""
-        if not query:
-            return []
-        
-        # Normalize query
-        query = query.lower()
-        query_terms = set(query.split())
-        
-        # Get all notes
-        all_notes = self.zettel_service.get_all_notes()
-        results = []
-        
-        for note in all_notes:
-            score = 0.0
-            matched_terms: Set[str] = set()
-            matched_context = ""
-            
-            # Check title
-            if include_title and note.title:
-                title_lower = note.title.lower()
-                # Exact match in title is highest score
-                if query in title_lower:
-                    score += 2.0
-                    matched_context = f"Title: {note.title}"
-                # Check for term matches in title
-                for term in query_terms:
-                    if term in title_lower:
-                        score += 0.5
-                        matched_terms.add(term)
-            
-            # Check content
-            if include_content and note.content:
-                content_lower = note.content.lower()
-                # Exact match in content
-                if query in content_lower:
-                    score += 1.0
-                    # Extract a snippet around the match
-                    index = content_lower.find(query)
-                    start = max(0, index - 40)
-                    end = min(len(content_lower), index + len(query) + 40)
-                    snippet = note.content[start:end]
-                    matched_context = f"Content: ...{snippet}..."
-                # Check for term matches in content
-                for term in query_terms:
-                    if term in content_lower:
-                        score += 0.2
-                        matched_terms.add(term)
-            
-            # Add to results if score is positive
-            if score > 0:
-                results.append(
-                    SearchResult(
-                        note=note,
-                        score=score,
-                        matched_terms=matched_terms,
-                        matched_context=matched_context
-                    )
-                )
-        
-        # Sort by score (descending)
-        results.sort(key=lambda x: x.score, reverse=True)
-        return results
-    
-    def search_by_tag(self, tags: Union[str, List[str]]) -> List[Note]:
-        """Search for notes by tags."""
-        if isinstance(tags, str):
-            return self.zettel_service.get_notes_by_tag(tags)
-        else:
-            # If we have multiple tags, find notes with any of the tags
-            all_matching_notes = []
-            for tag in tags:
-                notes = self.zettel_service.get_notes_by_tag(tag)
-                all_matching_notes.extend(notes)
-            # Remove duplicates by converting to a dictionary by ID
-            unique_notes = {note.id: note for note in all_matching_notes}
-            return list(unique_notes.values())
-    
-    def search_by_link(self, note_id: str, direction: str = "both") -> List[Note]:
-        """Search for notes linked to/from a note."""
-        return self.zettel_service.get_linked_notes(note_id, direction)
     
     def find_orphaned_notes(self) -> List[Note]:
         """Find notes with no incoming or outgoing links."""
@@ -441,87 +357,173 @@ class SearchService:
         note_type: Optional[NoteType] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
+        limit: int = 200,
     ) -> List[SearchResult]:
-        """Perform a combined search with multiple criteria."""
-        # Start with all notes
+        """Perform a combined search with multiple criteria.
+
+        When a text query is provided and FTS5 is available, uses FTS5 for
+        fast BM25-ranked candidate retrieval, then applies post-filters.
+        Falls back to O(N) Python scanning when FTS5 is unavailable.
+        """
+        # Fast path: FTS5 text search with post-filtering
+        if text and text.strip():
+            fts_results = self._fts_combined_search(
+                text, tags, note_type, start_date, end_date, limit
+            )
+            if fts_results is not None:
+                return fts_results
+
+        # Fallback: O(N) scan (used for filter-only queries or when FTS5 unavailable)
         all_notes = self.zettel_service.get_all_notes()
-        
+
         # Filter by criteria
-        filtered_notes = []
-        for note in all_notes:
-            # Check note type
-            if note_type and note.note_type != note_type:
-                continue
-            
-            # Check date range
-            if start_date and note.created_at < start_date:
-                continue
-            if end_date and note.created_at > end_date:
-                continue
-            
-            # Check tags
-            if tags:
-                note_tag_names = {tag.name for tag in note.tags}
-                if not any(tag in note_tag_names for tag in tags):
-                    continue
-            
-            # Made it through all filters
-            filtered_notes.append(note)
-        
+        filtered_notes = self._apply_filters(all_notes, tags, note_type, start_date, end_date)
+
         # If we have a text query, score the notes
-        results = []
-        if text:
-            text = text.lower()
-            query_terms = set(text.split())
-            
-            for note in filtered_notes:
-                score = 0.0
-                matched_terms: Set[str] = set()
-                matched_context = ""
-                
-                # Check title
-                title_lower = note.title.lower()
-                if text in title_lower:
-                    score += 2.0
-                    matched_context = f"Title: {note.title}"
-                
-                for term in query_terms:
-                    if term in title_lower:
-                        score += 0.5
-                        matched_terms.add(term)
-                
-                # Check content
-                content_lower = note.content.lower()
-                if text in content_lower:
-                    score += 1.0
-                    index = content_lower.find(text)
-                    start = max(0, index - 40)
-                    end = min(len(content_lower), index + len(text) + 40)
-                    snippet = note.content[start:end]
-                    matched_context = f"Content: ...{snippet}..."
-                
-                for term in query_terms:
-                    if term in content_lower:
-                        score += 0.2
-                        matched_terms.add(term)
-                
-                # Add to results if score is positive
-                if score > 0:
-                    results.append(
-                        SearchResult(
-                            note=note,
-                            score=score,
-                            matched_terms=matched_terms,
-                            matched_context=matched_context
-                        )
-                    )
+        results: List[SearchResult] = []
+        if text and text.strip():
+            results = self._score_notes_by_text(filtered_notes, text)
         else:
             # If no text query, just add all filtered notes with a default score
             results = [
                 SearchResult(note=note, score=1.0, matched_terms=set(), matched_context="")
                 for note in filtered_notes
             ]
-        
+
         # Sort by score (descending)
         results.sort(key=lambda x: x.score, reverse=True)
+        return results
+
+    def _fts_combined_search(
+        self,
+        text: str,
+        tags: Optional[List[str]],
+        note_type: Optional[NoteType],
+        start_date: Optional[datetime],
+        end_date: Optional[datetime],
+        limit: int,
+    ) -> Optional[List[SearchResult]]:
+        """Attempt FTS5-accelerated search. Returns None if FTS5 unavailable."""
+        repo = self.zettel_service.repository
+        if not getattr(repo, '_fts_available', False):
+            return None
+
+        try:
+            # Fetch extra candidates to account for post-filter attrition
+            fetch_limit = limit * 3
+            fts_results = repo.fts_search(text.strip(), limit=fetch_limit)
+
+            if not fts_results:
+                return None  # Fall through to O(N) fallback for non-FTS-tokenizable text
+
+            # Retrieve full Note objects for FTS hits
+            fts_ids = [r["id"] for r in fts_results]
+            notes = repo.get_by_ids(fts_ids)
+            note_map = {n.id: n for n in notes}
+            rank_map = {r["id"]: abs(r["rank"]) for r in fts_results}
+
+            # Apply post-filters and build SearchResult objects
+            results: List[SearchResult] = []
+            for fts_id in fts_ids:
+                note = note_map.get(fts_id)
+                if note is None:
+                    continue
+
+                # Apply filters
+                if note_type and note.note_type != note_type:
+                    continue
+                if start_date and note.created_at < start_date:
+                    continue
+                if end_date and note.created_at > end_date:
+                    continue
+                if tags:
+                    note_tag_names = {tag.name for tag in note.tags}
+                    if not any(tag in note_tag_names for tag in tags):
+                        continue
+
+                bm25_rank = rank_map.get(fts_id, 0.0)
+                results.append(SearchResult(
+                    note=note,
+                    score=bm25_rank,
+                    matched_terms=set(text.lower().split()),
+                    matched_context=f"FTS5 match (BM25: {bm25_rank:.2f})",
+                ))
+
+                if len(results) >= limit:
+                    break
+
+            # FTS5 results are already ranked by BM25 (higher = better)
+            results.sort(key=lambda x: x.score, reverse=True)
+            return results
+
+        except Exception as e:
+            logger.warning(f"FTS5 combined search failed, falling back: {e}")
+            return None
+
+    @staticmethod
+    def _apply_filters(
+        notes: List[Note],
+        tags: Optional[List[str]],
+        note_type: Optional[NoteType],
+        start_date: Optional[datetime],
+        end_date: Optional[datetime],
+    ) -> List[Note]:
+        """Apply tag/type/date filters to a list of notes."""
+        filtered = []
+        for note in notes:
+            if note_type and note.note_type != note_type:
+                continue
+            if start_date and note.created_at < start_date:
+                continue
+            if end_date and note.created_at > end_date:
+                continue
+            if tags:
+                note_tag_names = {tag.name for tag in note.tags}
+                if not any(tag in note_tag_names for tag in tags):
+                    continue
+            filtered.append(note)
+        return filtered
+
+    @staticmethod
+    def _score_notes_by_text(notes: List[Note], text: str) -> List[SearchResult]:
+        """Score notes by text match in title and content (O(N) fallback)."""
+        text_lower = text.lower()
+        query_terms = set(text_lower.split())
+        results: List[SearchResult] = []
+
+        for note in notes:
+            score = 0.0
+            matched_terms: Set[str] = set()
+            matched_context = ""
+
+            title_lower = note.title.lower()
+            if text_lower in title_lower:
+                score += 2.0
+                matched_context = f"Title: {note.title}"
+            for term in query_terms:
+                if term in title_lower:
+                    score += 0.5
+                    matched_terms.add(term)
+
+            content_lower = note.content.lower()
+            if text_lower in content_lower:
+                score += 1.0
+                index = content_lower.find(text_lower)
+                start = max(0, index - 40)
+                end = min(len(content_lower), index + len(text_lower) + 40)
+                snippet = note.content[start:end]
+                matched_context = f"Content: ...{snippet}..."
+            for term in query_terms:
+                if term in content_lower:
+                    score += 0.2
+                    matched_terms.add(term)
+
+            if score > 0:
+                results.append(SearchResult(
+                    note=note,
+                    score=score,
+                    matched_terms=matched_terms,
+                    matched_context=matched_context,
+                ))
+
         return results

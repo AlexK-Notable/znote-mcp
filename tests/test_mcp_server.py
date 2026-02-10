@@ -387,38 +387,65 @@ class TestMcpServer:
 
         assert "Error: Tag cannot be empty" in result
 
-    def test_export_note_tool(self):
-        """Test the zk_export_note tool."""
-        assert 'zk_export_note' in self.registered_tools
+    def test_get_note_markdown_format(self):
+        """Test zk_get_note with format='markdown' returns exported markdown."""
+        assert 'zk_get_note' in self.registered_tools
 
-        markdown_content = """# Test Note
+        # Set up mock versioned note (needed to pass the lookup phase)
+        mock_note = MagicMock()
+        mock_note.id = "test123"
+        mock_version = MagicMock()
+        mock_versioned = MagicMock()
+        mock_versioned.note = mock_note
+        mock_versioned.version = mock_version
+        self.mock_zettel_service.get_note_versioned.return_value = mock_versioned
 
-Some content here.
-
-## Links
-- [[Other Note]]
-"""
+        markdown_content = "---\ntitle: Test Note\n---\n\nSome content here.\n"
         self.mock_zettel_service.export_note.return_value = markdown_content
 
-        export_func = self.registered_tools['zk_export_note']
-        result = export_func(note_id="test123", format="markdown")
+        get_note_func = self.registered_tools['zk_get_note']
+        result = get_note_func(identifier="test123", format="markdown")
 
-        assert "# Test Note" in result
+        assert "Test Note" in result
         assert "Some content here" in result
-
         self.mock_zettel_service.export_note.assert_called_with("test123", "markdown")
 
-    def test_export_note_not_found(self):
-        """Test zk_export_note with non-existent note."""
-        assert 'zk_export_note' in self.registered_tools
+    def test_get_note_default_format_is_summary(self):
+        """Test zk_get_note with default format returns summary."""
+        assert 'zk_get_note' in self.registered_tools
 
-        self.mock_zettel_service.export_note.side_effect = ValueError("Note with ID notfound not found")
+        mock_note = MagicMock()
+        mock_note.id = "test123"
+        mock_note.title = "Test Note"
+        mock_note.content = "Test content"
+        mock_note.note_type = NoteType.PERMANENT
+        mock_note.project = "general"
+        mock_note.note_purpose = NotePurpose.GENERAL
+        mock_note.plan_id = None
+        mock_note.created_at.isoformat.return_value = "2023-01-01T12:00:00"
+        mock_note.updated_at.isoformat.return_value = "2023-01-01T12:30:00"
+        mock_note.tags = []
 
-        export_func = self.registered_tools['zk_export_note']
-        result = export_func(note_id="notfound", format="markdown")
+        mock_version = MagicMock()
+        mock_version.commit_hash = "abc1234"
+        mock_versioned = MagicMock()
+        mock_versioned.note = mock_note
+        mock_versioned.version = mock_version
+        self.mock_zettel_service.get_note_versioned.return_value = mock_versioned
 
-        assert "Error:" in result
-        assert "not found" in result
+        get_note_func = self.registered_tools['zk_get_note']
+        result = get_note_func(identifier="test123")
+
+        # Default format should give the summary view
+        assert "# Test Note" in result
+        assert "ID: test123" in result
+        assert "Version: abc1234" in result
+        # export_note should NOT be called for summary format
+        self.mock_zettel_service.export_note.assert_not_called()
+
+    def test_export_note_tool_removed(self):
+        """Verify zk_export_note is no longer registered (absorbed into zk_get_note)."""
+        assert 'zk_export_note' not in self.registered_tools
 
     def test_status_metrics_tool(self):
         """Test the zk_status tool with metrics section."""
@@ -434,7 +461,7 @@ Some content here.
         assert "Success Rate:" in result
 
     def test_status_all_sections(self):
-        """Test zk_status with all sections."""
+        """Test zk_status with all sections including enhanced health."""
         assert 'zk_status' in self.registered_tools
 
         # Set up mocks for status tool dependencies
@@ -442,7 +469,8 @@ Some content here.
         self.mock_zettel_service.get_tags_with_counts.return_value = {}
         self.mock_zettel_service.check_database_health.return_value = {
             "healthy": True, "sqlite_ok": True, "fts_ok": True,
-            "note_count": 0, "file_count": 0, "issues": [],
+            "note_count": 5, "file_count": 5, "issues": [],
+            "needs_sync": False, "critical_issues": [],
         }
         self.mock_zettel_service.count_notes.return_value = 0
         self.mock_zettel_service.repository.count_embeddings.return_value = 0
@@ -455,6 +483,17 @@ Some content here.
         # Verify result contains status info
         assert "Zettelkasten Status" in result
         assert "Uptime:" in result
+        # Enhanced health fields (merged from zk_system health action)
+        assert "Sync Needed:" in result
+
+    def test_system_health_action_removed(self):
+        """Verify zk_system no longer accepts 'health' action (merged into zk_status)."""
+        assert 'zk_system' in self.registered_tools
+
+        system_func = self.registered_tools['zk_system']
+        result = system_func(action="health")
+
+        assert "Invalid action" in result
 
     def test_fts_search_tool(self):
         """Test the zk_fts_search tool."""

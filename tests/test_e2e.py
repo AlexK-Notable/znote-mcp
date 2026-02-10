@@ -248,11 +248,6 @@ class TestE2EMCPTools:
 
         system = get_mcp_tool(e2e_mcp_server, "zk_system")
 
-        # Test health action
-        result = system(action="health")
-        assert "Health Check" in result
-        assert "SQLite" in result
-
         # Test backup action
         result = system(action="backup", backup_label="e2e-test")
         assert "Backup created" in result or "backup" in result.lower()

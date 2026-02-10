@@ -211,7 +211,7 @@ class TestMcpGracefulDegradation:
 
         # Create note and do text search — should still work
         note = zs.create_note(title="Hello", content="World")
-        results = ss.search_by_text("Hello")
+        results = ss.search_combined(text="Hello")
         assert len(results) > 0
 
     def test_find_similar_works_without_embedding(self, repo, _disable_embeddings):

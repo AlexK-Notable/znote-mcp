@@ -1178,6 +1178,9 @@ class NoteRepository(Repository[Note]):
         # Normalize markdown for Obsidian rendering (fix broken tables, etc.)
         obsidian_markdown = self._normalize_markdown_for_obsidian(obsidian_markdown)
 
+        # Inject Obsidian-only frontmatter (aliases, cssclasses)
+        obsidian_markdown = self._inject_obsidian_frontmatter(obsidian_markdown, note)
+
         try:
             with open(obsidian_file_path, "w", encoding="utf-8") as f:
                 f.write(obsidian_markdown)
@@ -1185,6 +1188,43 @@ class NoteRepository(Repository[Note]):
         except IOError as e:
             # Log but don't fail - Obsidian mirror is secondary
             logger.warning(f"Failed to mirror note to Obsidian vault: {e}")
+
+    @staticmethod
+    def _inject_obsidian_frontmatter(markdown: str, note: "Note") -> str:
+        """Inject Obsidian-specific frontmatter (aliases, cssclasses).
+
+        These keys only appear in the Obsidian mirror, never in the source file.
+        - aliases: Enables Quick Switcher to find notes by human-readable title
+        - cssclasses: Enables per-type CSS styling in Obsidian
+        """
+        try:
+            post = frontmatter.loads(markdown)
+            post.metadata["aliases"] = [note.title]
+            note_type_val = note.note_type.value if note.note_type else "permanent"
+            post.metadata["cssclasses"] = [note_type_val]
+            return frontmatter.dumps(post)
+        except Exception as e:
+            logger.warning(f"Failed to inject Obsidian frontmatter: {e}")
+            return markdown
+
+    def _cascade_obsidian_remirror(self, note_id: str) -> None:
+        """Re-mirror notes that link TO this note (best-effort cascade).
+
+        When a note's title changes, notes linking to it have stale wikilinks
+        in their Obsidian mirrors. This re-mirrors up to 50 incoming-linked notes.
+        """
+        try:
+            linked_notes = self.find_linked_notes(note_id, "incoming")
+            for linked_note in linked_notes[:50]:
+                try:
+                    full_note = self.get(linked_note.id)
+                    if full_note:
+                        md = self._note_to_markdown(full_note)
+                        self._mirror_to_obsidian(full_note, md)
+                except Exception as inner_err:
+                    logger.debug(f"Cascade re-mirror failed for {linked_note.id}: {inner_err}")
+        except Exception as e:
+            logger.warning(f"Obsidian link cascade failed for {note_id}: {e}")
 
     def _delete_from_db(self, note_id: str) -> None:
         """Delete a note and its relationships from the database.
@@ -1525,6 +1565,13 @@ class NoteRepository(Repository[Note]):
 
             # Mirror to Obsidian vault if configured
             self._mirror_to_obsidian(note, markdown)
+
+            # Cascade: re-mirror notes that link TO this note if title changed
+            if existing_note.title != note.title and self.obsidian_vault_path:
+                try:
+                    self._cascade_obsidian_remirror(note.id)
+                except Exception as e:
+                    logger.warning(f"Obsidian cascade failed (best-effort): {e}")
 
             try:
                 # Re-index in database

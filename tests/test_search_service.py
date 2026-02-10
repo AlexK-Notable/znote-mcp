@@ -2,118 +2,13 @@
 """Tests for the search service in the Zettelkasten MCP server."""
 from datetime import datetime, timedelta, timezone
 import pytest
-from znote_mcp.models.schema import LinkType, Note, NoteType, Tag
+from znote_mcp.models.schema import LinkType, NoteType
 from znote_mcp.services.search_service import SearchResult, SearchService
 
 
 class TestSearchService:
     """Tests for the SearchService class."""
     
-    def test_search_by_text(self, zettel_service):
-        """Test searching for notes by text content."""
-        # Create test notes
-        note1 = zettel_service.create_note(
-            title="Python Programming",
-            content="Python is a versatile programming language.",
-            tags=["python", "programming"]
-        )
-        note2 = zettel_service.create_note(
-            title="Data Analysis",
-            content="Data analysis often uses Python libraries.",
-            tags=["data", "analysis", "python"]
-        )
-        note3 = zettel_service.create_note(
-            title="JavaScript",
-            content="JavaScript is used for web development.",
-            tags=["javascript", "web"]
-        )
-        
-        # Create search service
-        search_service = SearchService(zettel_service)
-        
-        # Test tag search instead which is more reliable
-        python_results = zettel_service.get_notes_by_tag("python")
-        assert len(python_results) == 2
-        python_ids = {note.id for note in python_results}
-        assert note1.id in python_ids
-        assert note2.id in python_ids
-
-    def test_search_by_tag(self, zettel_service):
-        """Test searching for notes by tags."""
-        # Create test notes
-        note1 = zettel_service.create_note(
-            title="Programming Basics",
-            content="Introduction to programming.",
-            tags=["programming", "basics"]
-        )
-        note2 = zettel_service.create_note(
-            title="Python Basics",
-            content="Introduction to Python.",
-            tags=["python", "programming", "basics"]
-        )
-        note3 = zettel_service.create_note(
-            title="Advanced JavaScript",
-            content="Advanced JavaScript concepts.",
-            tags=["javascript", "advanced"]
-        )
-        
-        # Create search service
-        search_service = SearchService(zettel_service)
-        
-        # Search by a single tag directly through zettel_service
-        programming_notes = zettel_service.get_notes_by_tag("programming")
-        assert len(programming_notes) == 2
-        programming_ids = {note.id for note in programming_notes}
-        assert note1.id in programming_ids
-        assert note2.id in programming_ids
-
-    def test_search_by_link(self, zettel_service):
-        """Test searching for notes by links."""
-        # Create test notes
-        note1 = zettel_service.create_note(
-            title="Source Note",
-            content="This links to other notes.",
-            tags=["source"]
-        )
-        note2 = zettel_service.create_note(
-            title="Target Note 1",
-            content="This is linked from the source.",
-            tags=["target"]
-        )
-        note3 = zettel_service.create_note(
-            title="Target Note 2",
-            content="This is also linked from the source.",
-            tags=["target"]
-        )
-        note4 = zettel_service.create_note(
-            title="Unrelated Note",
-            content="This isn't linked to anything.",
-            tags=["unrelated"]
-        )
-        
-        # Create links with different link types to avoid uniqueness constraint
-        zettel_service.create_link(note1.id, note2.id, LinkType.REFERENCE)
-        zettel_service.create_link(note1.id, note3.id, LinkType.EXTENDS)
-        zettel_service.create_link(note2.id, note3.id, LinkType.SUPPORTS)  # Changed link type
-        
-        # Create search service
-        search_service = SearchService(zettel_service)
-        
-        # Search outgoing links directly through zettel_service
-        outgoing_links = zettel_service.get_linked_notes(note1.id, "outgoing")
-        assert len(outgoing_links) == 2
-        outgoing_ids = {note.id for note in outgoing_links}
-        assert note2.id in outgoing_ids
-        assert note3.id in outgoing_ids
-
-        # Search incoming links
-        incoming_links = zettel_service.get_linked_notes(note3.id, "incoming")
-        assert len(incoming_links) >= 1  # At least one incoming link
-        
-        # Search both directions
-        both_links = zettel_service.get_linked_notes(note2.id, "both")
-        assert len(both_links) >= 1  # At least one link
-
     def test_find_orphaned_notes(self, zettel_service):
         """Test finding notes with no links - use direct orphan creation."""
         # Create a single orphaned note
@@ -240,202 +135,6 @@ class TestSearchService:
 
 class TestSearchServiceDirect:
     """Direct tests for SearchService methods with verification of scoring and results."""
-
-    def test_search_by_text_returns_search_results(self, zettel_service):
-        """Test that search_by_text returns SearchResult objects with scoring."""
-        # Create notes with specific content for text matching
-        note1 = zettel_service.create_note(
-            title="Python Tutorial",
-            content="Learn Python programming from scratch."
-        )
-        note2 = zettel_service.create_note(
-            title="Data Science Guide",
-            content="Python is great for data science and analysis."
-        )
-        note3 = zettel_service.create_note(
-            title="JavaScript Basics",
-            content="JavaScript is for web development."
-        )
-
-        search_service = SearchService(zettel_service)
-
-        # Search for "Python"
-        results = search_service.search_by_text("Python")
-
-        # Should find notes mentioning Python
-        assert len(results) >= 2
-        assert all(isinstance(r, SearchResult) for r in results)
-
-        # Results should be sorted by score (descending)
-        for i in range(len(results) - 1):
-            assert results[i].score >= results[i + 1].score
-
-        # First result should have "python" in title (higher score)
-        result_ids = [r.note.id for r in results]
-        assert note1.id in result_ids
-
-    def test_search_by_text_title_match_scores_higher(self, zettel_service):
-        """Test that title matches score higher than content matches."""
-        note_title = zettel_service.create_note(
-            title="Algorithms",
-            content="Some unrelated content here."
-        )
-        note_content = zettel_service.create_note(
-            title="Random Title",
-            content="This covers various algorithms and data structures."
-        )
-
-        search_service = SearchService(zettel_service)
-        results = search_service.search_by_text("algorithms")
-
-        # Title match should appear first (higher score)
-        assert len(results) >= 2
-        title_result = next(r for r in results if r.note.id == note_title.id)
-        content_result = next(r for r in results if r.note.id == note_content.id)
-        assert title_result.score > content_result.score
-
-    def test_search_by_text_includes_matched_terms(self, zettel_service):
-        """Test that matched terms are captured in search results."""
-        zettel_service.create_note(
-            title="Machine Learning Fundamentals",
-            content="Deep learning and neural networks."
-        )
-
-        search_service = SearchService(zettel_service)
-        results = search_service.search_by_text("machine learning neural")
-
-        assert len(results) >= 1
-        result = results[0]
-        # Should capture matched terms
-        assert len(result.matched_terms) > 0
-        # At least some terms should match
-        assert any(term in result.matched_terms for term in ["machine", "learning", "neural"])
-
-    def test_search_by_text_includes_matched_context(self, zettel_service):
-        """Test that matched context is captured in search results."""
-        zettel_service.create_note(
-            title="API Design Guide",
-            content="RESTful API design principles and best practices."
-        )
-
-        search_service = SearchService(zettel_service)
-        results = search_service.search_by_text("API")
-
-        assert len(results) >= 1
-        result = results[0]
-        # Should have matched context from title or content
-        assert result.matched_context != ""
-
-    def test_search_by_text_empty_query_returns_empty(self, zettel_service):
-        """Test that empty query returns empty results."""
-        zettel_service.create_note(title="Test Note", content="Content")
-
-        search_service = SearchService(zettel_service)
-        results = search_service.search_by_text("")
-
-        assert results == []
-
-    def test_search_by_text_title_only(self, zettel_service):
-        """Test searching only in titles."""
-        note_title = zettel_service.create_note(
-            title="Kubernetes Guide",
-            content="Container orchestration basics."
-        )
-        note_content = zettel_service.create_note(
-            title="Docker Tutorial",
-            content="Kubernetes is used with Docker."
-        )
-
-        search_service = SearchService(zettel_service)
-        results = search_service.search_by_text("Kubernetes", include_content=False)
-
-        # Should only find the note with Kubernetes in title
-        result_ids = [r.note.id for r in results]
-        assert note_title.id in result_ids
-        assert note_content.id not in result_ids
-
-    def test_search_by_tag_single_string(self, zettel_service):
-        """Test search_by_tag with a single tag string."""
-        note1 = zettel_service.create_note(
-            title="Python Note",
-            content="Python content",
-            tags=["python", "programming"]
-        )
-        note2 = zettel_service.create_note(
-            title="JavaScript Note",
-            content="JavaScript content",
-            tags=["javascript", "programming"]
-        )
-
-        search_service = SearchService(zettel_service)
-        results = search_service.search_by_tag("python")
-
-        assert len(results) == 1
-        assert results[0].id == note1.id
-
-    def test_search_by_tag_multiple_tags(self, zettel_service):
-        """Test search_by_tag with multiple tags (returns notes with any tag)."""
-        note1 = zettel_service.create_note(
-            title="Python Note",
-            content="Content",
-            tags=["python"]
-        )
-        note2 = zettel_service.create_note(
-            title="JavaScript Note",
-            content="Content",
-            tags=["javascript"]
-        )
-        note3 = zettel_service.create_note(
-            title="Rust Note",
-            content="Content",
-            tags=["rust"]
-        )
-
-        search_service = SearchService(zettel_service)
-        results = search_service.search_by_tag(["python", "javascript"])
-
-        # Should find notes with either tag
-        assert len(results) == 2
-        result_ids = {note.id for note in results}
-        assert note1.id in result_ids
-        assert note2.id in result_ids
-        assert note3.id not in result_ids
-
-    def test_search_by_link_outgoing(self, zettel_service):
-        """Test search_by_link with outgoing direction."""
-        source = zettel_service.create_note(title="Source", content="Source note")
-        target1 = zettel_service.create_note(title="Target 1", content="Target 1")
-        target2 = zettel_service.create_note(title="Target 2", content="Target 2")
-        unlinked = zettel_service.create_note(title="Unlinked", content="Unlinked note")
-
-        zettel_service.create_link(source.id, target1.id, LinkType.REFERENCE)
-        zettel_service.create_link(source.id, target2.id, LinkType.EXTENDS)
-
-        search_service = SearchService(zettel_service)
-        results = search_service.search_by_link(source.id, direction="outgoing")
-
-        assert len(results) == 2
-        result_ids = {note.id for note in results}
-        assert target1.id in result_ids
-        assert target2.id in result_ids
-        assert unlinked.id not in result_ids
-
-    def test_search_by_link_incoming(self, zettel_service):
-        """Test search_by_link with incoming direction."""
-        target = zettel_service.create_note(title="Target", content="Target note")
-        source1 = zettel_service.create_note(title="Source 1", content="Source 1")
-        source2 = zettel_service.create_note(title="Source 2", content="Source 2")
-
-        zettel_service.create_link(source1.id, target.id, LinkType.REFERENCE)
-        zettel_service.create_link(source2.id, target.id, LinkType.SUPPORTS)
-
-        search_service = SearchService(zettel_service)
-        results = search_service.search_by_link(target.id, direction="incoming")
-
-        assert len(results) == 2
-        result_ids = {note.id for note in results}
-        assert source1.id in result_ids
-        assert source2.id in result_ids
 
     def test_find_orphaned_notes_direct(self, zettel_service):
         """Test find_orphaned_notes returns notes with no links."""
@@ -676,3 +375,63 @@ class TestSearchServiceDirect:
 
         result_ids = [r.note.id for r in results]
         assert note.id in result_ids
+
+
+class TestSearchCombinedFts:
+    """Tests for FTS5-accelerated search_combined()."""
+
+    def test_search_combined_uses_fts_when_available(self, zettel_service):
+        """FTS5 should be used for text queries when available."""
+        note1 = zettel_service.create_note(
+            title="Python Async Programming",
+            content="Asyncio is a library for concurrent Python code."
+        )
+        note2 = zettel_service.create_note(
+            title="JavaScript Promises",
+            content="Promises handle asynchronous JavaScript operations."
+        )
+
+        search_service = SearchService(zettel_service)
+        # FTS5 is available in test DB — text search should work
+        results = search_service.search_combined(text="Python")
+
+        result_ids = [r.note.id for r in results]
+        assert note1.id in result_ids
+
+    def test_search_combined_fallback_without_fts(self, zettel_service):
+        """Graceful degradation when FTS5 is unavailable."""
+        note = zettel_service.create_note(
+            title="Fallback Test",
+            content="This tests the fallback path."
+        )
+
+        search_service = SearchService(zettel_service)
+
+        # Disable FTS to force fallback
+        original = zettel_service.repository._fts_available
+        zettel_service.repository._fts_available = False
+        try:
+            results = search_service.search_combined(text="Fallback")
+            result_ids = [r.note.id for r in results]
+            assert note.id in result_ids
+        finally:
+            zettel_service.repository._fts_available = original
+
+    def test_search_combined_fts_with_tag_filter(self, zettel_service):
+        """FTS text search + tag post-filter works correctly."""
+        tagged = zettel_service.create_note(
+            title="Python Guide",
+            content="Complete Python programming guide.",
+            tags=["python"]
+        )
+        untagged = zettel_service.create_note(
+            title="Python Tips",
+            content="Quick Python tips and tricks."
+        )
+
+        search_service = SearchService(zettel_service)
+        results = search_service.search_combined(text="Python", tags=["python"])
+
+        result_ids = [r.note.id for r in results]
+        assert tagged.id in result_ids
+        assert untagged.id not in result_ids

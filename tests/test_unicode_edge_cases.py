@@ -227,7 +227,7 @@ class TestUnicodeSearch:
         )
 
         search_service = SearchService(zettel_service)
-        results = search_service.search_by_text("中文")
+        results = search_service.search_combined(text="中文")
 
         assert len(results) >= 1
         assert "中文" in results[0].note.title or "中文" in results[0].note.content
@@ -240,7 +240,7 @@ class TestUnicodeSearch:
         )
 
         search_service = SearchService(zettel_service)
-        results = search_service.search_by_text("🚀")
+        results = search_service.search_combined(text="🚀")
 
         assert len(results) >= 1
 
@@ -252,7 +252,7 @@ class TestUnicodeSearch:
         )
 
         search_service = SearchService(zettel_service)
-        results = search_service.search_by_text("café")
+        results = search_service.search_combined(text="café")
 
         assert len(results) >= 1
 
@@ -266,8 +266,8 @@ class TestUnicodeSearch:
         search_service = SearchService(zettel_service)
 
         # Both cases should find the note
-        results_lower = search_service.search_by_text("größe")
-        results_upper = search_service.search_by_text("GRÖSSE")
+        results_lower = search_service.search_combined(text="größe")
+        results_upper = search_service.search_combined(text="GRÖSSE")
 
         # At least one should match
         assert len(results_lower) >= 1 or len(results_upper) >= 1
@@ -315,7 +315,7 @@ class TestUnicodeNormalization:
         search_service = SearchService(zettel_service)
 
         # Search with composed form should work
-        results = search_service.search_by_text("café")
+        results = search_service.search_combined(text="café")
         assert len(results) >= 1
 
     def test_fullwidth_vs_halfwidth(self, zettel_service):

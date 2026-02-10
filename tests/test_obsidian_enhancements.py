@@ -303,3 +303,187 @@ class TestObsidianMirrorIntegration:
 
         # Old file should be gone
         assert not old_file.exists()
+
+
+# =============================================================================
+# Obsidian Link Cascade Tests
+# =============================================================================
+
+
+class TestObsidianLinkCascade:
+    """Tests for cascade re-mirroring when a note's title changes."""
+
+    @pytest.fixture
+    def obsidian_service(self, test_config):
+        """Create a zettel_service backed by a repo with Obsidian vault."""
+        from znote_mcp.services.zettel_service import ZettelService
+        from sqlalchemy import create_engine
+        from znote_mcp.models.db_models import Base
+
+        with tempfile.TemporaryDirectory() as vault_dir:
+            database_path = test_config.get_absolute_path(test_config.database_path)
+            engine = create_engine(f"sqlite:///{database_path}")
+            Base.metadata.create_all(engine)
+            engine.dispose()
+
+            repo = NoteRepository(
+                notes_dir=test_config.notes_dir,
+                obsidian_vault_path=Path(vault_dir),
+                use_git=False,
+            )
+            service = ZettelService(repository=repo)
+            yield service, Path(vault_dir)
+
+    def test_title_change_cascades_to_linking_notes(self, obsidian_service):
+        """When note B's title changes, notes linking TO B get re-mirrored."""
+        service, vault = obsidian_service
+
+        # Create two notes and link A -> B
+        note_b = service.create_note(title="Original Title", content="Target note")
+        note_a = service.create_note(title="Linking Note", content="Links to B")
+        service.create_link(note_a.id, note_b.id)
+
+        # Verify A's mirror exists
+        a_files = list(vault.glob("**/*Linking-Note*.md"))
+        assert len(a_files) == 1
+
+        # Update B's title (uses keyword args, not Note object)
+        service.update_note(note_b.id, title="Updated Title")
+
+        # A's mirror should have been re-generated with the new wikilink
+        a_files_after = list(vault.glob("**/*Linking-Note*.md"))
+        assert len(a_files_after) == 1
+        a_content_after = a_files_after[0].read_text()
+
+        # The wikilink in A should reference the updated filename
+        assert "Updated-Title" in a_content_after or "Updated Title" in a_content_after
+
+    def test_no_cascade_when_title_unchanged(self, obsidian_service):
+        """Content-only update should NOT trigger cascade."""
+        service, vault = obsidian_service
+
+        note_b = service.create_note(title="Stable Title", content="Original content")
+        note_a = service.create_note(title="Observer Note", content="Watches B")
+        service.create_link(note_a.id, note_b.id)
+
+        # Get A's mirror mtime before update
+        a_files = list(vault.glob("**/*Observer-Note*.md"))
+        assert len(a_files) == 1
+        a_mtime_before = a_files[0].stat().st_mtime
+
+        # Update B's content only (title stays the same)
+        import time
+        time.sleep(0.05)  # Ensure different mtime
+        service.update_note(note_b.id, content="Updated content only")
+
+        # A's mirror mtime should NOT have changed (no cascade)
+        a_files_after = list(vault.glob("**/*Observer-Note*.md"))
+        assert len(a_files_after) == 1
+        a_mtime_after = a_files_after[0].stat().st_mtime
+        assert a_mtime_after == a_mtime_before
+
+    def test_cascade_is_best_effort(self, obsidian_service):
+        """Cascade failure should NOT cause the main update to fail."""
+        service, vault = obsidian_service
+
+        note_b = service.create_note(title="Will Change", content="Target")
+        note_a = service.create_note(title="Linker", content="Links to B")
+        service.create_link(note_a.id, note_b.id)
+
+        # Patch cascade to simulate failure — update should still succeed
+        from unittest.mock import patch
+        with patch.object(
+            service.repository, '_cascade_obsidian_remirror',
+            side_effect=Exception("Simulated cascade failure")
+        ):
+            # This should NOT raise despite cascade failure
+            updated = service.update_note(note_b.id, title="Changed Title")
+            assert updated.title == "Changed Title"
+
+
+# =============================================================================
+# Obsidian Frontmatter Injection Tests
+# =============================================================================
+
+
+class TestObsidianFrontmatter:
+    """Tests for aliases and cssclasses injection in Obsidian mirrors."""
+
+    @pytest.fixture
+    def obsidian_repo(self, test_config):
+        """Create a repository with Obsidian vault configured."""
+        with tempfile.TemporaryDirectory() as vault_dir:
+            repo = NoteRepository(
+                notes_dir=test_config.notes_dir,
+                obsidian_vault_path=Path(vault_dir),
+                use_git=False,
+            )
+            yield repo, Path(vault_dir)
+
+    def test_mirror_includes_aliases(self, obsidian_repo):
+        """Mirrored file should have aliases: [title] in frontmatter."""
+        repo, vault = obsidian_repo
+        note = Note(
+            title="My Research Note",
+            content="Some research content.",
+            project="testproj",
+            note_type=NoteType.PERMANENT,
+        )
+        repo.create(note)
+
+        files = list(vault.glob("**/*.md"))
+        assert len(files) == 1
+        content = files[0].read_text()
+
+        import yaml
+        # Parse frontmatter
+        assert content.startswith("---")
+        fm_end = content.index("---", 3)
+        fm_block = content[3:fm_end].strip()
+        fm = yaml.safe_load(fm_block)
+
+        assert "aliases" in fm
+        assert "My Research Note" in fm["aliases"]
+
+    def test_mirror_includes_cssclasses(self, obsidian_repo):
+        """Mirrored file should have cssclasses: [note_type] in frontmatter."""
+        repo, vault = obsidian_repo
+        note = Note(
+            title="Fleeting Thought",
+            content="Quick idea.",
+            project="testproj",
+            note_type=NoteType.FLEETING,
+        )
+        repo.create(note)
+
+        files = list(vault.glob("**/*.md"))
+        assert len(files) == 1
+        content = files[0].read_text()
+
+        import yaml
+        assert content.startswith("---")
+        fm_end = content.index("---", 3)
+        fm_block = content[3:fm_end].strip()
+        fm = yaml.safe_load(fm_block)
+
+        assert "cssclasses" in fm
+        assert "fleeting" in fm["cssclasses"]
+
+    def test_source_file_unchanged(self, obsidian_repo):
+        """Source .md file should NOT have aliases or cssclasses."""
+        repo, vault = obsidian_repo
+        note = Note(
+            title="Source Test",
+            content="Source content.",
+            project="testproj",
+            note_type=NoteType.PERMANENT,
+        )
+        created = repo.create(note)
+
+        # Read the source file (not the mirror)
+        source_path = repo.notes_dir / f"{created.id}.md"
+        source_content = source_path.read_text()
+
+        # Source should NOT contain aliases or cssclasses
+        assert "aliases" not in source_content
+        assert "cssclasses" not in source_content
