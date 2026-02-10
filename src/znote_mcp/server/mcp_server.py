@@ -294,7 +294,7 @@ class ZettelkastenMcpServer:
                 except Exception as e:
                     return self.format_error_response(e)
 
-        # Update a note
+        # Update a note (supports batch project move with comma-separated IDs)
         @self.mcp.tool(name="zk_update_note")
         def zk_update_note(
             note_id: str,
@@ -307,27 +307,47 @@ class ZettelkastenMcpServer:
             plan_id: Optional[str] = None,
             expected_version: Optional[str] = None
         ) -> str:
-            """Update an existing note with optional version conflict detection.
+            """Update an existing note, or batch-move multiple notes to a project.
+
+            Supports batch mode: pass comma-separated note IDs to move multiple
+            notes to a different project at once. In batch mode, only the
+            `project` parameter is allowed — all other fields must be omitted.
+
             Args:
-                note_id: The ID of the note to update
-                title: New title (optional)
-                content: New content (optional)
-                note_type: New note type (optional)
+                note_id: The ID of the note to update, or comma-separated IDs for batch project move
+                title: New title (optional, single-note only)
+                content: New content (optional, single-note only)
+                note_type: New note type (optional, single-note only)
                 project: New project (optional, moves note to different project directory)
-                note_purpose: New workflow category (research, planning, bugfixing, general) - optional
-                tags: New comma-separated list of tags (optional)
-                plan_id: New plan ID (optional, use empty string to clear)
-                expected_version: Version hash from zk_get_note for conflict detection.
+                note_purpose: New workflow category (research, planning, bugfixing, general) - optional, single-note only
+                tags: New comma-separated list of tags (optional, single-note only)
+                plan_id: New plan ID (optional, use empty string to clear, single-note only)
+                expected_version: Version hash from zk_get_note for conflict detection (single-note only).
                     If provided and doesn't match current version, returns CONFLICT error
                     instead of overwriting (recommended for multi-process safety).
             Returns:
                 Success message with new version, or CONFLICT error if version mismatch.
             """
             try:
-                # Get the note
-                note = self.zettel_service.get_note(str(note_id))
+                ids = [id.strip() for id in note_id.split(",") if id.strip()]
+                if not ids:
+                    return "Error: No note IDs provided."
+
+                # Batch mode: multiple IDs — only project move allowed
+                if len(ids) > 1:
+                    has_other_fields = any([title, content, note_type, note_purpose, tags, plan_id, expected_version])
+                    if has_other_fields:
+                        return "Error: Batch mode only supports project moves. Pass comma-separated IDs with only the 'project' parameter."
+                    if not project or not project.strip():
+                        return "Error: 'project' parameter is required for batch update."
+                    updated = self.zettel_service.bulk_update_project(ids, project.strip())
+                    return f"Moved {updated} notes to project '{project.strip()}'."
+
+                # Single mode: existing behavior
+                single_id = ids[0]
+                note = self.zettel_service.get_note(str(single_id))
                 if not note:
-                    return f"Note not found: {note_id}"
+                    return f"Note not found: {single_id}"
 
                 # Convert note_type string to enum if provided
                 note_type_enum = None
@@ -352,7 +372,7 @@ class ZettelkastenMcpServer:
 
                 # Update the note with version checking
                 result = self.zettel_service.update_note_versioned(
-                    note_id=note_id,
+                    note_id=single_id,
                     title=title,
                     content=content,
                     note_type=note_type_enum,
@@ -382,34 +402,49 @@ class ZettelkastenMcpServer:
             except Exception as e:
                 return self.format_error_response(e)
 
-        # Delete a note
+        # Delete a note (supports batch mode with comma-separated IDs)
         @self.mcp.tool(name="zk_delete_note")
         def zk_delete_note(
             note_id: str,
             expected_version: Optional[str] = None
         ) -> str:
-            """Delete a note with optional version conflict detection.
+            """Delete one or more notes.
+
+            Supports batch mode: pass comma-separated IDs to delete multiple notes
+            at once (e.g. "id1, id2, id3"). Version conflict detection is only
+            available for single-note deletes.
+
             Args:
-                note_id: The ID of the note to delete
+                note_id: The ID of the note to delete, or comma-separated IDs for batch delete
                 expected_version: Version hash from zk_get_note for conflict detection.
-                    If provided and doesn't match current version, returns CONFLICT error
-                    instead of deleting (recommended for multi-process safety).
+                    Only valid for single-note deletes. If provided and doesn't match
+                    current version, returns CONFLICT error instead of deleting.
             Returns:
                 Success message, or CONFLICT error if version mismatch.
             """
             try:
-                # Check if note exists
-                note = self.zettel_service.get_note(note_id)
-                if not note:
-                    return f"Note not found: {note_id}"
+                ids = [id.strip() for id in note_id.split(",") if id.strip()]
+                if not ids:
+                    return "Error: No note IDs provided."
 
-                # Delete the note with version checking
+                # Batch mode: multiple IDs
+                if len(ids) > 1:
+                    if expected_version:
+                        return "Error: expected_version cannot be used with batch delete. Delete notes individually for version checking."
+                    deleted = self.zettel_service.bulk_delete_notes(ids)
+                    return f"Successfully deleted {deleted} notes."
+
+                # Single mode: existing behavior
+                single_id = ids[0]
+                note = self.zettel_service.get_note(single_id)
+                if not note:
+                    return f"Note not found: {single_id}"
+
                 result = self.zettel_service.delete_note_versioned(
-                    note_id=str(note_id),
+                    note_id=str(single_id),
                     expected_version=expected_version
                 )
 
-                # Check for conflict
                 if isinstance(result, ConflictResult):
                     return (
                         f"CONFLICT: {result.message}\n"
@@ -418,8 +453,7 @@ class ZettelkastenMcpServer:
                         f"Re-read the note with zk_get_note to verify before deleting."
                     )
 
-                # Success
-                return f"Note deleted successfully: {note_id}"
+                return f"Note deleted successfully: {single_id}"
             except Exception as e:
                 return self.format_error_response(e)
 
@@ -676,39 +710,67 @@ class ZettelkastenMcpServer:
                 except Exception as e:
                     return self.format_error_response(e)
 
-        # Add a tag to a note
+        # Add tags to notes (supports batch mode with comma-separated values)
         @self.mcp.tool(name="zk_add_tag")
         def zk_add_tag(note_id: str, tag: str) -> str:
-            """Add a tag to an existing note.
+            """Add one or more tags to one or more notes.
+
+            Supports batch mode: pass comma-separated note IDs and/or
+            comma-separated tags to operate on multiple items at once.
+
             Args:
-                note_id: The ID of the note
-                tag: The tag to add
+                note_id: The ID of the note, or comma-separated IDs for batch mode
+                tag: The tag to add, or comma-separated tags for batch mode
             """
             try:
-                if not tag or not tag.strip():
+                ids = [id.strip() for id in note_id.split(",") if id.strip()]
+                tags = [t.strip() for t in tag.split(",") if t.strip()]
+
+                if not ids:
+                    return "Error: No note IDs provided."
+                if not tags:
                     return "Error: Tag cannot be empty"
 
-                tag = tag.strip()
-                note = self.zettel_service.add_tag_to_note(str(note_id), tag)
-                return f"Tag '{tag}' added to note '{note.title}' (ID: {note.id})"
+                # Batch mode: multiple IDs or multiple tags
+                if len(ids) > 1 or len(tags) > 1:
+                    updated = self.zettel_service.bulk_add_tags(ids, tags)
+                    return f"Added tags [{', '.join(tags)}] to {updated} notes."
+
+                # Single mode: existing behavior
+                note = self.zettel_service.add_tag_to_note(str(ids[0]), tags[0])
+                return f"Tag '{tags[0]}' added to note '{note.title}' (ID: {note.id})"
             except Exception as e:
                 return self.format_error_response(e)
 
-        # Remove a tag from a note
+        # Remove tags from notes (supports batch mode with comma-separated values)
         @self.mcp.tool(name="zk_remove_tag")
         def zk_remove_tag(note_id: str, tag: str) -> str:
-            """Remove a tag from a note.
+            """Remove one or more tags from one or more notes.
+
+            Supports batch mode: pass comma-separated note IDs and/or
+            comma-separated tags to operate on multiple items at once.
+
             Args:
-                note_id: The ID of the note
-                tag: The tag to remove
+                note_id: The ID of the note, or comma-separated IDs for batch mode
+                tag: The tag to remove, or comma-separated tags for batch mode
             """
             try:
-                if not tag or not tag.strip():
+                ids = [id.strip() for id in note_id.split(",") if id.strip()]
+                tags = [t.strip() for t in tag.split(",") if t.strip()]
+
+                if not ids:
+                    return "Error: No note IDs provided."
+                if not tags:
                     return "Error: Tag cannot be empty"
 
-                tag = tag.strip()
-                note = self.zettel_service.remove_tag_from_note(str(note_id), tag)
-                return f"Tag '{tag}' removed from note '{note.title}' (ID: {note.id})"
+                # Batch mode: multiple IDs or multiple tags
+                if len(ids) > 1 or len(tags) > 1:
+                    updated = self.zettel_service.bulk_remove_tags(ids, tags)
+                    return f"Removed tags [{', '.join(tags)}] from {updated} notes."
+
+                # Single mode: existing behavior
+                note = self.zettel_service.remove_tag_from_note(str(ids[0]), tags[0])
+                return f"Tag '{tags[0]}' removed from note '{note.title}' (ID: {note.id})"
             except Exception as e:
                 return self.format_error_response(e)
 
@@ -731,7 +793,7 @@ class ZettelkastenMcpServer:
                 except Exception as e:
                     return self.format_error_response(e)
 
-        # ========== Bulk Operations ==========
+        # ========== Batch Create ==========
 
         @self.mcp.tool(name="zk_bulk_create_notes")
         def zk_bulk_create_notes(notes: str) -> str:
@@ -767,104 +829,7 @@ class ZettelkastenMcpServer:
                 except Exception as e:
                     return self.format_error_response(e)
 
-        @self.mcp.tool(name="zk_bulk_delete_notes")
-        def zk_bulk_delete_notes(note_ids: str) -> str:
-            """Delete multiple notes in a single batch operation.
-
-            Args:
-                note_ids: Comma-separated list of note IDs to delete.
-            """
-            with timed_operation("zk_bulk_delete_notes") as op:
-                try:
-                    ids = [id.strip() for id in note_ids.split(",") if id.strip()]
-                    if not ids:
-                        return "Error: No note IDs provided."
-
-                    op["note_count"] = len(ids)
-                    deleted = self.zettel_service.bulk_delete_notes(ids)
-
-                    return f"Successfully deleted {deleted} notes."
-                except Exception as e:
-                    return self.format_error_response(e)
-
-        @self.mcp.tool(name="zk_bulk_add_tags")
-        def zk_bulk_add_tags(note_ids: str, tags: str) -> str:
-            """Add tags to multiple notes at once.
-
-            Args:
-                note_ids: Comma-separated list of note IDs.
-                tags: Comma-separated list of tags to add.
-            """
-            with timed_operation("zk_bulk_add_tags") as op:
-                try:
-                    ids = [id.strip() for id in note_ids.split(",") if id.strip()]
-                    tag_list = [t.strip() for t in tags.split(",") if t.strip()]
-
-                    if not ids:
-                        return "Error: No note IDs provided."
-                    if not tag_list:
-                        return "Error: No tags provided."
-
-                    op["note_count"] = len(ids)
-                    op["tag_count"] = len(tag_list)
-                    updated = self.zettel_service.bulk_add_tags(ids, tag_list)
-
-                    return f"Added tags [{', '.join(tag_list)}] to {updated} notes."
-                except Exception as e:
-                    return self.format_error_response(e)
-
-        @self.mcp.tool(name="zk_bulk_remove_tags")
-        def zk_bulk_remove_tags(note_ids: str, tags: str) -> str:
-            """Remove tags from multiple notes at once.
-
-            Args:
-                note_ids: Comma-separated list of note IDs.
-                tags: Comma-separated list of tags to remove.
-            """
-            with timed_operation("zk_bulk_remove_tags") as op:
-                try:
-                    ids = [id.strip() for id in note_ids.split(",") if id.strip()]
-                    tag_list = [t.strip() for t in tags.split(",") if t.strip()]
-
-                    if not ids:
-                        return "Error: No note IDs provided."
-                    if not tag_list:
-                        return "Error: No tags provided."
-
-                    op["note_count"] = len(ids)
-                    op["tag_count"] = len(tag_list)
-                    updated = self.zettel_service.bulk_remove_tags(ids, tag_list)
-
-                    return f"Removed tags [{', '.join(tag_list)}] from {updated} notes."
-                except Exception as e:
-                    return self.format_error_response(e)
-
-        @self.mcp.tool(name="zk_bulk_move_to_project")
-        def zk_bulk_move_to_project(note_ids: str, project: str) -> str:
-            """Move multiple notes to a different project.
-
-            Args:
-                note_ids: Comma-separated list of note IDs.
-                project: Target project name.
-            """
-            with timed_operation("zk_bulk_move_to_project") as op:
-                try:
-                    ids = [id.strip() for id in note_ids.split(",") if id.strip()]
-
-                    if not ids:
-                        return "Error: No note IDs provided."
-                    if not project or not project.strip():
-                        return "Error: Project name is required."
-
-                    op["note_count"] = len(ids)
-                    op["project"] = project.strip()
-                    updated = self.zettel_service.bulk_update_project(ids, project.strip())
-
-                    return f"Moved {updated} notes to project '{project}'."
-                except Exception as e:
-                    return self.format_error_response(e)
-
-        # ========== NEW CONSOLIDATED TOOLS ==========
+        # ========== Consolidated Tools ==========
 
         @self.mcp.tool(name="zk_list_notes")
         def zk_list_notes(

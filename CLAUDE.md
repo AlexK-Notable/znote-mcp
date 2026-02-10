@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-znote-mcp is an MCP (Model Context Protocol) server implementing Zettelkasten knowledge management. It provides 26 tools for creating, linking, searching, and synthesizing atomic notes through Claude and other MCP-compatible clients.
+znote-mcp is an MCP (Model Context Protocol) server implementing Zettelkasten knowledge management. It provides 22 tools for creating, linking, searching, and synthesizing atomic notes through Claude and other MCP-compatible clients.
 
 ## Common Commands
 
@@ -75,7 +75,7 @@ Models (models/schema.py - Pydantic, models/db_models.py - SQLAlchemy)
 |------|---------|
 | `src/znote_mcp/main.py` | Entry point - parses CLI args, initializes DB, starts server |
 | `src/znote_mcp/config.py` | Pydantic configuration with env var support |
-| `src/znote_mcp/server/mcp_server.py` | MCP server with 26 tools registered via decorators |
+| `src/znote_mcp/server/mcp_server.py` | MCP server with 22 tools registered via decorators |
 | `src/znote_mcp/services/zettel_service.py` | Business logic for CRUD, links, tags, bulk ops |
 | `src/znote_mcp/services/search_service.py` | Search by text, tags, links; find orphans/central notes |
 | `src/znote_mcp/storage/note_repository.py` | Dual storage implementation |

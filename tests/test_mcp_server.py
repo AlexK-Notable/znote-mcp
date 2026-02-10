@@ -334,7 +334,7 @@ class TestMcpServer:
         assert "No notes found" in result
 
     def test_add_tag_tool(self):
-        """Test the zk_add_tag tool."""
+        """Test the zk_add_tag tool with single note and tag."""
         assert 'zk_add_tag' in self.registered_tools
 
         mock_note = MagicMock()
@@ -360,8 +360,40 @@ class TestMcpServer:
 
         assert "Error: Tag cannot be empty" in result
 
+    def test_add_tag_batch_mode(self):
+        """Test zk_add_tag with multiple IDs and multiple tags."""
+        assert 'zk_add_tag' in self.registered_tools
+
+        self.mock_zettel_service.bulk_add_tags.return_value = 2
+
+        add_tag_func = self.registered_tools['zk_add_tag']
+        result = add_tag_func(note_id="note1, note2", tag="python, programming")
+
+        assert "Added tags" in result
+        assert "python" in result
+        assert "programming" in result
+        assert "2 notes" in result
+        self.mock_zettel_service.bulk_add_tags.assert_called_with(
+            ["note1", "note2"], ["python", "programming"]
+        )
+
+    def test_add_tag_multiple_tags_single_note(self):
+        """Test zk_add_tag with single ID but multiple tags routes to batch."""
+        assert 'zk_add_tag' in self.registered_tools
+
+        self.mock_zettel_service.bulk_add_tags.return_value = 1
+
+        add_tag_func = self.registered_tools['zk_add_tag']
+        result = add_tag_func(note_id="note1", tag="tag-a, tag-b, tag-c")
+
+        assert "Added tags" in result
+        assert "1 notes" in result
+        self.mock_zettel_service.bulk_add_tags.assert_called_with(
+            ["note1"], ["tag-a", "tag-b", "tag-c"]
+        )
+
     def test_remove_tag_tool(self):
-        """Test the zk_remove_tag tool."""
+        """Test the zk_remove_tag tool with single note and tag."""
         assert 'zk_remove_tag' in self.registered_tools
 
         mock_note = MagicMock()
@@ -386,6 +418,23 @@ class TestMcpServer:
         result = remove_tag_func(note_id="test123", tag="  ")
 
         assert "Error: Tag cannot be empty" in result
+
+    def test_remove_tag_batch_mode(self):
+        """Test zk_remove_tag with multiple IDs and tags."""
+        assert 'zk_remove_tag' in self.registered_tools
+
+        self.mock_zettel_service.bulk_remove_tags.return_value = 2
+
+        remove_tag_func = self.registered_tools['zk_remove_tag']
+        result = remove_tag_func(note_id="note1, note2", tag="outdated, draft")
+
+        assert "Removed tags" in result
+        assert "outdated" in result
+        assert "draft" in result
+        assert "2 notes" in result
+        self.mock_zettel_service.bulk_remove_tags.assert_called_with(
+            ["note1", "note2"], ["outdated", "draft"]
+        )
 
     def test_get_note_markdown_format(self):
         """Test zk_get_note with format='markdown' returns exported markdown."""
@@ -572,73 +621,71 @@ class TestMcpServer:
 
         assert "Error: Invalid JSON" in result
 
-    def test_bulk_delete_notes_tool(self):
-        """Test zk_bulk_delete_notes tool."""
-        assert 'zk_bulk_delete_notes' in self.registered_tools
+    # ========== Regression: Removed Bulk Tools ==========
+
+    def test_bulk_delete_notes_tool_removed(self):
+        """Verify zk_bulk_delete_notes is no longer registered (absorbed into zk_delete_note)."""
+        assert 'zk_bulk_delete_notes' not in self.registered_tools
+
+    def test_bulk_add_tags_tool_removed(self):
+        """Verify zk_bulk_add_tags is no longer registered (absorbed into zk_add_tag)."""
+        assert 'zk_bulk_add_tags' not in self.registered_tools
+
+    def test_bulk_remove_tags_tool_removed(self):
+        """Verify zk_bulk_remove_tags is no longer registered (absorbed into zk_remove_tag)."""
+        assert 'zk_bulk_remove_tags' not in self.registered_tools
+
+    def test_bulk_move_to_project_tool_removed(self):
+        """Verify zk_bulk_move_to_project is no longer registered (absorbed into zk_update_note)."""
+        assert 'zk_bulk_move_to_project' not in self.registered_tools
+
+    # ========== Batch Mode Tests ==========
+
+    def test_delete_note_batch_mode(self):
+        """Test zk_delete_note with comma-separated IDs for batch delete."""
+        assert 'zk_delete_note' in self.registered_tools
 
         self.mock_zettel_service.bulk_delete_notes.return_value = 3
 
-        bulk_delete_func = self.registered_tools['zk_bulk_delete_notes']
-        result = bulk_delete_func(note_ids="note1, note2, note3")
+        delete_func = self.registered_tools['zk_delete_note']
+        result = delete_func(note_id="note1, note2, note3")
 
         assert "Successfully deleted 3 notes" in result
-        self.mock_zettel_service.bulk_delete_notes.assert_called_once()
+        self.mock_zettel_service.bulk_delete_notes.assert_called_with(
+            ["note1", "note2", "note3"]
+        )
 
-    def test_bulk_delete_notes_empty_ids(self):
-        """Test zk_bulk_delete_notes with empty IDs."""
-        assert 'zk_bulk_delete_notes' in self.registered_tools
+    def test_delete_note_batch_rejects_version(self):
+        """Test zk_delete_note rejects expected_version in batch mode."""
+        assert 'zk_delete_note' in self.registered_tools
 
-        bulk_delete_func = self.registered_tools['zk_bulk_delete_notes']
-        result = bulk_delete_func(note_ids="")
+        delete_func = self.registered_tools['zk_delete_note']
+        result = delete_func(note_id="note1, note2", expected_version="abc123")
 
         assert "Error:" in result
-        assert "No note IDs" in result
+        assert "expected_version cannot be used with batch delete" in result
 
-    def test_bulk_add_tags_tool(self):
-        """Test zk_bulk_add_tags tool."""
-        assert 'zk_bulk_add_tags' in self.registered_tools
-
-        self.mock_zettel_service.bulk_add_tags.return_value = 2
-
-        bulk_add_tags_func = self.registered_tools['zk_bulk_add_tags']
-        result = bulk_add_tags_func(note_ids="note1, note2", tags="python, programming")
-
-        assert "Added tags" in result
-        assert "python" in result
-        assert "programming" in result
-        assert "2 notes" in result
-
-    def test_bulk_remove_tags_tool(self):
-        """Test zk_bulk_remove_tags tool."""
-        assert 'zk_bulk_remove_tags' in self.registered_tools
-
-        self.mock_zettel_service.bulk_remove_tags.return_value = 2
-
-        bulk_remove_tags_func = self.registered_tools['zk_bulk_remove_tags']
-        result = bulk_remove_tags_func(note_ids="note1, note2", tags="outdated")
-
-        assert "Removed tags" in result
-        assert "outdated" in result
-        assert "2 notes" in result
-
-    def test_bulk_move_to_project_tool(self):
-        """Test zk_bulk_move_to_project tool."""
-        assert 'zk_bulk_move_to_project' in self.registered_tools
+    def test_update_note_batch_project_move(self):
+        """Test zk_update_note with comma-separated IDs for batch project move."""
+        assert 'zk_update_note' in self.registered_tools
 
         self.mock_zettel_service.bulk_update_project.return_value = 3
 
-        bulk_move_func = self.registered_tools['zk_bulk_move_to_project']
-        result = bulk_move_func(note_ids="note1, note2, note3", project="research")
+        update_func = self.registered_tools['zk_update_note']
+        result = update_func(note_id="note1, note2, note3", project="research")
 
         assert "Moved 3 notes" in result
         assert "research" in result
+        self.mock_zettel_service.bulk_update_project.assert_called_with(
+            ["note1", "note2", "note3"], "research"
+        )
 
-    def test_bulk_move_to_project_empty_project(self):
-        """Test zk_bulk_move_to_project with empty project."""
-        assert 'zk_bulk_move_to_project' in self.registered_tools
+    def test_update_note_batch_rejects_non_project(self):
+        """Test zk_update_note rejects non-project fields in batch mode."""
+        assert 'zk_update_note' in self.registered_tools
 
-        bulk_move_func = self.registered_tools['zk_bulk_move_to_project']
-        result = bulk_move_func(note_ids="note1", project="")
+        update_func = self.registered_tools['zk_update_note']
+        result = update_func(note_id="note1, note2", title="New Title", project="research")
 
         assert "Error:" in result
-        assert "Project name is required" in result
+        assert "Batch mode only supports project moves" in result
