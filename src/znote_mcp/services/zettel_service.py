@@ -90,6 +90,7 @@ class ZettelService:
         self,
         repository: Optional[NoteRepository] = None,
         embedding_service: Optional["EmbeddingService"] = None,
+        engine: Optional[Any] = None,
     ):
         """Initialize the service.
 
@@ -99,8 +100,15 @@ class ZettelService:
                 When provided and config.embeddings_enabled is True, notes
                 are automatically embedded on create/update and embeddings
                 are cleaned up on delete.
+            engine: Pre-configured SQLAlchemy engine to pass to NoteRepository.
+                Only used when repository is None.
         """
-        self.repository = repository or NoteRepository()
+        if repository is not None:
+            self.repository = repository
+        elif engine is not None:
+            self.repository = NoteRepository(engine=engine)
+        else:
+            self.repository = NoteRepository()
         self._embedding_service = embedding_service
 
     def initialize(self) -> None:
@@ -659,6 +667,43 @@ class ZettelService:
             List of search results with id, title, rank, and optionally snippet.
         """
         return self.repository.fts_search(query, limit, highlight)
+
+    def has_fts(self) -> bool:
+        """Check whether FTS5 full-text search is available."""
+        return getattr(self.repository, '_fts_available', False)
+
+    def get_notes_by_ids(self, ids: List[str]) -> List[Note]:
+        """Retrieve multiple notes by their IDs in a batch."""
+        return self.repository.get_by_ids(ids)
+
+    def find_orphaned_note_ids(self) -> List[str]:
+        """Find IDs of notes with no incoming or outgoing links."""
+        return self.repository.find_orphaned_note_ids()
+
+    def find_central_note_ids_with_counts(
+        self, limit: int = 10
+    ) -> List[Tuple[str, int]]:
+        """Find note IDs with the most connections.
+
+        Returns:
+            List of (note_id, connection_count) tuples, sorted by count desc.
+        """
+        return self.repository.find_central_note_ids_with_counts(limit)
+
+    def vec_similarity_search(
+        self,
+        query_vector: List[float],
+        limit: int = 10,
+        exclude_ids: Optional[List[str]] = None,
+    ) -> List[Tuple[str, float]]:
+        """KNN vector search using sqlite-vec."""
+        return self.repository.vec_similarity_search(
+            query_vector, limit=limit, exclude_ids=exclude_ids,
+        )
+
+    def get_embedding(self, note_id: str) -> Optional[List[float]]:
+        """Retrieve the stored embedding vector for a note."""
+        return self.repository.get_embedding(note_id)
 
     def rebuild_fts(self) -> int:
         """Rebuild the FTS5 index.

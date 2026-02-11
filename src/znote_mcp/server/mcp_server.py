@@ -36,8 +36,14 @@ logger = logging.getLogger(__name__)
 
 class ZettelkastenMcpServer:
     """MCP server for Zettelkasten."""
-    def __init__(self):
-        """Initialize the MCP server."""
+    def __init__(self, engine=None):
+        """Initialize the MCP server.
+
+        Args:
+            engine: Pre-configured SQLAlchemy engine. When provided, all
+                    repositories share this single engine. When None, each
+                    repository creates its own (legacy behavior).
+        """
         self.mcp = FastMCP(
             config.server_name,
             version=config.server_version
@@ -45,13 +51,15 @@ class ZettelkastenMcpServer:
         # Conditionally create embedding service
         embedding_service = self._create_embedding_service()
 
-        # Services
-        self.zettel_service = ZettelService(embedding_service=embedding_service)
+        # Services — share a single database engine when provided
+        self.zettel_service = ZettelService(
+            embedding_service=embedding_service, engine=engine,
+        )
         self.search_service = SearchService(
             self.zettel_service,
             embedding_service=embedding_service,
         )
-        self.project_repository = ProjectRepository()
+        self.project_repository = ProjectRepository(engine=engine)
         # Initialize services
         self.initialize()
         # Register shutdown hook for resource cleanup

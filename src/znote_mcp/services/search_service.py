@@ -74,13 +74,13 @@ class SearchService:
     
     def find_orphaned_notes(self) -> List[Note]:
         """Find notes with no incoming or outgoing links."""
-        orphaned_ids = self.zettel_service.repository.find_orphaned_note_ids()
-        return self.zettel_service.repository.get_by_ids(orphaned_ids)
+        orphaned_ids = self.zettel_service.find_orphaned_note_ids()
+        return self.zettel_service.get_notes_by_ids(orphaned_ids)
 
     def find_central_notes(self, limit: int = 10) -> List[Tuple[Note, int]]:
         """Find notes with the most connections (incoming + outgoing links)."""
         # Get note IDs with connection counts from repository
-        id_counts = self.zettel_service.repository.find_central_note_ids_with_counts(limit)
+        id_counts = self.zettel_service.find_central_note_ids_with_counts(limit)
 
         if not id_counts:
             return []
@@ -90,7 +90,7 @@ class SearchService:
         connection_counts = {note_id: count for note_id, count in id_counts}
 
         # Batch retrieve all notes at once
-        notes = self.zettel_service.repository.get_by_ids(note_ids)
+        notes = self.zettel_service.get_notes_by_ids(note_ids)
 
         # Build result list preserving SQL ordering
         note_map = {note.id: note for note in notes}
@@ -177,9 +177,8 @@ class SearchService:
             query_vector = self._embedding_service.embed(query)
 
             # 2. KNN search — fetch extra candidates for reranking
-            repo = self.zettel_service.repository
             fetch_limit = limit * 3 if use_reranker else limit
-            raw_results = repo.vec_similarity_search(
+            raw_results = self.zettel_service.vec_similarity_search(
                 query_vector, limit=fetch_limit, exclude_ids=exclude_ids,
             )
 
@@ -188,7 +187,7 @@ class SearchService:
 
             # 3. Retrieve full Note objects
             result_ids = [nid for nid, _ in raw_results]
-            notes = repo.get_by_ids(result_ids)
+            notes = self.zettel_service.get_notes_by_ids(result_ids)
             note_map = {n.id: n for n in notes}
             dist_map = {nid: dist for nid, dist in raw_results}
 
@@ -246,17 +245,15 @@ class SearchService:
         if self._embedding_service is None or not config.embeddings_enabled:
             return []
 
-        repo = self.zettel_service.repository
-
         try:
             # Get the stored embedding for this note
-            embedding = repo.get_embedding(note_id)
+            embedding = self.zettel_service.get_embedding(note_id)
             if embedding is None:
                 return []
 
             # KNN search, excluding the seed note
             fetch_limit = limit * 3 if use_reranker else limit
-            raw_results = repo.vec_similarity_search(
+            raw_results = self.zettel_service.vec_similarity_search(
                 embedding, limit=fetch_limit, exclude_ids=[note_id],
             )
 
@@ -265,7 +262,7 @@ class SearchService:
 
             # Retrieve full Note objects
             result_ids = [nid for nid, _ in raw_results]
-            notes = repo.get_by_ids(result_ids)
+            notes = self.zettel_service.get_notes_by_ids(result_ids)
             note_map = {n.id: n for n in notes}
             dist_map = {nid: dist for nid, dist in raw_results}
 
@@ -404,42 +401,35 @@ class SearchService:
         limit: int,
     ) -> Optional[List[SearchResult]]:
         """Attempt FTS5-accelerated search. Returns None if FTS5 unavailable."""
-        repo = self.zettel_service.repository
-        if not getattr(repo, '_fts_available', False):
+        if not self.zettel_service.has_fts():
             return None
 
         try:
             # Fetch extra candidates to account for post-filter attrition
             fetch_limit = limit * 3
-            fts_results = repo.fts_search(text.strip(), limit=fetch_limit)
+            fts_results = self.zettel_service.fts_search(text.strip(), limit=fetch_limit)
 
             if not fts_results:
                 return None  # Fall through to O(N) fallback for non-FTS-tokenizable text
 
             # Retrieve full Note objects for FTS hits
             fts_ids = [r["id"] for r in fts_results]
-            notes = repo.get_by_ids(fts_ids)
+            notes = self.zettel_service.get_notes_by_ids(fts_ids)
             note_map = {n.id: n for n in notes}
             rank_map = {r["id"]: abs(r["rank"]) for r in fts_results}
 
             # Apply post-filters and build SearchResult objects
             results: List[SearchResult] = []
-            for fts_id in fts_ids:
-                note = note_map.get(fts_id)
-                if note is None:
-                    continue
+            filtered_notes = self._apply_filters(
+                [note_map[fid] for fid in fts_ids if fid in note_map],
+                tags, note_type, start_date, end_date,
+            )
+            filtered_ids = {n.id for n in filtered_notes}
 
-                # Apply filters
-                if note_type and note.note_type != note_type:
+            for fts_id in fts_ids:
+                if fts_id not in filtered_ids:
                     continue
-                if start_date and note.created_at < start_date:
-                    continue
-                if end_date and note.created_at > end_date:
-                    continue
-                if tags:
-                    note_tag_names = {tag.name for tag in note.tags}
-                    if not any(tag in note_tag_names for tag in tags):
-                        continue
+                note = note_map[fts_id]
 
                 bm25_rank = rank_map.get(fts_id, 0.0)
                 results.append(SearchResult(

@@ -126,8 +126,8 @@ class TestFTSGracefulDegradation:
         )
         note_repository.create(note)
 
-        # Directly call fallback search
-        results = note_repository._fallback_text_search("fallback")
+        # Directly call fallback search (now lives in FtsIndex subsystem)
+        results = note_repository._fts._fallback_text_search("fallback")
 
         assert len(results) > 0
         assert results[0]["search_mode"] == "fallback"

@@ -16,6 +16,7 @@ import pytest
 from znote_mcp.models.schema import Note, NoteType, NotePurpose, Tag
 from znote_mcp.services.zettel_service import _infer_purpose
 from znote_mcp.storage.note_repository import NoteRepository
+from znote_mcp.storage.obsidian_mirror import ObsidianMirror
 
 
 # =============================================================================
@@ -96,34 +97,34 @@ class TestAutoPurposeInference:
 
 
 class TestDatePrefixFilenames:
-    """Tests for _build_obsidian_filename() with date prefixes."""
+    """Tests for ObsidianMirror.build_filename() with date prefixes."""
 
-    def test_filename_with_date(self, note_repository):
+    def test_filename_with_date(self):
         created = datetime.datetime(2026, 2, 8, 12, 0, 0, tzinfo=timezone.utc)
-        result = note_repository._build_obsidian_filename(
+        result = ObsidianMirror.build_filename(
             "My Test Note", "20260208T120000000000000000", created
         )
         assert result == "2026-02-08_My-Test-Note_00000000"
 
-    def test_filename_without_date(self, note_repository):
+    def test_filename_without_date(self):
         """When created_at is None, no date prefix."""
-        result = note_repository._build_obsidian_filename(
+        result = ObsidianMirror.build_filename(
             "My Test Note", "20260208T120000000000000000", None
         )
         assert result == "My-Test-Note_00000000"
 
-    def test_filename_with_special_chars(self, note_repository):
+    def test_filename_with_special_chars(self):
         created = datetime.datetime(2026, 1, 15, tzinfo=timezone.utc)
-        result = note_repository._build_obsidian_filename(
+        result = ObsidianMirror.build_filename(
             "Architecture Plan: API Design", "20260115T000000000000000000", created
         )
         assert result.startswith("2026-01-15_Architecture-Plan")
         assert result.endswith("_00000000")
 
-    def test_filename_empty_title(self, note_repository):
+    def test_filename_empty_title(self):
         created = datetime.datetime(2026, 3, 1, tzinfo=timezone.utc)
         note_id = "20260301T000000000000000000"
-        result = note_repository._build_obsidian_filename("", note_id, created)
+        result = ObsidianMirror.build_filename("", note_id, created)
         assert result == f"2026-03-01_{note_id}"
 
 
@@ -144,7 +145,7 @@ class TestMarkdownNormalization:
             "|------\n"
             "| data1 | data2 | data3 |\n"
         )
-        result = NoteRepository._normalize_markdown_for_obsidian(markdown)
+        result = ObsidianMirror.normalize_markdown(markdown)
         lines = result.split("\n")
         assert lines[0] == "| Header1 | Header2 | Header3 |"
         assert lines[1] == "| ------ | ------ | ------ |"
@@ -159,7 +160,7 @@ class TestMarkdownNormalization:
         )
         # Fragments with trailing pipe won't match our ^\s*\|[\s\-:]*$ pattern
         # but let's verify we handle mixed cases
-        result = NoteRepository._normalize_markdown_for_obsidian(markdown)
+        result = ObsidianMirror.normalize_markdown(markdown)
         assert "| A | B |" in result
 
     def test_preserve_valid_table(self):
@@ -169,13 +170,13 @@ class TestMarkdownNormalization:
             "| ------ | ------ |\n"
             "| data1 | data2 |\n"
         )
-        result = NoteRepository._normalize_markdown_for_obsidian(markdown)
+        result = ObsidianMirror.normalize_markdown(markdown)
         assert result == markdown
 
     def test_non_table_content_untouched(self):
         """Non-table markdown should pass through unchanged."""
         markdown = "# Title\n\nSome paragraph.\n\n- List item\n"
-        result = NoteRepository._normalize_markdown_for_obsidian(markdown)
+        result = ObsidianMirror.normalize_markdown(markdown)
         assert result == markdown
 
     def test_mixed_content_with_table(self):
@@ -188,7 +189,7 @@ class TestMarkdownNormalization:
             "\n"
             "More text.\n"
         )
-        result = NoteRepository._normalize_markdown_for_obsidian(markdown)
+        result = ObsidianMirror.normalize_markdown(markdown)
         assert "| ------ | ------ |" in result
         assert "# Report" in result
         assert "More text." in result
@@ -202,7 +203,7 @@ class TestMarkdownNormalization:
             "|\n"  # bare pipe
             "| a | b | c |\n"
         )
-        result = NoteRepository._normalize_markdown_for_obsidian(markdown)
+        result = ObsidianMirror.normalize_markdown(markdown)
         lines = result.split("\n")
         # Header should be followed by proper separator
         assert lines[1] == "| ------ | ------ | ------ |"
@@ -217,7 +218,7 @@ class TestMarkdownNormalization:
             "|------\n"
             "| 1 | 2 | 3 | 4 |\n"
         )
-        result = NoteRepository._normalize_markdown_for_obsidian(markdown)
+        result = ObsidianMirror.normalize_markdown(markdown)
         lines = result.split("\n")
         assert lines[1] == "| ------ | ------ | ------ | ------ |"
 

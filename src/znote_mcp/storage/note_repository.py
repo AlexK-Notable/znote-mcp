@@ -11,11 +11,9 @@ import weakref
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
-import frontmatter
 import yaml
 from sqlalchemy import and_, create_engine, func, or_, select, text
 from sqlalchemy.exc import DatabaseError as SQLAlchemyDatabaseError
-from sqlalchemy.exc import OperationalError as SQLAlchemyOperationalError
 from sqlalchemy.orm import Session, joinedload
 
 from znote_mcp.config import config
@@ -28,11 +26,13 @@ from znote_mcp.models.schema import (
 )
 from znote_mcp.storage.git_wrapper import GitWrapper, GitConflictError
 from znote_mcp.storage.base import Repository
+from znote_mcp.storage.markdown_parser import MarkdownParser
+from znote_mcp.storage.obsidian_mirror import ObsidianMirror
+from znote_mcp.storage.fts_index import FtsIndex
 from znote_mcp.exceptions import (
     BulkOperationError,
     DatabaseCorruptionError,
     ErrorCode,
-    SearchError,
     ValidationError,
 )
 from znote_mcp.utils import escape_like_pattern
@@ -121,6 +121,7 @@ class NoteRepository(Repository[Note]):
         obsidian_vault_path: Optional[Path] = None,
         use_git: bool = True,
         in_memory_db: bool = True,
+        engine: Optional[Any] = None,
     ):
         """Initialize the repository.
 
@@ -128,12 +129,17 @@ class NoteRepository(Repository[Note]):
             notes_dir: Path to directory containing note markdown files.
                        If None, uses config.notes_dir.
             database_path: Path to SQLite database file.
-                          Ignored when in_memory_db=True.
+                          Ignored when in_memory_db=True or engine is provided.
             obsidian_vault_path: Path to Obsidian vault for mirroring.
                                 If None, uses config setting.
             use_git: If True, enable git versioning for notes. Default True.
             in_memory_db: If True, use in-memory SQLite database. Default True.
                          When True, database is rebuilt from files on startup.
+                         Ignored when engine is provided.
+            engine: Pre-configured SQLAlchemy engine. When provided, the
+                    repository uses this engine directly instead of calling
+                    init_db(). This allows sharing a single engine across
+                    all repositories.
 
         Note:
             The notes_dir should be the directory CONTAINING the .md files,
@@ -149,7 +155,11 @@ class NoteRepository(Repository[Note]):
 
         # Store configuration options
         self.use_git = use_git
-        self.in_memory_db = in_memory_db
+        # If engine is provided, in_memory_db is derived from the engine URL
+        self.in_memory_db = in_memory_db if engine is None else (
+            str(getattr(engine, 'url', '')) == 'sqlite:///:memory:'
+            or ':memory:' in str(getattr(engine, 'url', ''))
+        )
 
         # Ensure directories exist
         self.notes_dir.mkdir(parents=True, exist_ok=True)
@@ -160,8 +170,8 @@ class NoteRepository(Repository[Note]):
         # Log the configuration being used
         logger.info(
             f"NoteRepository initialized: notes_dir={self.notes_dir}, "
-            f"db_url={config.get_db_url() if not in_memory_db else ':memory:'}, "
-            f"use_git={use_git}, in_memory_db={in_memory_db}"
+            f"db_url={config.get_db_url() if not self.in_memory_db else ':memory:'}, "
+            f"use_git={use_git}, in_memory_db={self.in_memory_db}"
         )
 
         # Initialize Obsidian vault mirror (optional)
@@ -177,9 +187,23 @@ class NoteRepository(Repository[Note]):
             self._git = GitWrapper(self.notes_dir)
             logger.info(f"Git versioning enabled for {self.notes_dir}")
 
-        # Initialize database
-        self.engine = init_db(in_memory=in_memory_db)
+        # Initialize database — use provided engine or create one
+        if engine is not None:
+            self.engine = engine
+        else:
+            self.engine = init_db(in_memory=in_memory_db)
         self.session_factory = get_session_factory(self.engine)
+
+        # Extracted subsystems
+        self._parser = MarkdownParser()
+        self._fts = FtsIndex(self.engine, self.session_factory)
+        # ObsidianMirror is created lazily — only when vault path is configured
+        self._obsidian: Optional[ObsidianMirror] = None
+        if self.obsidian_vault_path:
+            self._obsidian = ObsidianMirror(
+                self.obsidian_vault_path,
+                note_resolver=self.get,
+            )
 
         # File access lock (for bulk operations on multiple files)
         self.file_lock = threading.RLock()
@@ -190,9 +214,6 @@ class NoteRepository(Repository[Note]):
             weakref.WeakValueDictionary()
         )
         self._note_locks_lock = threading.Lock()  # Protects _note_locks dict access
-
-        # FTS5 availability tracking - allows graceful degradation when corrupted
-        self._fts_available: bool = True
 
         # sqlite-vec availability tracking - allows graceful degradation
         # Detected from engine: if init_sqlite_vec() succeeded during init_db(),
@@ -208,6 +229,16 @@ class NoteRepository(Repository[Note]):
             self.rebuild_index()
         else:
             self._initialize_with_health_check()
+
+    @property
+    def _fts_available(self) -> bool:
+        """Whether FTS5 is available (delegates to FtsIndex subsystem)."""
+        return self._fts.available
+
+    @_fts_available.setter
+    def _fts_available(self, value: bool) -> None:
+        """Set FTS5 availability (delegates to FtsIndex subsystem)."""
+        self._fts.available = value
 
     def _detect_vec_available(self) -> bool:
         """Check if sqlite-vec virtual table exists and is usable."""
@@ -345,8 +376,11 @@ class NoteRepository(Repository[Note]):
                         "FTS5 index unhealthy but SQLite OK. "
                         "Attempting FTS rebuild..."
                     )
-                    if self._attempt_fts_recovery():
+                    try:
+                        self.rebuild_fts()
                         self._fts_available = True
+                    except Exception as fts_err:
+                        logger.error(f"FTS rebuild failed: {fts_err}")
 
                 # Handle sync issues (just sync, don't nuke)
                 if health.get("needs_sync"):
@@ -734,152 +768,8 @@ class NoteRepository(Repository[Note]):
             session.add(db_link)
     
     def _parse_note_from_markdown(self, content: str) -> Note:
-        """Parse a note from markdown content."""
-        # Parse frontmatter
-        post = frontmatter.loads(content)
-        metadata = post.metadata
-        
-        # Extract ID from metadata or filename
-        note_id = metadata.get("id")
-        if not note_id:
-            raise ValueError("Note ID missing from frontmatter")
-        
-        # Extract title from metadata or first heading
-        title = metadata.get("title")
-        if not title:
-            # Try to extract from content
-            lines = post.content.strip().split("\n")
-            for line in lines:
-                if line.startswith("# "):
-                    title = line[2:].strip()
-                    break
-        if not title:
-            raise ValueError("Note title missing from frontmatter or content")
-        
-        # Extract note type
-        note_type_str = metadata.get("type", NoteType.PERMANENT.value)
-        try:
-            note_type = NoteType(note_type_str)
-        except ValueError:
-            logger.warning(
-                f"Unknown note type '{note_type_str}' in note {note_id}, "
-                "defaulting to PERMANENT"
-            )
-            note_type = NoteType.PERMANENT
-
-        # Extract project (default to "general" for backwards compatibility)
-        project = metadata.get("project", "general")
-
-        # Extract note_purpose (default to GENERAL for backwards compatibility)
-        purpose_str = metadata.get("purpose", NotePurpose.GENERAL.value)
-        try:
-            note_purpose = NotePurpose(purpose_str)
-        except ValueError:
-            logger.warning(
-                f"Unknown note purpose '{purpose_str}' in note {note_id}, "
-                "defaulting to GENERAL"
-            )
-            note_purpose = NotePurpose.GENERAL
-
-        # Extract plan_id (optional)
-        plan_id = metadata.get("plan_id")
-
-        # Extract tags
-        tags_str = metadata.get("tags", "")
-        if isinstance(tags_str, str):
-            tag_names = [t.strip() for t in tags_str.split(",") if t.strip()]
-        elif isinstance(tags_str, list):
-            tag_names = [str(t).strip() for t in tags_str if str(t).strip()]
-        else:
-            tag_names = []
-        tags = [Tag(name=name) for name in tag_names]
-        
-        # Extract links
-        links = []
-        links_section = False
-        for line in post.content.split("\n"):
-            line = line.strip()
-            # Check if we're in the links section
-            if line.startswith("## Links"):
-                links_section = True
-                continue
-            if links_section and line.startswith("## "):
-                # We've reached the next section
-                links_section = False
-                continue
-            if links_section and line.startswith("- "):
-                # Parse link line
-                try:
-                    # Example format: - reference [[202101010000]] Optional description
-                    line_content = line.strip()
-                    if "[[" in line_content and "]]" in line_content:
-                        # Split the line at the [[ delimiter
-                        parts = line_content.split("[[", 1)
-                        # Extract the link type from before [[
-                        link_type_str = parts[0].strip()
-                        # Remove the leading "- " from the link type string
-                        if link_type_str.startswith("- "):
-                            link_type_str = link_type_str[2:].strip()
-                        # Extract target ID and description
-                        id_and_description = parts[1].split("]]", 1)
-                        target_id = id_and_description[0].strip()
-                        description = None
-                        if len(id_and_description) > 1:
-                            description = id_and_description[1].strip()
-                        # Validate link type
-                        try:
-                            link_type = LinkType(link_type_str)
-                        except ValueError:
-                            # If not a valid type, default to reference with warning
-                            logger.warning(
-                                f"Unknown link type '{link_type_str}' in note {note_id}, "
-                                "defaulting to REFERENCE"
-                            )
-                            link_type = LinkType.REFERENCE
-                        links.append(
-                            Link(
-                                source_id=note_id,
-                                target_id=target_id,
-                                link_type=link_type,
-                                description=description,
-                                created_at=utc_now()
-                            )
-                        )
-                except (ValueError, IndexError) as e:
-                    # Malformed link line - log and skip this link
-                    logger.warning(f"Skipping malformed link in note {note_id}: {line} - {e}")
-                # Let other exceptions (bugs in Link constructor, etc.) propagate
-        
-        # Extract timestamps
-        created_str = metadata.get("created")
-        created_at = (
-            ensure_timezone_aware(datetime.datetime.fromisoformat(created_str))
-            if created_str
-            else utc_now()
-        )
-        updated_str = metadata.get("updated")
-        updated_at = (
-            ensure_timezone_aware(datetime.datetime.fromisoformat(updated_str))
-            if updated_str
-            else created_at
-        )
-        
-        # Create note object
-        return Note(
-            id=note_id,
-            title=title,
-            content=post.content,
-            note_type=note_type,
-            note_purpose=note_purpose,
-            project=project,
-            plan_id=plan_id,
-            tags=tags,
-            links=links,
-            created_at=created_at,
-            updated_at=updated_at,
-            metadata={k: v for k, v in metadata.items()
-                     if k not in ["id", "title", "type", "purpose", "project", "plan_id", "tags", "created", "updated"]}
-        )
+        """Parse a note from markdown content (delegates to MarkdownParser)."""
+        return self._parser.parse_note(content)
     
     def _index_note(self, note: Note) -> None:
         """Index a note in the database."""
@@ -967,262 +857,78 @@ class NoteRepository(Repository[Note]):
         return db_tag
 
     def _note_to_markdown(self, note: Note) -> str:
-        """Convert a note to markdown with frontmatter."""
-        # Create frontmatter
-        metadata = {
-            "id": note.id,
-            "title": note.title,
-            "type": note.note_type.value,
-            "purpose": note.note_purpose.value if note.note_purpose else NotePurpose.GENERAL.value,
-            "project": note.project,
-            "tags": [tag.name for tag in note.tags],
-            "created": note.created_at.isoformat(),
-            "updated": note.updated_at.isoformat()
-        }
-        # Add plan_id if set
-        if note.plan_id:
-            metadata["plan_id"] = note.plan_id
-        # Add any custom metadata
-        metadata.update(note.metadata)
-        
-        # Check if content already starts with the title
-        title_heading = f"# {note.title}"
-        if note.content.strip().startswith(title_heading):
-            content = note.content
-        else:
-            content = f"{title_heading}\n\n{note.content}"
-        
-        # Remove existing Links section(s)
-        content_parts = []
-        skip_section = False
-        for line in content.split("\n"):
-            if line.strip() == "## Links":
-                skip_section = True
-                continue
-            elif skip_section and line.startswith("## "):
-                skip_section = False
-            
-            if not skip_section:
-                content_parts.append(line)
-        
-        # Reconstruct the content without the Links sections
-        content = "\n".join(content_parts).rstrip()
-        
-        # Add links section (with deduplication)
-        if note.links:
-            unique_links = {}  # Use dict to deduplicate
-            for link in note.links:
-                key = f"{link.target_id}:{link.link_type.value}"
-                unique_links[key] = link
-            content += "\n\n## Links\n"
-            for link in unique_links.values():
-                desc = f" {link.description}" if link.description else ""
-                content += f"- {link.link_type.value} [[{link.target_id}]]{desc}\n"
-        
-        # Create markdown with frontmatter
-        post = frontmatter.Post(content, **metadata)
-        return frontmatter.dumps(post)
-
-    def _build_obsidian_filename(
-        self,
-        title: str,
-        note_id: str,
-        created_at: Optional[datetime.datetime] = None,
-    ) -> str:
-        """Build a terminal-friendly Obsidian filename from title, ID, and date.
-
-        Format: YYYY-MM-DD_Sanitized-Title_id_suffix
-        Example: "Architecture Plan: Integration" created 2026-02-08 with ID "...74000000"
-                 becomes "2026-02-08_Architecture-Plan-Integration_74000000"
-
-        Args:
-            title: The note title.
-            note_id: The note's full ID.
-            created_at: Note creation datetime (used for date prefix).
-
-        Returns:
-            Terminal-friendly filename (without .md extension).
-        """
-        safe_title = _sanitize_for_terminal(title)
-        id_suffix = note_id[-8:] if len(note_id) >= 8 else note_id
-
-        # Build date prefix from created_at
-        date_prefix = ""
-        if created_at:
-            date_prefix = created_at.strftime("%Y-%m-%d") + "_"
-
-        if safe_title:
-            return f"{date_prefix}{safe_title}_{id_suffix}"
-        else:
-            return f"{date_prefix}{note_id}"
-
-    def _rewrite_links_for_obsidian(self, markdown: str) -> str:
-        """Rewrite ID-based wikilinks to Obsidian-compatible title-based links.
-
-        Converts [[full_note_id]] to [[Sanitized-Title_id_suffix]] format
-        that Obsidian can resolve to actual files.
-
-        Args:
-            markdown: The markdown content with ID-based wikilinks.
-
-        Returns:
-            Markdown with Obsidian-compatible wikilinks.
-        """
-        # Pattern matches znote IDs in two formats:
-        # - ISO-ish with T: [[20260128T072243924474000000]] (YYYYMMDD + T + timestamp)
-        # - Pure numeric: [[20251226222122655378000]] (all digits)
-        # The key is: starts with 20 (century), followed by date/time digits
-        id_pattern = re.compile(r'\[\[(20\d{6}T\d{9,}|20\d{17,})\]\]')
-
-        def replace_link(match: re.Match) -> str:
-            note_id = match.group(1)
-            try:
-                linked_note = self.get(note_id)
-                if linked_note:
-                    obsidian_name = self._build_obsidian_filename(
-                        linked_note.title, linked_note.id, linked_note.created_at
-                    )
-                    return f"[[{obsidian_name}]]"
-            except Exception as e:
-                logger.debug(f"Could not resolve note {note_id} for link rewrite: {e}")
-            # Keep original if note not found or error
-            return match.group(0)
-
-        return id_pattern.sub(replace_link, markdown)
+        """Convert a note to markdown with frontmatter (delegates to MarkdownParser)."""
+        return self._parser.render_to_markdown(note)
 
     @staticmethod
-    def _normalize_markdown_for_obsidian(markdown: str) -> str:
-        """Normalize agent-generated markdown for proper Obsidian rendering.
+    def _db_note_to_model(db_note: DBNote) -> Note:
+        """Convert a SQLAlchemy DBNote to a domain Note without file I/O.
 
-        Fixes common issues with markdown tables that agents produce:
-        1. Fragmented header separators (|--- split across multiple lines)
-        2. Missing header separators entirely
+        Constructs the Note directly from database columns and eager-loaded
+        relationships.  This is the batch-friendly alternative to get() which
+        reads and parses a file per note.
 
-        Args:
-            markdown: Raw markdown content.
-
-        Returns:
-            Normalized markdown with Obsidian-compatible tables.
+        Limitations:
+            - ``metadata`` will be empty (extra frontmatter keys are not stored
+              in the DB).  Use get() when metadata is needed.
         """
-        lines = markdown.split("\n")
-        result: List[str] = []
-        i = 0
+        tags = [Tag(name=t.name) for t in (db_note.tags or [])]
+        links = [
+            Link(
+                source_id=lnk.source_id,
+                target_id=lnk.target_id,
+                link_type=LinkType(lnk.link_type),
+                description=lnk.description,
+                created_at=ensure_timezone_aware(lnk.created_at) if lnk.created_at else utc_now(),
+            )
+            for lnk in (db_note.outgoing_links or [])
+        ]
 
-        while i < len(lines):
-            line = lines[i]
+        return Note(
+            id=db_note.id,
+            title=db_note.title,
+            content=db_note.content,
+            note_type=NoteType(db_note.note_type),
+            note_purpose=NotePurpose(db_note.note_purpose) if db_note.note_purpose else NotePurpose.GENERAL,
+            project=db_note.project or "general",
+            plan_id=db_note.plan_id,
+            tags=tags,
+            links=links,
+            created_at=ensure_timezone_aware(db_note.created_at) if db_note.created_at else utc_now(),
+            updated_at=ensure_timezone_aware(db_note.updated_at) if db_note.updated_at else utc_now(),
+            metadata={},
+        )
 
-            # Detect a table header row: line with multiple pipe-separated cells
-            # e.g. "| Header1 | Header2 | Header3 |"
-            if re.match(r'^\s*\|(.+\|){2,}\s*$', line):
-                # Count columns in header
-                cols = line.count('|') - 1  # subtract 1 for trailing pipe
-                # Count more precisely: split by | and filter non-empty
-                cells = [c for c in line.split('|') if c.strip()]
-                col_count = len(cells)
-
-                result.append(line)
-                i += 1
-
-                # Check if next lines are fragmented separator pieces
-                # Pattern: lines that are just "|------" or "|------|" or "|"
-                separator_fragments = []
-                while i < len(lines) and re.match(r'^\s*\|[\s\-:]*$', lines[i]):
-                    separator_fragments.append(lines[i])
-                    i += 1
-
-                if separator_fragments:
-                    # Replace fragmented separators with a proper single-line separator
-                    sep_cell = "------"
-                    proper_separator = "| " + " | ".join([sep_cell] * col_count) + " |"
-                    result.append(proper_separator)
-                elif i < len(lines) and re.match(r'^\s*\|[\s\-:]+(\|[\s\-:]+)+\|\s*$', lines[i]):
-                    # Already a proper separator line - keep it
-                    result.append(lines[i])
-                    i += 1
-                # else: not a table after all (no separator follows), just continue
-            else:
-                result.append(line)
-                i += 1
-
-        return "\n".join(result)
+    def _get_obsidian_mirror(self) -> Optional[ObsidianMirror]:
+        """Get the ObsidianMirror instance, creating/updating if vault path changed."""
+        if not self.obsidian_vault_path:
+            return None
+        # Create or recreate if vault path was changed after init
+        if self._obsidian is None or self._obsidian.vault_path != self.obsidian_vault_path:
+            self._obsidian = ObsidianMirror(
+                self.obsidian_vault_path,
+                note_resolver=self.get,
+            )
+        return self._obsidian
 
     def _mirror_to_obsidian(self, note: Note, markdown: str) -> None:
-        """Mirror a note to the Obsidian vault if configured.
-
-        Creates a copy of the note in the Obsidian vault using the note's project
-        and purpose as subdirectories. Uses terminal-friendly filenames with no
-        spaces (hyphens between words, underscore before ID suffix).
-
-        Directory structure: obsidian_vault/project/purpose/YYYY-MM-DD_Title-Name_id_suffix.md
-        """
-        if not self.obsidian_vault_path:
-            return
-
-        # Sanitize project and purpose for directory names (terminal-friendly)
-        safe_project = _sanitize_for_terminal(note.project) or "general"
-        purpose_value = note.note_purpose.value if note.note_purpose else "general"
-        safe_purpose = _sanitize_for_terminal(purpose_value) or "general"
-
-        # Build terminal-friendly filename with date prefix
-        safe_filename = self._build_obsidian_filename(note.title, note.id, note.created_at)
-
-        # Create project/purpose subdirectory structure
-        purpose_dir = self.obsidian_vault_path / safe_project / safe_purpose
-        purpose_dir.mkdir(parents=True, exist_ok=True)
-
-        obsidian_file_path = purpose_dir / f"{safe_filename}.md"
-
-        # Rewrite links to use Obsidian-compatible format
-        obsidian_markdown = self._rewrite_links_for_obsidian(markdown)
-
-        # Normalize markdown for Obsidian rendering (fix broken tables, etc.)
-        obsidian_markdown = self._normalize_markdown_for_obsidian(obsidian_markdown)
-
-        # Inject Obsidian-only frontmatter (aliases, cssclasses)
-        obsidian_markdown = self._inject_obsidian_frontmatter(obsidian_markdown, note)
-
-        try:
-            with open(obsidian_file_path, "w", encoding="utf-8") as f:
-                f.write(obsidian_markdown)
-            logger.debug(f"Mirrored note to Obsidian: {obsidian_file_path}")
-        except IOError as e:
-            # Log but don't fail - Obsidian mirror is secondary
-            logger.warning(f"Failed to mirror note to Obsidian vault: {e}")
-
-    @staticmethod
-    def _inject_obsidian_frontmatter(markdown: str, note: "Note") -> str:
-        """Inject Obsidian-specific frontmatter (aliases, cssclasses).
-
-        These keys only appear in the Obsidian mirror, never in the source file.
-        - aliases: Enables Quick Switcher to find notes by human-readable title
-        - cssclasses: Enables per-type CSS styling in Obsidian
-        """
-        try:
-            post = frontmatter.loads(markdown)
-            post.metadata["aliases"] = [note.title]
-            note_type_val = note.note_type.value if note.note_type else "permanent"
-            post.metadata["cssclasses"] = [note_type_val]
-            return frontmatter.dumps(post)
-        except Exception as e:
-            logger.warning(f"Failed to inject Obsidian frontmatter: {e}")
-            return markdown
+        """Mirror a note to the Obsidian vault (delegates to ObsidianMirror)."""
+        mirror = self._get_obsidian_mirror()
+        if mirror:
+            mirror.mirror_note(note, markdown)
 
     def _cascade_obsidian_remirror(self, note_id: str) -> None:
-        """Re-mirror notes that link TO this note (best-effort cascade).
-
-        When a note's title changes, notes linking to it have stale wikilinks
-        in their Obsidian mirrors. This re-mirrors up to 50 incoming-linked notes.
-        """
+        """Re-mirror notes linking to this note (delegates to ObsidianMirror)."""
+        mirror = self._get_obsidian_mirror()
+        if not mirror:
+            return
         try:
-            linked_notes = self.find_linked_notes(note_id, "incoming")
-            for linked_note in linked_notes[:50]:
-                try:
-                    full_note = self.get(linked_note.id)
-                    if full_note:
-                        md = self._note_to_markdown(full_note)
-                        self._mirror_to_obsidian(full_note, md)
-                except Exception as inner_err:
-                    logger.debug(f"Cascade re-mirror failed for {linked_note.id}: {inner_err}")
+            incoming_notes = self.find_linked_notes(note_id, "incoming")
+            self._obsidian.cascade_remirror(
+                note_id,
+                incoming_notes,
+                note_to_markdown=self._note_to_markdown,
+            )
         except Exception as e:
             logger.warning(f"Obsidian link cascade failed for {note_id}: {e}")
 
@@ -1389,10 +1095,10 @@ class NoteRepository(Repository[Note]):
             return self.get(db_note.id)
 
     def get_by_ids(self, ids: List[str]) -> List[Note]:
-        """Get multiple notes by their IDs in a batch.
+        """Get multiple notes by their IDs in a single DB query.
 
-        This method is more efficient than calling get() multiple times
-        when you need to retrieve several notes, as it minimizes I/O overhead.
+        Much more efficient than calling get() in a loop: one SQL query
+        instead of N file reads + YAML parses.
 
         Args:
             ids: List of note IDs to retrieve.
@@ -1411,13 +1117,26 @@ class NoteRepository(Repository[Note]):
         for note_id in ids:
             validate_safe_path_component(note_id, "Note ID")
 
-        notes = []
-        for note_id in ids:
-            note = self.get(note_id)
-            if note:
-                notes.append(note)
+        with self.session_factory() as session:
+            query = (
+                select(DBNote)
+                .where(DBNote.id.in_(ids))
+                .options(
+                    joinedload(DBNote.tags),
+                    joinedload(DBNote.outgoing_links),
+                    joinedload(DBNote.incoming_links),
+                )
+            )
+            db_notes = session.execute(query).unique().scalars().all()
 
-        return notes
+        # Preserve request order
+        id_to_note = {}
+        for db_note in db_notes:
+            try:
+                id_to_note[db_note.id] = self._db_note_to_model(db_note)
+            except Exception as e:
+                logger.warning(f"Failed to convert note {db_note.id}: {e}")
+        return [id_to_note[nid] for nid in ids if nid in id_to_note]
 
     def get_all(
         self,
@@ -1438,51 +1157,34 @@ class NoteRepository(Repository[Note]):
             Use count_notes() to get total count for pagination UI.
         """
         with self.session_factory() as session:
-            # Build query with eager loading
             query = select(DBNote).options(
                 joinedload(DBNote.tags),
                 joinedload(DBNote.outgoing_links),
-                joinedload(DBNote.incoming_links)
+                joinedload(DBNote.incoming_links),
             ).order_by(DBNote.created_at.desc())
 
-            # Apply pagination at SQL level
             if offset > 0:
                 query = query.offset(offset)
             if limit is not None:
                 query = query.limit(limit)
 
-            result = session.execute(query)
-            # Apply unique() to handle the duplicate rows from eager loading
-            db_notes = result.unique().scalars().all()
+            db_notes = session.execute(query).unique().scalars().all()
 
-            # Process notes in batches to reduce memory usage
-            batch_size = 50
-            all_notes = []
-            failed_ids: List[str] = []
-            # Create batches of note IDs
-            note_ids = [note.id for note in db_notes]
-            for i in range(0, len(note_ids), batch_size):
-                batch_ids = note_ids[i:i + batch_size]
-                note_batch = []
-                # Process each note in the batch
-                for note_id in batch_ids:
-                    try:
-                        note = self.get(note_id)
-                        if note:
-                            note_batch.append(note)
-                    except (IOError, OSError, ValueError, yaml.YAMLError) as e:
-                        # File/parsing errors - log and continue
-                        logger.error(f"Error loading note {note_id}: {e}")
-                        failed_ids.append(note_id)
-                    # Let system errors (MemoryError, etc.) and bugs propagate
-                all_notes.extend(note_batch)
+        notes = []
+        failed_ids: List[str] = []
+        for db_note in db_notes:
+            try:
+                notes.append(self._db_note_to_model(db_note))
+            except Exception as e:
+                logger.error(f"Error converting note {db_note.id}: {e}")
+                failed_ids.append(db_note.id)
 
-            if failed_ids:
-                logger.warning(
-                    f"Failed to load {len(failed_ids)} of {len(note_ids)} notes: "
-                    f"{failed_ids[:5]}{'...' if len(failed_ids) > 5 else ''}"
-                )
-            return all_notes
+        if failed_ids:
+            logger.warning(
+                f"Failed to convert {len(failed_ids)} of {len(db_notes)} notes: "
+                f"{failed_ids[:5]}{'...' if len(failed_ids) > 5 else ''}"
+            )
+        return notes
 
     def count_notes(self) -> int:
         """Get total count of notes in the repository.
@@ -1499,9 +1201,6 @@ class NoteRepository(Repository[Note]):
     def get_by_project(self, project: str) -> List[Note]:
         """Get all notes for a specific project using SQL-level filtering.
 
-        This method queries the database directly for notes matching the project,
-        avoiding full file scans. Much faster than filtering get_all() results.
-
         Args:
             project: The project name to filter by.
 
@@ -1509,24 +1208,24 @@ class NoteRepository(Repository[Note]):
             List of Note objects belonging to the specified project.
         """
         with self.session_factory() as session:
-            query = select(DBNote).where(DBNote.project == project).options(
-                joinedload(DBNote.tags),
-                joinedload(DBNote.outgoing_links),
-                joinedload(DBNote.incoming_links)
+            query = (
+                select(DBNote)
+                .where(DBNote.project == project)
+                .options(
+                    joinedload(DBNote.tags),
+                    joinedload(DBNote.outgoing_links),
+                    joinedload(DBNote.incoming_links),
+                )
             )
-            result = session.execute(query)
-            db_notes = result.unique().scalars().all()
+            db_notes = session.execute(query).unique().scalars().all()
 
-            notes = []
-            for db_note in db_notes:
-                try:
-                    note = self.get(db_note.id)
-                    if note:
-                        notes.append(note)
-                except (IOError, OSError, ValueError, yaml.YAMLError) as e:
-                    logger.error(f"Error loading note {db_note.id}: {e}")
-
-            return notes
+        notes = []
+        for db_note in db_notes:
+            try:
+                notes.append(self._db_note_to_model(db_note))
+            except Exception as e:
+                logger.error(f"Error converting note {db_note.id}: {e}")
+        return notes
 
     def update(self, note: Note) -> Note:
         """Update a note.
@@ -1865,6 +1564,61 @@ class NoteRepository(Repository[Note]):
                 self.delete(id)
                 return VersionInfo(commit_hash="0000000", timestamp=utc_now())
 
+    @staticmethod
+    def _apply_search_filters(query: Any, kwargs: Dict[str, Any]) -> Any:
+        """Apply common search filter criteria to a SQLAlchemy query.
+
+        Used by both search() and count_search_results() to avoid
+        duplicating filter logic.
+
+        Args:
+            query: SQLAlchemy select query to add WHERE clauses to.
+            kwargs: Search criteria dict.
+
+        Returns:
+            The query with filters applied.
+        """
+        if "content" in kwargs:
+            search_term = escape_like_pattern(kwargs['content'])
+            query = query.where(
+                or_(
+                    DBNote.content.like(f"%{search_term}%", escape='\\'),
+                    DBNote.title.like(f"%{search_term}%", escape='\\')
+                )
+            )
+        if "title" in kwargs:
+            search_title = escape_like_pattern(kwargs['title'])
+            query = query.where(func.lower(DBNote.title).like(f"%{search_title.lower()}%", escape='\\'))
+        if "note_type" in kwargs:
+            note_type = (
+                kwargs["note_type"].value
+                if isinstance(kwargs["note_type"], NoteType)
+                else kwargs["note_type"]
+            )
+            query = query.where(DBNote.note_type == note_type)
+        if "tag" in kwargs:
+            tag_name = kwargs["tag"]
+            query = query.join(DBNote.tags).where(DBTag.name == tag_name)
+        if "tags" in kwargs:
+            tag_names = kwargs["tags"]
+            if isinstance(tag_names, list):
+                query = query.join(DBNote.tags).where(DBTag.name.in_(tag_names))
+        if "linked_to" in kwargs:
+            target_id = kwargs["linked_to"]
+            query = query.join(DBNote.outgoing_links).where(DBLink.target_id == target_id)
+        if "linked_from" in kwargs:
+            source_id = kwargs["linked_from"]
+            query = query.join(DBNote.incoming_links).where(DBLink.source_id == source_id)
+        if "created_after" in kwargs:
+            query = query.where(DBNote.created_at >= kwargs["created_after"])
+        if "created_before" in kwargs:
+            query = query.where(DBNote.created_at <= kwargs["created_before"])
+        if "updated_after" in kwargs:
+            query = query.where(DBNote.updated_at >= kwargs["updated_after"])
+        if "updated_before" in kwargs:
+            query = query.where(DBNote.updated_at <= kwargs["updated_before"])
+        return query
+
     def search(
         self,
         limit: Optional[int] = None,
@@ -1889,48 +1643,7 @@ class NoteRepository(Repository[Note]):
                 joinedload(DBNote.outgoing_links),
                 joinedload(DBNote.incoming_links)
             )
-            # Process search criteria
-            if "content" in kwargs:
-                search_term = escape_like_pattern(kwargs['content'])
-                # Search in both content and title since content might include the title
-                query = query.where(
-                    or_(
-                        DBNote.content.like(f"%{search_term}%", escape='\\'),
-                        DBNote.title.like(f"%{search_term}%", escape='\\')
-                    )
-                )
-            if "title" in kwargs:
-                search_title = escape_like_pattern(kwargs['title'])
-                # Use case-insensitive search with func.lower()
-                query = query.where(func.lower(DBNote.title).like(f"%{search_title.lower()}%", escape='\\'))
-            if "note_type" in kwargs:
-                note_type = (
-                    kwargs["note_type"].value
-                    if isinstance(kwargs["note_type"], NoteType)
-                    else kwargs["note_type"]
-                )
-                query = query.where(DBNote.note_type == note_type)
-            if "tag" in kwargs:
-                tag_name = kwargs["tag"]
-                query = query.join(DBNote.tags).where(DBTag.name == tag_name)
-            if "tags" in kwargs:
-                tag_names = kwargs["tags"]
-                if isinstance(tag_names, list):
-                    query = query.join(DBNote.tags).where(DBTag.name.in_(tag_names))
-            if "linked_to" in kwargs:
-                target_id = kwargs["linked_to"]
-                query = query.join(DBNote.outgoing_links).where(DBLink.target_id == target_id)
-            if "linked_from" in kwargs:
-                source_id = kwargs["linked_from"]
-                query = query.join(DBNote.incoming_links).where(DBLink.source_id == source_id)
-            if "created_after" in kwargs:
-                query = query.where(DBNote.created_at >= kwargs["created_after"])
-            if "created_before" in kwargs:
-                query = query.where(DBNote.created_at <= kwargs["created_before"])
-            if "updated_after" in kwargs:
-                query = query.where(DBNote.updated_at >= kwargs["updated_after"])
-            if "updated_before" in kwargs:
-                query = query.where(DBNote.updated_at <= kwargs["updated_before"])
+            query = self._apply_search_filters(query, kwargs)
 
             # Order by creation date (newest first) for consistent pagination
             query = query.order_by(DBNote.created_at.desc())
@@ -1941,17 +1654,9 @@ class NoteRepository(Repository[Note]):
             if limit is not None:
                 query = query.limit(limit)
 
-            # Execute query and apply unique() to handle duplicates from joins
-            result = session.execute(query)
-            db_notes = result.unique().scalars().all()
+            db_notes = session.execute(query).unique().scalars().all()
 
-        # Load notes from file system (hybrid approach - file is source of truth)
-        notes = []
-        for db_note in db_notes:
-            note = self.get(db_note.id)
-            if note:
-                notes.append(note)
-        return notes
+        return [self._db_note_to_model(db) for db in db_notes]
 
     def count_search_results(self, **kwargs: Any) -> int:
         """Count notes matching search criteria without loading them.
@@ -1966,109 +1671,10 @@ class NoteRepository(Repository[Note]):
         """
         with self.session_factory() as session:
             query = select(func.count(DBNote.id.distinct()))
-
-            # Apply same filters as search() with proper LIKE escaping
-            if "content" in kwargs:
-                search_term = escape_like_pattern(kwargs['content'])
-                query = query.where(
-                    or_(
-                        DBNote.content.like(f"%{search_term}%", escape='\\'),
-                        DBNote.title.like(f"%{search_term}%", escape='\\')
-                    )
-                )
-            if "title" in kwargs:
-                search_title = escape_like_pattern(kwargs['title'])
-                query = query.where(func.lower(DBNote.title).like(f"%{search_title.lower()}%", escape='\\'))
-            if "note_type" in kwargs:
-                note_type = (
-                    kwargs["note_type"].value
-                    if isinstance(kwargs["note_type"], NoteType)
-                    else kwargs["note_type"]
-                )
-                query = query.where(DBNote.note_type == note_type)
-            if "tag" in kwargs:
-                tag_name = kwargs["tag"]
-                query = query.join(DBNote.tags).where(DBTag.name == tag_name)
-            if "tags" in kwargs:
-                tag_names = kwargs["tags"]
-                if isinstance(tag_names, list):
-                    query = query.join(DBNote.tags).where(DBTag.name.in_(tag_names))
-            if "linked_to" in kwargs:
-                target_id = kwargs["linked_to"]
-                query = query.join(DBNote.outgoing_links).where(DBLink.target_id == target_id)
-            if "linked_from" in kwargs:
-                source_id = kwargs["linked_from"]
-                query = query.join(DBNote.incoming_links).where(DBLink.source_id == source_id)
-            if "created_after" in kwargs:
-                query = query.where(DBNote.created_at >= kwargs["created_after"])
-            if "created_before" in kwargs:
-                query = query.where(DBNote.created_at <= kwargs["created_before"])
-            if "updated_after" in kwargs:
-                query = query.where(DBNote.updated_at >= kwargs["updated_after"])
-            if "updated_before" in kwargs:
-                query = query.where(DBNote.updated_at <= kwargs["updated_before"])
+            query = self._apply_search_filters(query, kwargs)
 
             result = session.execute(query)
             return result.scalar() or 0
-
-    def _should_escape_fts5_query(self, query: str) -> bool:
-        """Auto-detect if query should be escaped for literal matching.
-
-        Analyzes the query to determine if it appears to use intentional
-        FTS5 syntax (operators, phrases, wildcards) or if it should be
-        treated as a literal search string.
-
-        Args:
-            query: The search query to analyze.
-
-        Returns:
-            True if the query should be escaped (literal matching),
-            False if it appears to use intentional FTS5 syntax.
-        """
-        FTS5_KEYWORDS = {'AND', 'OR', 'NOT', 'NEAR'}
-
-        # Check for intentional FTS5 boolean operators
-        words = query.upper().split()
-        if any(kw in words for kw in FTS5_KEYWORDS):
-            return False
-
-        # Check for phrase quotes (at least a pair of quotes)
-        if query.count('"') >= 2:
-            return False
-
-        # Check for prefix wildcards (word ending with *)
-        if re.search(r'\b\w+\*', query):
-            return False
-
-        # Check for column filters (e.g., title:python)
-        if re.search(r'\b\w+:', query):
-            return False
-
-        # Default: escape for literal matching
-        return True
-
-    def _escape_fts5_query(self, query: str) -> str:
-        """Escape FTS5 special characters for literal matching.
-
-        Wraps the query as a quoted phrase so FTS5 treats all characters
-        as literal text rather than query syntax. This prevents hyphens
-        from being interpreted as column-prefix operators (e.g. '2026-02-03'
-        would otherwise cause 'no such column: 02').
-
-        Args:
-            query: The search query to escape.
-
-        Returns:
-            Escaped query safe for FTS5 literal matching.
-        """
-        # Escape double quotes (FTS5 uses "" inside phrases for literal ")
-        result = query.replace('"', '""')
-
-        # Remove wildcards and boost operators that could cause syntax errors
-        result = re.sub(r'[*^]', '', result)
-
-        # Wrap as a quoted phrase for fully literal matching
-        return f'"{result}"'
 
     def fts_search(
         self,
@@ -2077,223 +1683,16 @@ class NoteRepository(Repository[Note]):
         highlight: bool = False,
         literal: Optional[bool] = None,
     ) -> List[Dict[str, Any]]:
-        """Full-text search using SQLite FTS5 with graceful degradation.
-
-        Performs efficient full-text search with BM25 ranking. If FTS5 is
-        unavailable or corrupted, automatically falls back to LIKE-based search.
-
-        Args:
-            query: Search query. Supports basic FTS5 syntax:
-                   - Simple terms: "python async"
-                   - Phrases: '"async await"'
-                   - Boolean: "python AND NOT java"
-                   - Prefix: "program*"
-                   - Column filter: "title:python"
-                   Note: Complex syntax (NEAR, parentheses) may require escaping.
-            limit: Maximum number of results to return.
-            highlight: If True, include highlighted snippets in results.
-            literal: Controls query escaping behavior:
-                     - None (default): Auto-detect based on query content.
-                       Escapes unless FTS5 operators/syntax detected.
-                     - True: Force literal matching (escape all operators).
-                     - False: Preserve FTS5 syntax (minimal escaping).
-
-        Returns:
-            List of dicts with keys:
-                - id: Note ID
-                - title: Note title
-                - rank: BM25 relevance score (lower is better)
-                - snippet: Highlighted content snippet (if highlight=True)
-                - search_mode: "fts5" or "fallback" indicating search method used
-        """
-        # Skip FTS5 entirely if known to be unavailable (graceful degradation)
-        if not self._fts_available:
-            logger.debug("FTS5 unavailable, using fallback search")
-            return self._fallback_text_search(query, limit)
-
-        results = []
-
-        with self.session_factory() as session:
-            # Smart query escaping based on literal parameter
-            # Auto-detect if not explicitly specified
-            if literal is None:
-                literal = self._should_escape_fts5_query(query)
-
-            if literal:
-                # Escape FTS5 operators for literal matching
-                safe_query = self._escape_fts5_query(query)
-            else:
-                # Minimal escaping - preserve FTS5 syntax
-                safe_query = query.replace('"', '""')
-
-            if highlight:
-                # Query with highlighted snippets
-                sql = text("""
-                    SELECT
-                        id,
-                        title,
-                        bm25(notes_fts) as rank,
-                        snippet(notes_fts, 2, '<mark>', '</mark>', '...', 32) as snippet
-                    FROM notes_fts
-                    WHERE notes_fts MATCH :query
-                    ORDER BY rank
-                    LIMIT :limit
-                """)
-            else:
-                # Query without snippets (faster)
-                sql = text("""
-                    SELECT
-                        id,
-                        title,
-                        bm25(notes_fts) as rank
-                    FROM notes_fts
-                    WHERE notes_fts MATCH :query
-                    ORDER BY rank
-                    LIMIT :limit
-                """)
-
-            try:
-                result = session.execute(sql, {"query": safe_query, "limit": limit})
-                rows = result.fetchall()
-
-                for row in rows:
-                    entry = {
-                        "id": row[0],
-                        "title": row[1],
-                        "rank": row[2],
-                        "search_mode": "fts5"  # Indicate FTS5 was used
-                    }
-                    if highlight and len(row) > 3:
-                        entry["snippet"] = row[3]
-                    results.append(entry)
-
-            except (sqlite3.OperationalError, SQLAlchemyOperationalError) as e:
-                # FTS5 syntax errors - fall back to LIKE search
-                logger.warning(
-                    f"FTS5 query failed for '{query}': {e}. Using fallback search."
-                )
-                return self._fallback_text_search(query, limit)
-
-            except (sqlite3.DatabaseError, SQLAlchemyDatabaseError) as e:
-                # Corruption or malformed database - attempt recovery
-                error_msg = str(e).lower()
-                if "malformed" in error_msg or "corrupt" in error_msg:
-                    logger.error(
-                        f"FTS5 corruption detected: {e}. Attempting auto-rebuild..."
-                    )
-                    if self._attempt_fts_recovery():
-                        # Retry search after successful rebuild
-                        logger.info("FTS5 rebuilt successfully, retrying search")
-                        return self.fts_search(query, limit, highlight)
-                    else:
-                        # Recovery failed, disable FTS and use fallback
-                        logger.error(
-                            "FTS5 recovery failed. Disabling FTS5 for this session. "
-                            "Call reset_fts_availability() after manual repair."
-                        )
-                        self._fts_available = False
-                        return self._fallback_text_search(query, limit)
-                else:
-                    # Non-corruption database error - still fall back
-                    logger.error(f"FTS5 database error: {e}. Using fallback search.")
-                    return self._fallback_text_search(query, limit)
-
-        return results
-
-    def _attempt_fts_recovery(self) -> bool:
-        """Attempt to recover FTS5 index by rebuilding it.
-
-        Returns:
-            True if recovery succeeded, False otherwise.
-        """
-        try:
-            count = self.rebuild_fts()
-            logger.info(f"FTS5 index rebuilt with {count} notes")
-            return True
-        except Exception as e:
-            logger.error(f"FTS5 rebuild failed: {e}")
-            return False
+        """Full-text search using FTS5 (delegates to FtsIndex subsystem)."""
+        return self._fts.search(query, limit=limit, highlight=highlight, literal=literal)
 
     def reset_fts_availability(self) -> bool:
-        """Reset FTS5 availability flag and verify FTS5 works.
-
-        Call this after manually repairing the FTS5 index to re-enable
-        FTS5 search. Performs an integrity check before re-enabling.
-
-        Returns:
-            True if FTS5 is now available, False if still broken.
-        """
-        try:
-            with self.session_factory() as session:
-                # Test FTS5 with integrity check
-                session.execute(
-                    text("INSERT INTO notes_fts(notes_fts) VALUES('integrity-check')")
-                )
-            self._fts_available = True
-            logger.info("FTS5 availability reset - FTS5 is now enabled")
-            return True
-        except Exception as e:
-            logger.error(f"FTS5 still unavailable: {e}")
-            self._fts_available = False
-            return False
-
-    def _fallback_text_search(
-        self,
-        query: str,
-        limit: int = 50
-    ) -> List[Dict[str, Any]]:
-        """Fallback text search using LIKE when FTS5 fails.
-
-        Used when FTS5 query syntax is invalid or FTS is unavailable.
-        Results include search_mode='fallback' to indicate the search mode.
-
-        Raises:
-            SearchError: If the fallback search also fails.
-        """
-        results = []
-        escaped_query = escape_like_pattern(query)
-        search_term = f"%{escaped_query}%"
-
-        try:
-            with self.session_factory() as session:
-                sql = text("""
-                    SELECT id, title, content
-                    FROM notes
-                    WHERE title LIKE :term ESCAPE '\\' OR content LIKE :term ESCAPE '\\'
-                    LIMIT :limit
-                """)
-                result = session.execute(sql, {"term": search_term, "limit": limit})
-                rows = result.fetchall()
-
-                for row in rows:
-                    # Simple relevance: title match scores higher
-                    title_match = query.lower() in row[1].lower() if row[1] else False
-                    rank = -2.0 if title_match else -1.0
-
-                    results.append({
-                        "id": row[0],
-                        "title": row[1],
-                        "rank": rank,
-                        "search_mode": "fallback"  # Indicate fallback was used
-                    })
-        except Exception as e:
-            # Wrap database errors in SearchError as documented
-            raise SearchError(
-                f"Fallback text search failed: {e}",
-                query=query,
-                code=ErrorCode.SEARCH_FAILED
-            ) from e
-
-        logger.debug(f"Fallback search returned {len(results)} results for query '{query}'")
-        return results
+        """Reset FTS5 availability after manual repair (delegates to FtsIndex)."""
+        return self._fts.reset_availability()
 
     def rebuild_fts(self) -> int:
-        """Rebuild the FTS5 index from the notes table.
-
-        Returns:
-            Number of notes indexed.
-        """
-        return rebuild_fts_index(self.engine)
+        """Rebuild the FTS5 index from the notes table (delegates to FtsIndex)."""
+        return self._fts.rebuild()
 
     def find_by_tag(self, tag: Union[str, Tag]) -> List[Note]:
         """Find notes by tag."""
@@ -2351,13 +1750,7 @@ class NoteRepository(Repository[Note]):
             # Apply unique() to handle the duplicate rows from eager loading
             db_notes = result.unique().scalars().all()
             
-            # Convert to model Notes
-            notes = []
-            for db_note in db_notes:
-                note = self.get(db_note.id)
-                if note:
-                    notes.append(note)
-            return notes
+        return [self._db_note_to_model(db) for db in db_notes]
 
     def find_similarity_candidates(self, note_id: str) -> List[Note]:
         """Find candidate notes for similarity comparison using SQL filtering.
@@ -2411,18 +1804,32 @@ class NoteRepository(Repository[Note]):
                 ).scalars().all()
                 linked_note_ids.update(common_target_notes)
 
-            # Combine all candidate IDs
+            # Combine all candidate IDs and batch-load from DB
             candidate_ids = shared_tag_note_ids | linked_note_ids
+            if not candidate_ids:
+                return []
 
-        # Load candidate notes from file system
+            db_notes = (
+                session.execute(
+                    select(DBNote)
+                    .where(DBNote.id.in_(candidate_ids))
+                    .options(
+                        joinedload(DBNote.tags),
+                        joinedload(DBNote.outgoing_links),
+                        joinedload(DBNote.incoming_links),
+                    )
+                )
+                .unique()
+                .scalars()
+                .all()
+            )
+
         candidates = []
-        for cid in candidate_ids:
+        for db_note in db_notes:
             try:
-                note = self.get(cid)
-                if note:
-                    candidates.append(note)
-            except (IOError, OSError, ValueError, yaml.YAMLError) as e:
-                logger.warning(f"Failed to load candidate note {cid}: {e}")
+                candidates.append(self._db_note_to_model(db_note))
+            except Exception as e:
+                logger.warning(f"Failed to convert candidate note {db_note.id}: {e}")
 
         return candidates
     
@@ -2569,63 +1976,40 @@ class NoteRepository(Repository[Note]):
         ]
 
     def sync_to_obsidian(self) -> int:
-        """Sync all notes to the Obsidian vault.
-
-        Re-mirrors all existing notes to the configured Obsidian vault directory.
-        Removes old-format files before re-mirroring to prevent duplicates from
-        filename format changes (e.g., adding date prefixes).
+        """Sync all notes to the Obsidian vault (delegates to ObsidianMirror).
 
         Returns:
-            Number of notes synced, or 0 if Obsidian vault is not configured.
+            Number of notes synced.
 
         Raises:
             ValueError: If Obsidian vault is not configured.
         """
-        if not self.obsidian_vault_path:
+        mirror = self._get_obsidian_mirror()
+        if not mirror:
             raise ValueError(
                 "Obsidian vault not configured. "
                 "Set ZETTELKASTEN_OBSIDIAN_VAULT in your .env file."
             )
 
-        # Clean existing Obsidian mirror files before full re-sync.
-        # This prevents duplicate files when filename format changes
-        # (e.g., adding date prefix). Only removes .md files, preserves
-        # directories and non-markdown files (Obsidian config, etc.).
-        cleaned = 0
-        for md_file in self.obsidian_vault_path.glob("**/*.md"):
-            # Skip Obsidian internal files
-            if md_file.name.startswith("."):
-                continue
-            try:
-                md_file.unlink()
-                cleaned += 1
-            except OSError as e:
-                logger.warning(f"Failed to clean old mirror file {md_file}: {e}")
-        if cleaned:
-            logger.info(f"Cleaned {cleaned} old mirror files before re-sync")
-
-        # Get all notes from the file system
+        # Load notes from disk (NoteRepository responsibility)
         note_files = list(self.notes_dir.glob("*.md"))
-        synced_count = 0
+        notes: List[Note] = []
         failed_files: List[str] = []
 
         for file_path in note_files:
             try:
                 with open(file_path, "r", encoding="utf-8") as f:
                     content = f.read()
-                note = self._parse_note_from_markdown(content)
-                markdown = self._note_to_markdown(note)
-                self._mirror_to_obsidian(note, markdown)
-                synced_count += 1
+                notes.append(self._parse_note_from_markdown(content))
             except (IOError, OSError, PermissionError) as e:
-                # File access or permission errors
                 logger.warning(f"Cannot access {file_path.name} for sync: {e}")
                 failed_files.append(file_path.name)
             except (ValueError, yaml.YAMLError) as e:
-                # Malformed note content
                 logger.warning(f"Invalid note format in {file_path.name}: {e}")
                 failed_files.append(file_path.name)
-            # Let system errors and bugs propagate
+
+        # Delegate mirroring to ObsidianMirror
+        synced_count = mirror.sync_all(notes, self._note_to_markdown)
 
         if failed_files:
             logger.warning(

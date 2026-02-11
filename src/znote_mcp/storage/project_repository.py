@@ -28,9 +28,19 @@ class ProjectRepository(Repository[Project]):
         """Initialize the repository.
 
         Args:
-            engine: SQLAlchemy engine. If None, uses default from config.
+            engine: SQLAlchemy engine. When provided, uses this engine
+                    directly (shared with other repositories). When None,
+                    creates a new engine via init_db() (legacy behavior).
         """
-        self.engine = engine or init_db()
+        if engine is not None:
+            self.engine = engine
+        else:
+            logger.warning(
+                "ProjectRepository created without shared engine — "
+                "falling back to init_db(). Pass engine= to share a "
+                "single database connection."
+            )
+            self.engine = init_db()
         self.session_factory = get_session_factory(self.engine)
         logger.info("ProjectRepository initialized")
 

@@ -104,18 +104,18 @@ def main():
     db_dir = config.get_absolute_path(config.database_path).parent
     db_dir.mkdir(parents=True, exist_ok=True)
 
-    # Initialize database schema
+    # Initialize database schema — single engine shared by all repositories
     try:
         logger.info(f"Using SQLite database: {config.get_db_url()}")
-        init_db()
+        engine = init_db()
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")
         sys.exit(1)
 
-    # Create and run the MCP server
+    # Create and run the MCP server with shared engine
     try:
         logger.info("Starting Zettelkasten MCP server")
-        server = ZettelkastenMcpServer()
+        server = ZettelkastenMcpServer(engine=engine)
         server.run()
     except Exception as e:
         logger.error(f"Error running server: {e}")
