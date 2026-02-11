@@ -4,21 +4,17 @@ import datetime
 import hashlib
 import logging
 from datetime import timezone
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from znote_mcp.config import config
 from znote_mcp.exceptions import (
-    BulkOperationError,
     ErrorCode,
-    LinkError,
     NoteNotFoundError,
     NoteValidationError,
     ValidationError,
 )
 from znote_mcp.models.schema import (
     ConflictResult,
-    Link,
     LinkType,
     Note,
     NotePurpose,

@@ -5,29 +5,19 @@ import json
 import logging
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Optional
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.fastmcp import FastMCP
 
 from znote_mcp.backup import backup_manager
 from znote_mcp.config import config
-from znote_mcp.exceptions import (
-    LinkError,
-    NoteNotFoundError,
-    NoteValidationError,
-    StorageError,
-    ValidationError,
-    ZettelkastenError,
-)
+from znote_mcp.exceptions import ValidationError, ZettelkastenError
 from znote_mcp.models.schema import (
     ConflictResult,
     LinkType,
-    Note,
     NotePurpose,
     NoteType,
     Project,
-    Tag,
-    VersionedNote,
 )
 from znote_mcp.observability import metrics, timed_operation
 from znote_mcp.services.search_service import SearchService
@@ -903,26 +893,17 @@ class ZettelkastenMcpServer:
                     offset = max(0, offset)
 
                     if mode == "all":
-                        all_notes = self.zettel_service.get_all_notes()
-                        total_count = len(all_notes)
-                        if not all_notes:
+                        total_count = self.zettel_service.repository.count_notes()
+                        if total_count == 0:
                             return "No notes found in the Zettelkasten."
 
-                        # Sort notes
-                        if sort_by == "created_at":
-                            all_notes.sort(
-                                key=lambda n: n.created_at, reverse=descending
-                            )
-                        elif sort_by == "title":
-                            all_notes.sort(
-                                key=lambda n: n.title.lower(), reverse=descending
-                            )
-                        else:
-                            all_notes.sort(
-                                key=lambda n: n.updated_at, reverse=descending
-                            )
-
-                        notes = all_notes[offset : offset + limit]
+                        sort_order = "desc" if descending else "asc"
+                        notes = self.zettel_service.repository.list_notes(
+                            sort_by=sort_by,
+                            sort_order=sort_order,
+                            limit=limit,
+                            offset=offset,
+                        )
                         op["result_count"] = len(notes)
 
                         if not notes:
@@ -1180,17 +1161,10 @@ class ZettelkastenMcpServer:
 
                     # Summary section
                     if include_all or "summary" in requested:
-                        all_notes = self.zettel_service.get_all_notes()
-                        total = len(all_notes)
-
-                        # Count by type
-                        by_type = {}
-                        by_project = {}
-                        for note in all_notes:
-                            t = note.note_type.value
-                            by_type[t] = by_type.get(t, 0) + 1
-                            p = note.project
-                            by_project[p] = by_project.get(p, 0) + 1
+                        repo = self.zettel_service.repository
+                        total = repo.count_notes()
+                        by_type = repo.count_notes_by_type()
+                        by_project = repo.count_notes_by_project()
 
                         output += f"## Summary\n"
                         output += f"**Total Notes:** {total}\n\n"
@@ -1398,8 +1372,6 @@ class ZettelkastenMcpServer:
                             "reset_fts, reindex_embeddings"
                         )
 
-                except ValueError as e:
-                    return str(e)
                 except Exception as e:
                     return self.format_error_response(e)
 

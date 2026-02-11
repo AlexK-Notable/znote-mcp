@@ -9,7 +9,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from znote_mcp.models.schema import NotePurpose, NoteType
-from znote_mcp.server.mcp_server import ZettelkastenMcpServer
+from znote_mcp.server.mcp_server import (
+    MAX_CONTENT_LENGTH,
+    MAX_TITLE_LENGTH,
+    ZettelkastenMcpServer,
+    _validate_input_lengths,
+)
 from znote_mcp.services.search_service import SearchService
 from znote_mcp.services.zettel_service import ZettelService
 
@@ -354,3 +359,137 @@ class TestMCPProjectIntegration:
 
         assert "Project A Note" in result
         # Project B note may or may not be excluded depending on implementation
+
+
+class TestInputValidation:
+    """Tests for _validate_input_lengths() at the MCP boundary."""
+
+    def test_title_exceeding_max_length_raises(self):
+        """Title exceeding MAX_TITLE_LENGTH (500 chars) raises ValueError."""
+        long_title = "A" * (MAX_TITLE_LENGTH + 1)
+        with pytest.raises(ValueError, match="Title exceeds maximum length"):
+            _validate_input_lengths(title=long_title)
+
+    def test_content_exceeding_max_length_raises(self):
+        """Content exceeding MAX_CONTENT_LENGTH (1MB) raises ValueError."""
+        long_content = "B" * (MAX_CONTENT_LENGTH + 1)
+        with pytest.raises(ValueError, match="Content exceeds maximum length"):
+            _validate_input_lengths(content=long_content)
+
+    def test_normal_length_inputs_succeed(self):
+        """Normal-length title and content do not raise."""
+        _validate_input_lengths(title="Normal title", content="Normal content")
+
+    def test_none_values_accepted(self):
+        """None values are accepted (partial update case)."""
+        _validate_input_lengths(title=None, content=None)
+        _validate_input_lengths(title="Title", content=None)
+        _validate_input_lengths(title=None, content="Content")
+
+    def test_boundary_length_title_succeeds(self):
+        """Title at exactly MAX_TITLE_LENGTH passes."""
+        exact_title = "A" * MAX_TITLE_LENGTH
+        _validate_input_lengths(title=exact_title)
+
+    def test_boundary_length_content_succeeds(self):
+        """Content at exactly MAX_CONTENT_LENGTH passes."""
+        exact_content = "B" * MAX_CONTENT_LENGTH
+        _validate_input_lengths(content=exact_content)
+
+    def test_create_note_rejects_oversized_title(self, zettel_service):
+        """End-to-end: creating a note with oversized title returns error via MCP."""
+        registered_tools = {}
+        mock_mcp = MagicMock()
+
+        def mock_tool_decorator(*args, **kwargs):
+            def tool_wrapper(func):
+                registered_tools[kwargs.get("name")] = func
+                return func
+
+            return tool_wrapper
+
+        mock_mcp.tool = mock_tool_decorator
+
+        with patch("znote_mcp.server.mcp_server.FastMCP", return_value=mock_mcp):
+            server = ZettelkastenMcpServer()
+            server.zettel_service = zettel_service
+            server.search_service = SearchService(zettel_service)
+
+        long_title = "X" * 600
+        result = registered_tools["zk_create_note"](
+            title=long_title, content="Normal content"
+        )
+        assert "error" in result.lower() or "invalid input" in result.lower()
+
+    def test_update_note_rejects_oversized_content(self, zettel_service):
+        """End-to-end: updating a note with oversized content returns error via MCP."""
+        registered_tools = {}
+        mock_mcp = MagicMock()
+
+        def mock_tool_decorator(*args, **kwargs):
+            def tool_wrapper(func):
+                registered_tools[kwargs.get("name")] = func
+                return func
+
+            return tool_wrapper
+
+        mock_mcp.tool = mock_tool_decorator
+
+        with patch("znote_mcp.server.mcp_server.FastMCP", return_value=mock_mcp):
+            server = ZettelkastenMcpServer()
+            server.zettel_service = zettel_service
+            server.search_service = SearchService(zettel_service)
+
+        huge_content = "Y" * (MAX_CONTENT_LENGTH + 1)
+        result = registered_tools["zk_update_note"](
+            note_id="some-id", content=huge_content
+        )
+        assert "error" in result.lower() or "invalid input" in result.lower()
+
+
+class TestFormatErrorResponse:
+    """Tests for format_error_response() sanitization."""
+
+    @pytest.fixture
+    def server(self, zettel_service):
+        """Create a server instance for testing error formatting."""
+        mock_mcp = MagicMock()
+        mock_mcp.tool = lambda *a, **kw: (lambda f: f)
+
+        with patch("znote_mcp.server.mcp_server.FastMCP", return_value=mock_mcp):
+            srv = ZettelkastenMcpServer()
+            srv.zettel_service = zettel_service
+        return srv
+
+    def test_value_error_returns_generic_with_ref(self, server):
+        """ValueError returns generic message with reference ID, not exception text."""
+        result = server.format_error_response(ValueError("secret internal detail"))
+        assert "secret internal detail" not in result
+        assert "ref:" in result.lower()
+        assert "Error:" in result
+
+    def test_io_error_returns_generic_with_ref(self, server):
+        """IOError returns generic message with reference ID."""
+        result = server.format_error_response(
+            IOError("/secret/path/file.txt not found")
+        )
+        assert "/secret/path" not in result
+        assert "ref:" in result.lower()
+        assert "file system error" in result.lower()
+
+    def test_zettelkasten_error_returns_structured_message(self, server):
+        """ZettelkastenError returns structured message from error.message."""
+        from znote_mcp.exceptions import ErrorCode, ZettelkastenError
+
+        err = ZettelkastenError("Note not found: abc123", code=ErrorCode.NOTE_NOT_FOUND)
+        result = server.format_error_response(err)
+        assert "Note not found: abc123" in result
+
+    def test_unexpected_exception_returns_generic(self, server):
+        """Unexpected Exception returns generic message, not raw details."""
+        result = server.format_error_response(
+            RuntimeError("database internal schema v3 mismatch")
+        )
+        assert "database internal schema" not in result
+        assert "unexpected error" in result.lower()
+        assert "ref:" in result.lower()

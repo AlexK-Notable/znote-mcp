@@ -303,8 +303,11 @@ uv run pytest -v tests/test_models.py::TestNoteModel::test_note_validation
 ```
 tests/
 ├── conftest.py - Common fixtures for all tests
+├── conftest_e2e.py - E2E test fixtures with isolated environments
+├── test_e2e.py - End-to-end tests with real services
+├── test_error_injection.py - Error handling and failure scenarios
 ├── test_integration.py - Integration tests for the entire system
-├── test_mcp_server.py - Tests for MCP server tools
+├── test_mcp_integration.py - MCP server tool integration tests
 ├── test_models.py - Tests for data models
 ├── test_note_repository.py - Tests for note repository
 ├── test_search_service.py - Tests for search service

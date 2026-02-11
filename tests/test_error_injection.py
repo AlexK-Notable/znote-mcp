@@ -3,31 +3,21 @@
 Tests that verify the system handles various failure scenarios gracefully.
 """
 
-import os
-import sqlite3
-import tempfile
-from pathlib import Path
-from unittest.mock import MagicMock, PropertyMock, patch
-
 import pytest
 
 from znote_mcp.exceptions import (
     BulkOperationError,
-    ConfigurationError,
     DatabaseCorruptionError,
     ErrorCode,
     LinkError,
     NoteNotFoundError,
     NoteValidationError,
-    SearchError,
     StorageError,
-    TagError,
     ValidationError,
     ZettelkastenError,
 )
-from znote_mcp.models.schema import LinkType, NoteType
+from znote_mcp.models.schema import LinkType
 from znote_mcp.services.search_service import SearchService
-from znote_mcp.services.zettel_service import ZettelService
 
 
 class TestExceptionHierarchy:
@@ -305,27 +295,6 @@ class TestBulkOperationFailures:
             # Should indicate partial failure
             assert e.success_count >= 1  # At least one deleted
             assert e.failed_count >= 1  # At least some failures
-
-
-class TestFileSystemFailures:
-    """Tests for handling file system failures."""
-
-    def test_write_to_readonly_directory(self):
-        """Test handling of read-only directory errors."""
-        # This test simulates what happens when we can't write to notes directory
-        with patch("builtins.open") as mock_open:
-            mock_open.side_effect = PermissionError("Read-only filesystem")
-
-            # Operations that write should handle this gracefully
-            # The service should catch and wrap in StorageError
-
-    def test_disk_full_simulation(self):
-        """Test handling of disk full scenarios."""
-        # Simulate OSError for disk full
-        with patch("builtins.open") as mock_open:
-            mock_open.side_effect = OSError(28, "No space left on device")
-
-            # Write operations should fail gracefully
 
 
 class TestInputValidation:

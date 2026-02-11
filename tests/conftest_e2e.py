@@ -17,17 +17,15 @@ import shutil
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Generator, Tuple
+from typing import Generator
 
 import pytest
-from sqlalchemy import create_engine
 
 from znote_mcp.config import config
-from znote_mcp.models.db_models import Base, init_db
+from znote_mcp.models.db_models import init_db
 from znote_mcp.server.mcp_server import ZettelkastenMcpServer
 from znote_mcp.services.search_service import SearchService
 from znote_mcp.services.zettel_service import ZettelService
-from znote_mcp.storage.note_repository import NoteRepository
 
 # Fixture paths - explicitly within the test directory
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -45,7 +43,7 @@ class IsolatedTestEnvironment:
     explicit paths within the tests/fixtures/ directory.
     """
 
-    def __init__(self, persist: bool = False, session_id: str = None):
+    def __init__(self, persist: bool = False, session_id: str = ""):
         """Initialize isolated environment.
 
         Args:
@@ -71,60 +69,6 @@ class IsolatedTestEnvironment:
 
         self.database_path = self.database_dir / f"test_{self.session_id}.db"
 
-        # Track original config for restoration
-        self._original_notes_dir = None
-        self._original_database_path = None
-        self._original_obsidian_vault = None
-
-    def setup(self) -> "IsolatedTestEnvironment":
-        """Set up the isolated environment."""
-        # Create directories
-        self.notes_dir.mkdir(parents=True, exist_ok=True)
-        self.database_dir.mkdir(parents=True, exist_ok=True)
-        self.obsidian_dir.mkdir(parents=True, exist_ok=True)
-
-        # Save original config
-        self._original_notes_dir = config.notes_dir
-        self._original_database_path = config.database_path
-        self._original_obsidian_vault = os.environ.get("ZETTELKASTEN_OBSIDIAN_VAULT")
-        self._original_obsidian_vault_path = config.obsidian_vault_path
-
-        # Configure for isolated testing
-        config.notes_dir = self.notes_dir
-        config.database_path = self.database_path
-        # Set both the env var AND the config attribute (config is already loaded)
-        os.environ["ZETTELKASTEN_OBSIDIAN_VAULT"] = str(self.obsidian_dir)
-        config.obsidian_vault_path = self.obsidian_dir
-
-        return self
-
-    def teardown(self) -> None:
-        """Tear down the isolated environment."""
-        # Restore original config
-        if self._original_notes_dir is not None:
-            config.notes_dir = self._original_notes_dir
-        if self._original_database_path is not None:
-            config.database_path = self._original_database_path
-        if hasattr(self, "_original_obsidian_vault_path"):
-            config.obsidian_vault_path = self._original_obsidian_vault_path
-        if self._original_obsidian_vault is not None:
-            os.environ["ZETTELKASTEN_OBSIDIAN_VAULT"] = self._original_obsidian_vault
-        elif "ZETTELKASTEN_OBSIDIAN_VAULT" in os.environ:
-            del os.environ["ZETTELKASTEN_OBSIDIAN_VAULT"]
-
-        # Clean up unless persist mode
-        if not self.persist and hasattr(self, "_temp_base"):
-            try:
-                shutil.rmtree(self._temp_base, ignore_errors=True)
-            except Exception:
-                pass
-
-    def __enter__(self) -> "IsolatedTestEnvironment":
-        return self.setup()
-
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        self.teardown()
-
     def get_info(self) -> dict:
         """Get information about the test environment."""
         return {
@@ -149,8 +93,13 @@ def e2e_session_id() -> str:
 
 
 @pytest.fixture(scope="function")
-def isolated_env(e2e_session_id) -> Generator[IsolatedTestEnvironment, None, None]:
+def isolated_env(
+    e2e_session_id, monkeypatch
+) -> Generator[IsolatedTestEnvironment, None, None]:
     """Provide a completely isolated test environment.
+
+    Uses monkeypatch for config mutation so values are auto-restored
+    on teardown, even if the test crashes.
 
     This fixture guarantees that:
     - All test data is in tests/fixtures/ (not your production data)
@@ -167,8 +116,23 @@ def isolated_env(e2e_session_id) -> Generator[IsolatedTestEnvironment, None, Non
     env = IsolatedTestEnvironment(
         persist=PERSIST_MODE, session_id=f"{e2e_session_id}_{os.getpid()}"
     )
-    with env:
-        yield env
+
+    # Create directories
+    env.notes_dir.mkdir(parents=True, exist_ok=True)
+    env.database_dir.mkdir(parents=True, exist_ok=True)
+    env.obsidian_dir.mkdir(parents=True, exist_ok=True)
+
+    # Use monkeypatch for automatic restoration on teardown
+    monkeypatch.setattr(config, "notes_dir", env.notes_dir)
+    monkeypatch.setattr(config, "database_path", env.database_path)
+    monkeypatch.setattr(config, "obsidian_vault_path", env.obsidian_dir)
+    monkeypatch.setenv("ZETTELKASTEN_OBSIDIAN_VAULT", str(env.obsidian_dir))
+
+    yield env
+
+    # Clean up temp files unless persist mode
+    if not env.persist and hasattr(env, "_temp_base"):
+        shutil.rmtree(env._temp_base, ignore_errors=True)
 
 
 @pytest.fixture(scope="function")
