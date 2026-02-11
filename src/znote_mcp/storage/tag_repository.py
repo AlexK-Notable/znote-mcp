@@ -1,12 +1,13 @@
 """Repository for tag storage and retrieval."""
+
 import logging
 from typing import Dict, List, Optional
 
 from sqlalchemy import func, select, text
 
+from znote_mcp.exceptions import NoteNotFoundError
 from znote_mcp.models.db_models import DBNote, DBTag, note_tags
 from znote_mcp.models.schema import Tag
-from znote_mcp.exceptions import NoteNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ class TagRepository:
             # Use INSERT OR IGNORE to handle concurrent creation race
             session.execute(
                 text("INSERT OR IGNORE INTO tags (name) VALUES (:name)"),
-                {"name": tag_name}
+                {"name": tag_name},
             )
             session.commit()
             # Now SELECT - the tag definitely exists
@@ -56,9 +57,7 @@ class TagRepository:
             The Tag object if found, None otherwise.
         """
         with self.session_factory() as session:
-            db_tag = session.scalar(
-                select(DBTag).where(DBTag.name == tag_name)
-            )
+            db_tag = session.scalar(select(DBTag).where(DBTag.name == tag_name))
             if not db_tag:
                 return None
 
@@ -111,7 +110,9 @@ class TagRepository:
 
             return [row[0] for row in result]
 
-    def find_note_ids_by_tags(self, tag_names: List[str], match_all: bool = False) -> List[str]:
+    def find_note_ids_by_tags(
+        self, tag_names: List[str], match_all: bool = False
+    ) -> List[str]:
         """Find note IDs that have any or all of the specified tags.
 
         Args:
@@ -185,14 +186,12 @@ class TagRepository:
             # Get or create the tag (using INSERT OR IGNORE to handle race conditions)
             session.execute(
                 text("INSERT OR IGNORE INTO tags (name) VALUES (:name)"),
-                {"name": tag_name}
+                {"name": tag_name},
             )
             db_tag = session.scalar(select(DBTag).where(DBTag.name == tag_name))
 
             # Get the note
-            db_note = session.scalar(
-                select(DBNote).where(DBNote.id == note_id)
-            )
+            db_note = session.scalar(select(DBNote).where(DBNote.id == note_id))
             if not db_note:
                 raise NoteNotFoundError(note_id)
 
@@ -213,16 +212,12 @@ class TagRepository:
         """
         with self.session_factory() as session:
             # Get the tag
-            db_tag = session.scalar(
-                select(DBTag).where(DBTag.name == tag_name)
-            )
+            db_tag = session.scalar(select(DBTag).where(DBTag.name == tag_name))
             if not db_tag:
                 return False
 
             # Get the note
-            db_note = session.scalar(
-                select(DBNote).where(DBNote.id == note_id)
-            )
+            db_note = session.scalar(select(DBNote).where(DBNote.id == note_id))
             if not db_note:
                 raise NoteNotFoundError(note_id)
 

@@ -3,6 +3,7 @@
 Provides a structured exception hierarchy with error codes and
 machine-readable error information for better error handling.
 """
+
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
@@ -13,35 +14,23 @@ class ErrorCode(Enum):
     # Note errors (1xxx)
     NOTE_NOT_FOUND = 1001
     NOTE_VALIDATION_FAILED = 1002
-    NOTE_ALREADY_EXISTS = 1003
     NOTE_TITLE_REQUIRED = 1004
     NOTE_CONTENT_REQUIRED = 1005
 
     # Link errors (2xxx)
     LINK_INVALID = 2001
     LINK_ALREADY_EXISTS = 2002
-    LINK_NOT_FOUND = 2003
-    LINK_SELF_REFERENCE = 2004
 
     # Tag errors (3xxx)
-    TAG_NOT_FOUND = 3001
     TAG_INVALID = 3002
 
     # Project errors (35xx)
     PROJECT_NOT_FOUND = 3501
-    PROJECT_ALREADY_EXISTS = 3502
-    PROJECT_HAS_CHILDREN = 3503
-    PROJECT_HAS_NOTES = 3504
-    PROJECT_CIRCULAR_REFERENCE = 3505
 
     # Storage errors (4xxx)
     STORAGE_READ_FAILED = 4001
-    STORAGE_WRITE_FAILED = 4002
-    STORAGE_DELETE_FAILED = 4003
-    STORAGE_CONNECTION_FAILED = 4004
     DATABASE_CORRUPTED = 4005
     DATABASE_RECOVERY_FAILED = 4006
-    FTS_CORRUPTED = 4007
 
     # Bulk operation errors (45xx)
     BULK_OPERATION_FAILED = 4501
@@ -50,24 +39,17 @@ class ErrorCode(Enum):
 
     # Search errors (5xxx)
     SEARCH_FAILED = 5001
-    SEARCH_INVALID_QUERY = 5002
 
     # Configuration errors (6xxx)
     CONFIG_INVALID = 6001
-    CONFIG_MISSING = 6002
 
     # Validation errors (7xxx)
     VALIDATION_FAILED = 7001
-    INVALID_NOTE_TYPE = 7002
-    INVALID_LINK_TYPE = 7003
-    INVALID_DIRECTION = 7004
-    PATH_TRAVERSAL_DETECTED = 7005
 
     # Embedding errors (8xxx)
     EMBEDDING_UNAVAILABLE = 8001
     EMBEDDING_MODEL_LOAD_FAILED = 8002
     EMBEDDING_INFERENCE_FAILED = 8003
-    VECTOR_STORE_ERROR = 8004
     RERANKER_FAILED = 8005
 
 
@@ -84,7 +66,7 @@ class ZettelkastenError(Exception):
         self,
         message: str,
         code: ErrorCode = ErrorCode.VALIDATION_FAILED,
-        details: Optional[Dict[str, Any]] = None
+        details: Optional[Dict[str, Any]] = None,
     ):
         self.message = message
         self.code = code
@@ -98,7 +80,7 @@ class ZettelkastenError(Exception):
             "code": self.code.value,
             "code_name": self.code.name,
             "message": self.message,
-            "details": self.details
+            "details": self.details,
         }
 
     def __str__(self) -> str:
@@ -115,7 +97,7 @@ class NoteNotFoundError(ZettelkastenError):
         super().__init__(
             message or f"Note with ID '{note_id}' not found",
             code=ErrorCode.NOTE_NOT_FOUND,
-            details={"note_id": note_id}
+            details={"note_id": note_id},
         )
         self.note_id = note_id
 
@@ -128,7 +110,7 @@ class NoteValidationError(ZettelkastenError):
         message: str,
         field: Optional[str] = None,
         value: Optional[Any] = None,
-        code: ErrorCode = ErrorCode.NOTE_VALIDATION_FAILED
+        code: ErrorCode = ErrorCode.NOTE_VALIDATION_FAILED,
     ):
         details = {}
         if field:
@@ -150,7 +132,7 @@ class LinkError(ZettelkastenError):
         source_id: Optional[str] = None,
         target_id: Optional[str] = None,
         link_type: Optional[str] = None,
-        code: ErrorCode = ErrorCode.LINK_INVALID
+        code: ErrorCode = ErrorCode.LINK_INVALID,
     ):
         details = {}
         if source_id:
@@ -173,7 +155,7 @@ class TagError(ZettelkastenError):
         self,
         message: str,
         tag_name: Optional[str] = None,
-        code: ErrorCode = ErrorCode.TAG_INVALID
+        code: ErrorCode = ErrorCode.TAG_INVALID,
     ):
         details = {}
         if tag_name:
@@ -192,7 +174,7 @@ class StorageError(ZettelkastenError):
         operation: Optional[str] = None,
         path: Optional[str] = None,
         code: ErrorCode = ErrorCode.STORAGE_READ_FAILED,
-        original_error: Optional[Exception] = None
+        original_error: Optional[Exception] = None,
     ):
         details = {}
         if operation:
@@ -226,13 +208,13 @@ class DatabaseCorruptionError(StorageError):
         recovered: bool = False,
         backup_path: Optional[str] = None,
         code: ErrorCode = ErrorCode.DATABASE_CORRUPTED,
-        original_error: Optional[Exception] = None
+        original_error: Optional[Exception] = None,
     ):
         super().__init__(
             message,
             operation="database_check",
             code=code,
-            original_error=original_error
+            original_error=original_error,
         )
         self.recovered = recovered
         self.backup_path = backup_path
@@ -248,7 +230,7 @@ class SearchError(ZettelkastenError):
         self,
         message: str,
         query: Optional[str] = None,
-        code: ErrorCode = ErrorCode.SEARCH_FAILED
+        code: ErrorCode = ErrorCode.SEARCH_FAILED,
     ):
         details = {}
         if query:
@@ -265,7 +247,7 @@ class ConfigurationError(ZettelkastenError):
         self,
         message: str,
         config_key: Optional[str] = None,
-        code: ErrorCode = ErrorCode.CONFIG_INVALID
+        code: ErrorCode = ErrorCode.CONFIG_INVALID,
     ):
         details = {}
         if config_key:
@@ -283,7 +265,7 @@ class ValidationError(ZettelkastenError):
         message: str,
         field: Optional[str] = None,
         value: Optional[Any] = None,
-        code: ErrorCode = ErrorCode.VALIDATION_FAILED
+        code: ErrorCode = ErrorCode.VALIDATION_FAILED,
     ):
         details = {}
         if field:
@@ -321,7 +303,7 @@ class BulkOperationError(ZettelkastenError):
         success_count: int = 0,
         failed_ids: Optional[List[str]] = None,
         code: ErrorCode = ErrorCode.BULK_OPERATION_FAILED,
-        original_error: Optional[Exception] = None
+        original_error: Optional[Exception] = None,
     ):
         # Validate invariants
         if total_count < 0:
@@ -335,7 +317,7 @@ class BulkOperationError(ZettelkastenError):
             "operation": operation,
             "total_count": total_count,
             "success_count": success_count,
-            "failed_count": total_count - success_count
+            "failed_count": total_count - success_count,
         }
         if failed_ids:
             details["failed_ids"] = failed_ids[:10]  # Truncate for safety
@@ -368,7 +350,7 @@ class EmbeddingError(ZettelkastenError):
         message: str,
         code: ErrorCode = ErrorCode.EMBEDDING_UNAVAILABLE,
         operation: Optional[str] = None,
-        original_error: Optional[Exception] = None
+        original_error: Optional[Exception] = None,
     ):
         details: Dict[str, Any] = {}
         if operation:

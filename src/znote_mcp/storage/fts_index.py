@@ -3,6 +3,7 @@
 Encapsulates FTS5 querying, graceful degradation, and recovery logic.
 Extracted from NoteRepository for cohesion.
 """
+
 import logging
 import re
 import sqlite3
@@ -71,7 +72,8 @@ class FtsIndex:
             safe_query = query.replace('"', '""')
 
         if highlight:
-            sql = text("""
+            sql = text(
+                """
                 SELECT
                     id, title,
                     bm25(notes_fts) as rank,
@@ -80,15 +82,18 @@ class FtsIndex:
                 WHERE notes_fts MATCH :query
                 ORDER BY rank
                 LIMIT :limit
-            """)
+            """
+            )
         else:
-            sql = text("""
+            sql = text(
+                """
                 SELECT id, title, bm25(notes_fts) as rank
                 FROM notes_fts
                 WHERE notes_fts MATCH :query
                 ORDER BY rank
                 LIMIT :limit
-            """)
+            """
+            )
 
         results: List[Dict[str, Any]] = []
         with self._session_factory() as session:
@@ -191,22 +196,26 @@ class FtsIndex:
 
         try:
             with self._session_factory() as session:
-                sql = text("""
+                sql = text(
+                    """
                     SELECT id, title, content
                     FROM notes
                     WHERE title LIKE :term ESCAPE '\\' OR content LIKE :term ESCAPE '\\'
                     LIMIT :limit
-                """)
+                """
+                )
                 result = session.execute(sql, {"term": search_term, "limit": limit})
                 for row in result.fetchall():
                     title_match = query.lower() in row[1].lower() if row[1] else False
                     rank = -2.0 if title_match else -1.0
-                    results.append({
-                        "id": row[0],
-                        "title": row[1],
-                        "rank": rank,
-                        "search_mode": "fallback",
-                    })
+                    results.append(
+                        {
+                            "id": row[0],
+                            "title": row[1],
+                            "rank": rank,
+                            "search_mode": "fallback",
+                        }
+                    )
         except Exception as e:
             raise SearchError(
                 f"Fallback text search failed: {e}",

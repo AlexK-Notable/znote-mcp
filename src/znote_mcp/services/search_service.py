@@ -1,9 +1,10 @@
 """Service for searching and discovering notes in the Zettelkasten."""
+
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
 from znote_mcp.config import config
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class SearchResult:
     """A search result with a note and its relevance score."""
+
     note: Note
     score: float
     matched_terms: Set[str]
@@ -37,6 +39,7 @@ class SemanticSearchResult:
             1 / (1 + distance) as a simple monotonic transform).
         reranked: Whether the result was refined by the cross-encoder reranker.
     """
+
     note: Note
     distance: float
     score: float
@@ -67,11 +70,6 @@ class SearchService:
         """Whether semantic search is available (embedding service configured and enabled)."""
         return self._embedding_service is not None and config.embeddings_enabled
 
-    def initialize(self) -> None:
-        """Initialize the service and dependencies."""
-        # Initialize the zettel service if it hasn't been initialized
-        self.zettel_service.initialize()
-    
     def find_orphaned_notes(self) -> List[Note]:
         """Find notes with no incoming or outgoing links."""
         orphaned_ids = self.zettel_service.find_orphaned_note_ids()
@@ -99,37 +97,28 @@ class SearchService:
             for note_id in note_ids
             if note_id in note_map
         ]
-    
+
     def find_notes_by_date_range(
         self,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
-        use_updated: bool = False
+        use_updated: bool = False,
+        limit: Optional[int] = None,
     ) -> List[Note]:
-        """Find notes created or updated within a date range."""
-        all_notes = self.zettel_service.get_all_notes()
-        matching_notes = []
-        
-        for note in all_notes:
-            # Get the relevant date
-            date = note.updated_at if use_updated else note.created_at
-            
-            # Check if in range
-            if start_date and date < start_date:
-                continue
-            if end_date and date >= end_date + timedelta(seconds=1):
-                continue
-            
-            matching_notes.append(note)
-        
-        # Sort by date (descending)
-        matching_notes.sort(
-            key=lambda x: x.updated_at if use_updated else x.created_at,
-            reverse=True
-        )
-        
-        return matching_notes
-    
+        """Find notes created or updated within a date range.
+
+        Delegates to the SQL-level repository.search() to avoid loading
+        all notes into memory.
+        """
+        kwargs: Dict[str, Any] = {}
+        if start_date:
+            key = "updated_after" if use_updated else "created_after"
+            kwargs[key] = start_date
+        if end_date:
+            key = "updated_before" if use_updated else "created_before"
+            kwargs[key] = end_date
+        return self.zettel_service.repository.search(limit=limit, **kwargs)
+
     def find_similar_notes(self, note_id: str) -> List[Tuple[Note, float]]:
         """Find notes similar to the given note based on shared tags and links."""
         return self.zettel_service.find_similar_notes(note_id)
@@ -179,7 +168,9 @@ class SearchService:
             # 2. KNN search — fetch extra candidates for reranking
             fetch_limit = limit * 3 if use_reranker else limit
             raw_results = self.zettel_service.vec_similarity_search(
-                query_vector, limit=fetch_limit, exclude_ids=exclude_ids,
+                query_vector,
+                limit=fetch_limit,
+                exclude_ids=exclude_ids,
             )
 
             if not raw_results:
@@ -192,29 +183,13 @@ class SearchService:
             dist_map = {nid: dist for nid, dist in raw_results}
 
             # 4. Optionally rerank with cross-encoder
-            if (
-                use_reranker
-                and self._embedding_service.has_reranker
-                and len(notes) > 1
-            ):
+            if use_reranker and self._embedding_service.has_reranker and len(notes) > 1:
                 return self._rerank_results(
                     query, result_ids, note_map, dist_map, limit
                 )
 
             # 5. Without reranker: score = 1 / (1 + distance)
-            results = []
-            for nid in result_ids:
-                note = note_map.get(nid)
-                if note is None:
-                    continue
-                dist = dist_map[nid]
-                results.append(SemanticSearchResult(
-                    note=note,
-                    distance=dist,
-                    score=1.0 / (1.0 + dist),
-                    reranked=False,
-                ))
-            return results[:limit]
+            return self._build_distance_results(result_ids, note_map, dist_map, limit)
 
         except Exception as e:
             logger.warning(f"Semantic search failed: {e}")
@@ -254,7 +229,9 @@ class SearchService:
             # KNN search, excluding the seed note
             fetch_limit = limit * 3 if use_reranker else limit
             raw_results = self.zettel_service.vec_similarity_search(
-                embedding, limit=fetch_limit, exclude_ids=[note_id],
+                embedding,
+                limit=fetch_limit,
+                exclude_ids=[note_id],
             )
 
             if not raw_results:
@@ -267,11 +244,7 @@ class SearchService:
             dist_map = {nid: dist for nid, dist in raw_results}
 
             # Optionally rerank
-            if (
-                use_reranker
-                and self._embedding_service.has_reranker
-                and len(notes) > 1
-            ):
+            if use_reranker and self._embedding_service.has_reranker and len(notes) > 1:
                 # Use the seed note's content as the query for reranking
                 seed_note = self.zettel_service.get_note(note_id)
                 if seed_note is not None:
@@ -281,23 +254,38 @@ class SearchService:
                     )
 
             # Without reranker
-            results = []
-            for nid in result_ids:
-                note = note_map.get(nid)
-                if note is None:
-                    continue
-                dist = dist_map[nid]
-                results.append(SemanticSearchResult(
-                    note=note,
-                    distance=dist,
-                    score=1.0 / (1.0 + dist),
-                    reranked=False,
-                ))
-            return results[:limit]
+            return self._build_distance_results(result_ids, note_map, dist_map, limit)
 
         except Exception as e:
             logger.warning(f"find_related failed for note {note_id}: {e}")
             return []
+
+    @staticmethod
+    def _build_distance_results(
+        result_ids: List[str],
+        note_map: Dict[str, Note],
+        dist_map: Dict[str, float],
+        limit: int,
+    ) -> List[SemanticSearchResult]:
+        """Convert raw KNN results into scored SemanticSearchResult objects.
+
+        Score formula: 1 / (1 + distance).  Lower distance = higher score.
+        """
+        results = []
+        for nid in result_ids:
+            note = note_map.get(nid)
+            if note is None:
+                continue
+            dist = dist_map[nid]
+            results.append(
+                SemanticSearchResult(
+                    note=note,
+                    distance=dist,
+                    score=1.0 / (1.0 + dist),
+                    reranked=False,
+                )
+            )
+        return results[:limit]
 
     def _rerank_results(
         self,
@@ -339,12 +327,14 @@ class SearchService:
         for idx, rerank_score in ranked:
             nid = doc_ids[idx]
             note = note_map[nid]
-            results.append(SemanticSearchResult(
-                note=note,
-                distance=dist_map[nid],
-                score=rerank_score,
-                reranked=True,
-            ))
+            results.append(
+                SemanticSearchResult(
+                    note=note,
+                    distance=dist_map[nid],
+                    score=rerank_score,
+                    reranked=True,
+                )
+            )
         return results
 
     def search_combined(
@@ -370,24 +360,45 @@ class SearchService:
             if fts_results is not None:
                 return fts_results
 
-        # Fallback: O(N) scan (used for filter-only queries or when FTS5 unavailable)
+        # Filter-only path: delegate to SQL when there are filters but no text
+        has_filters = any([tags, note_type, start_date, end_date])
+        if has_filters and not (text and text.strip()):
+            kwargs: Dict[str, Any] = {}
+            if tags:
+                kwargs["tags"] = tags
+            if note_type:
+                kwargs["note_type"] = note_type
+            if start_date:
+                kwargs["created_after"] = start_date
+            if end_date:
+                kwargs["created_before"] = end_date
+            filtered_notes = self.zettel_service.repository.search(
+                limit=limit, **kwargs
+            )
+            return [
+                SearchResult(
+                    note=note, score=1.0, matched_terms=set(), matched_context=""
+                )
+                for note in filtered_notes
+            ]
+
+        # Fallback: O(N) scan (text query with FTS5 unavailable)
         all_notes = self.zettel_service.get_all_notes()
+        filtered_notes = self._apply_filters(
+            all_notes, tags, note_type, start_date, end_date
+        )
 
-        # Filter by criteria
-        filtered_notes = self._apply_filters(all_notes, tags, note_type, start_date, end_date)
-
-        # If we have a text query, score the notes
         results: List[SearchResult] = []
         if text and text.strip():
             results = self._score_notes_by_text(filtered_notes, text)
         else:
-            # If no text query, just add all filtered notes with a default score
             results = [
-                SearchResult(note=note, score=1.0, matched_terms=set(), matched_context="")
+                SearchResult(
+                    note=note, score=1.0, matched_terms=set(), matched_context=""
+                )
                 for note in filtered_notes
             ]
 
-        # Sort by score (descending)
         results.sort(key=lambda x: x.score, reverse=True)
         return results
 
@@ -407,10 +418,14 @@ class SearchService:
         try:
             # Fetch extra candidates to account for post-filter attrition
             fetch_limit = limit * 3
-            fts_results = self.zettel_service.fts_search(text.strip(), limit=fetch_limit)
+            fts_results = self.zettel_service.fts_search(
+                text.strip(), limit=fetch_limit
+            )
 
             if not fts_results:
-                return None  # Fall through to O(N) fallback for non-FTS-tokenizable text
+                return (
+                    None  # Fall through to O(N) fallback for non-FTS-tokenizable text
+                )
 
             # Retrieve full Note objects for FTS hits
             fts_ids = [r["id"] for r in fts_results]
@@ -422,7 +437,10 @@ class SearchService:
             results: List[SearchResult] = []
             filtered_notes = self._apply_filters(
                 [note_map[fid] for fid in fts_ids if fid in note_map],
-                tags, note_type, start_date, end_date,
+                tags,
+                note_type,
+                start_date,
+                end_date,
             )
             filtered_ids = {n.id for n in filtered_notes}
 
@@ -432,12 +450,14 @@ class SearchService:
                 note = note_map[fts_id]
 
                 bm25_rank = rank_map.get(fts_id, 0.0)
-                results.append(SearchResult(
-                    note=note,
-                    score=bm25_rank,
-                    matched_terms=set(text.lower().split()),
-                    matched_context=f"FTS5 match (BM25: {bm25_rank:.2f})",
-                ))
+                results.append(
+                    SearchResult(
+                        note=note,
+                        score=bm25_rank,
+                        matched_terms=set(text.lower().split()),
+                        matched_context=f"FTS5 match (BM25: {bm25_rank:.2f})",
+                    )
+                )
 
                 if len(results) >= limit:
                     break
@@ -509,11 +529,13 @@ class SearchService:
                     matched_terms.add(term)
 
             if score > 0:
-                results.append(SearchResult(
-                    note=note,
-                    score=score,
-                    matched_terms=matched_terms,
-                    matched_context=matched_context,
-                ))
+                results.append(
+                    SearchResult(
+                        note=note,
+                        score=score,
+                        matched_terms=matched_terms,
+                        matched_context=matched_context,
+                    )
+                )
 
         return results

@@ -2,11 +2,12 @@
 
 Tests that verify the system handles various failure scenarios gracefully.
 """
+
 import os
 import sqlite3
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
@@ -35,9 +36,7 @@ class TestExceptionHierarchy:
     def test_base_exception_to_dict(self):
         """Test base exception serialization."""
         exc = ZettelkastenError(
-            "Test error",
-            code=ErrorCode.VALIDATION_FAILED,
-            details={"key": "value"}
+            "Test error", code=ErrorCode.VALIDATION_FAILED, details={"key": "value"}
         )
         result = exc.to_dict()
 
@@ -62,7 +61,7 @@ class TestExceptionHierarchy:
             source_id="src123",
             target_id="tgt456",
             link_type="reference",
-            code=ErrorCode.LINK_ALREADY_EXISTS
+            code=ErrorCode.LINK_ALREADY_EXISTS,
         )
 
         assert exc.source_id == "src123"
@@ -76,7 +75,7 @@ class TestExceptionHierarchy:
         exc = StorageError(
             "Write failed",
             operation="save",
-            path="/home/user/secret/path/notes/test.md"
+            path="/home/user/secret/path/notes/test.md",
         )
 
         # Should only show file name, not full path
@@ -86,9 +85,7 @@ class TestExceptionHierarchy:
     def test_database_corruption_error(self):
         """Test DatabaseCorruptionError with recovery info."""
         exc = DatabaseCorruptionError(
-            "FTS index corrupted",
-            recovered=True,
-            backup_path="/backup/db.bak"
+            "FTS index corrupted", recovered=True, backup_path="/backup/db.bak"
         )
 
         assert exc.recovered is True
@@ -103,7 +100,7 @@ class TestExceptionHierarchy:
             operation="bulk_create",
             total_count=10,
             success_count=7,
-            failed_ids=failed
+            failed_ids=failed,
         )
 
         assert exc.total_count == 10
@@ -137,9 +134,8 @@ class TestNoteNotFoundHandling:
         assert exc_info.value.note_id == "nonexistent-id"
 
     def test_delete_nonexistent_note(self, zettel_service):
-        """Test that deleting a non-existent note raises ValueError."""
-        # Current implementation raises ValueError from repository
-        with pytest.raises(ValueError, match="does not exist"):
+        """Test that deleting a non-existent note raises NoteNotFoundError."""
+        with pytest.raises(NoteNotFoundError):
             zettel_service.delete_note("nonexistent-id")
 
 
@@ -229,9 +225,7 @@ class TestDatabaseFailureHandling:
         """Test DatabaseCorruptionError can be properly created and used."""
         # Verify the exception class works correctly
         exc = DatabaseCorruptionError(
-            "FTS index corrupted",
-            recovered=True,
-            backup_path="/backup/db.bak"
+            "FTS index corrupted", recovered=True, backup_path="/backup/db.bak"
         )
 
         assert exc.recovered is True
@@ -245,8 +239,8 @@ class TestDatabaseFailureHandling:
         exc = StorageError(
             "Write failed",
             operation="save",
-            code=ErrorCode.STORAGE_WRITE_FAILED,
-            original_error=original
+            code=ErrorCode.STORAGE_READ_FAILED,
+            original_error=original,
         )
 
         assert exc.original_error == original
@@ -260,8 +254,7 @@ class TestConcurrentAccessHandling:
     def test_sequential_updates_succeed(self, zettel_service):
         """Test that sequential updates succeed without corruption."""
         note = zettel_service.create_note(
-            title="Concurrent Test",
-            content="Original content"
+            title="Concurrent Test", content="Original content"
         )
 
         # Simulate sequential update scenario
@@ -284,7 +277,7 @@ class TestBulkOperationFailures:
         notes = [
             {"title": "Valid Note 1", "content": "Content 1"},
             {"title": "", "content": "No title - might be invalid"},  # Empty title
-            {"title": "Valid Note 2", "content": "Content 2"}
+            {"title": "Valid Note 2", "content": "Content 2"},
         ]
 
         # Should either succeed with warnings or raise BulkOperationError
@@ -320,7 +313,7 @@ class TestFileSystemFailures:
     def test_write_to_readonly_directory(self):
         """Test handling of read-only directory errors."""
         # This test simulates what happens when we can't write to notes directory
-        with patch('builtins.open') as mock_open:
+        with patch("builtins.open") as mock_open:
             mock_open.side_effect = PermissionError("Read-only filesystem")
 
             # Operations that write should handle this gracefully
@@ -329,7 +322,7 @@ class TestFileSystemFailures:
     def test_disk_full_simulation(self):
         """Test handling of disk full scenarios."""
         # Simulate OSError for disk full
-        with patch('builtins.open') as mock_open:
+        with patch("builtins.open") as mock_open:
             mock_open.side_effect = OSError(28, "No space left on device")
 
             # Write operations should fail gracefully
@@ -344,7 +337,7 @@ class TestInputValidation:
         malicious_ids = [
             "../../../etc/passwd",
             "..\\..\\..\\windows\\system32",
-            "notes/../secrets/api_key"
+            "notes/../secrets/api_key",
         ]
 
         for malicious_id in malicious_ids:
@@ -359,8 +352,7 @@ class TestInputValidation:
         # Should either truncate or raise validation error
         try:
             note = zettel_service.create_note(
-                title=long_title,
-                content="Normal content"
+                title=long_title, content="Normal content"
             )
             # If it succeeds, title might be truncated
             assert len(note.title) <= 10000
@@ -375,8 +367,7 @@ class TestInputValidation:
         # Should handle without crashing
         try:
             note = zettel_service.create_note(
-                title="Long Content Note",
-                content=long_content
+                title="Long Content Note", content=long_content
             )
             assert len(note.content) >= 0  # Created successfully
         except (NoteValidationError, ValidationError, MemoryError):
@@ -393,9 +384,7 @@ class TestInputValidation:
         ]
 
         note = zettel_service.create_note(
-            title="Special Tags",
-            content="Content",
-            tags=special_tags
+            title="Special Tags", content="Content", tags=special_tags
         )
 
         # Should handle valid tags
@@ -420,14 +409,13 @@ class TestNullAndEmptyHandling:
     def test_none_values_in_update(self, zettel_service):
         """Test updating with None values preserves existing data."""
         note = zettel_service.create_note(
-            title="Original Title",
-            content="Original Content"
+            title="Original Title", content="Original Content"
         )
 
         # Update with only content, title should remain
         updated = zettel_service.update_note(
             note.id,
-            content="New Content"
+            content="New Content",
             # title not specified
         )
 
@@ -436,11 +424,7 @@ class TestNullAndEmptyHandling:
 
     def test_empty_tags_list(self, zettel_service):
         """Test creating note with empty tags list."""
-        note = zettel_service.create_note(
-            title="No Tags",
-            content="Content",
-            tags=[]
-        )
+        note = zettel_service.create_note(title="No Tags", content="Content", tags=[])
 
         assert note.tags == [] or len(note.tags) == 0
 
@@ -452,8 +436,7 @@ class TestErrorRecovery:
         """Test that failed operations don't corrupt other data."""
         # Create a note successfully
         note = zettel_service.create_note(
-            title="Transaction Test",
-            content="Original Content Here"
+            title="Transaction Test", content="Original Content Here"
         )
 
         initial_notes = zettel_service.get_all_notes()

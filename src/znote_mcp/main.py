@@ -22,19 +22,19 @@ def parse_args():
         "--notes-dir",
         help="Directory for storing note files",
         type=str,
-        default=os.environ.get("ZETTELKASTEN_NOTES_DIR")
+        default=os.environ.get("ZETTELKASTEN_NOTES_DIR"),
     )
     parser.add_argument(
         "--database-path",
         help="SQLite database file path",
         type=str,
-        default=os.environ.get("ZETTELKASTEN_DATABASE_PATH")
+        default=os.environ.get("ZETTELKASTEN_DATABASE_PATH"),
     )
     parser.add_argument(
         "--log-level",
         help="Logging level",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        default=os.environ.get("ZETTELKASTEN_LOG_LEVEL", "INFO")
+        default=os.environ.get("ZETTELKASTEN_LOG_LEVEL", "INFO"),
     )
     return parser.parse_args()
 

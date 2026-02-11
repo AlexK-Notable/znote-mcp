@@ -3,6 +3,7 @@
 This test file addresses the 0% test coverage gap identified
 in the code review for project management functionality.
 """
+
 import json
 import tempfile
 from pathlib import Path
@@ -11,10 +12,10 @@ import pytest
 from sqlalchemy import create_engine
 
 from znote_mcp.config import config
+from znote_mcp.exceptions import ErrorCode, ValidationError
 from znote_mcp.models.db_models import Base, DBProject
 from znote_mcp.models.schema import Project
 from znote_mcp.storage.project_repository import ProjectRepository, escape_like_pattern
-from znote_mcp.exceptions import ValidationError, ErrorCode
 
 
 @pytest.fixture
@@ -50,9 +51,7 @@ class TestProjectCreate:
     def test_create_project_basic(self, project_repository):
         """Create a basic project."""
         project = Project(
-            id="test-project",
-            name="Test Project",
-            description="A test project"
+            id="test-project", name="Test Project", description="A test project"
         )
 
         created = project_repository.create(project)
@@ -66,7 +65,7 @@ class TestProjectCreate:
         project = Project(
             id="repo-project",
             name="Repository Project",
-            path="/home/user/repos/my-project"
+            path="/home/user/repos/my-project",
         )
 
         created = project_repository.create(project)
@@ -78,7 +77,10 @@ class TestProjectCreate:
         project = Project(
             id="meta-project",
             name="Metadata Project",
-            metadata={"git_remote": "git@github.com:user/repo.git", "language": "python"}
+            metadata={
+                "git_remote": "git@github.com:user/repo.git",
+                "language": "python",
+            },
         )
 
         created = project_repository.create(project)
@@ -93,11 +95,7 @@ class TestProjectCreate:
         project_repository.create(parent)
 
         # Create child
-        child = Project(
-            id="parent/child",
-            name="Child Project",
-            parent_id="parent"
-        )
+        child = Project(id="parent/child", name="Child Project", parent_id="parent")
         created = project_repository.create(child)
 
         assert created.parent_id == "parent"
@@ -116,11 +114,7 @@ class TestProjectCreate:
 
     def test_create_with_nonexistent_parent_fails(self, project_repository):
         """Creating a project with nonexistent parent should fail."""
-        project = Project(
-            id="orphan",
-            name="Orphan Project",
-            parent_id="nonexistent"
-        )
+        project = Project(id="orphan", name="Orphan Project", parent_id="nonexistent")
 
         with pytest.raises(ValidationError) as exc_info:
             project_repository.create(project)
@@ -130,11 +124,7 @@ class TestProjectCreate:
 
     def test_create_self_referencing_project_fails(self, project_repository):
         """Creating a project that is its own parent should fail."""
-        project = Project(
-            id="self-ref",
-            name="Self Reference",
-            parent_id="self-ref"
-        )
+        project = Project(id="self-ref", name="Self Reference", parent_id="self-ref")
 
         with pytest.raises(ValidationError) as exc_info:
             project_repository.create(project)
@@ -169,7 +159,7 @@ class TestProjectGet:
             name="Full Project",
             description="Description here",
             path="/some/path",
-            metadata={"key": "value"}
+            metadata={"key": "value"},
         )
         project_repository.create(project)
 
@@ -407,10 +397,16 @@ class TestProjectHierarchy:
         # Create root
         project_repository.create(Project(id="root", name="Root"))
         # Create children
-        project_repository.create(Project(id="child1", name="Child 1", parent_id="root"))
-        project_repository.create(Project(id="child2", name="Child 2", parent_id="root"))
+        project_repository.create(
+            Project(id="child1", name="Child 1", parent_id="root")
+        )
+        project_repository.create(
+            Project(id="child2", name="Child 2", parent_id="root")
+        )
         # Create grandchild
-        project_repository.create(Project(id="grandchild", name="Grandchild", parent_id="child1"))
+        project_repository.create(
+            Project(id="grandchild", name="Grandchild", parent_id="child1")
+        )
 
         result = project_repository.get_hierarchy()
 
@@ -488,7 +484,7 @@ class TestProjectExportImport:
         data = {
             "projects": [
                 {"id": "import-a", "name": "Import A"},
-                {"id": "import-b", "name": "Import B", "parent_id": "import-a"}
+                {"id": "import-b", "name": "Import B", "parent_id": "import-a"},
             ]
         }
         with open(json_path, "w") as f:
@@ -512,7 +508,7 @@ class TestProjectExportImport:
         data = {
             "projects": [
                 {"id": "existing", "name": "Different Name"},
-                {"id": "new", "name": "New Project"}
+                {"id": "new", "name": "New Project"},
             ]
         }
         with open(json_path, "w") as f:

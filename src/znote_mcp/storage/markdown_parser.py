@@ -4,6 +4,7 @@ Handles conversion between Note domain objects and markdown files
 with YAML frontmatter. This is extracted from NoteRepository to
 keep parsing logic cohesive and independently testable.
 """
+
 import datetime
 import logging
 import re
@@ -15,8 +16,8 @@ from znote_mcp.models.schema import (
     Link,
     LinkType,
     Note,
-    NoteType,
     NotePurpose,
+    NoteType,
     Tag,
     ensure_timezone_aware,
     utc_now,
@@ -129,9 +130,17 @@ class MarkdownParser:
             metadata={
                 k: v
                 for k, v in metadata.items()
-                if k not in [
-                    "id", "title", "type", "purpose", "project",
-                    "plan_id", "tags", "created", "updated",
+                if k
+                not in [
+                    "id",
+                    "title",
+                    "type",
+                    "purpose",
+                    "project",
+                    "plan_id",
+                    "tags",
+                    "created",
+                    "updated",
                 ]
             },
         )

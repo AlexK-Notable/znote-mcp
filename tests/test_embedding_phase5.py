@@ -11,6 +11,7 @@ Tests cover:
 These test through the service layer (same as existing MCP integration tests)
 since the MCP protocol layer is a thin formatting wrapper over the services.
 """
+
 import pytest
 
 from znote_mcp.config import config
@@ -18,7 +19,6 @@ from znote_mcp.services.embedding_service import EmbeddingService
 from znote_mcp.services.search_service import SearchService
 from znote_mcp.services.zettel_service import ZettelService
 from znote_mcp.storage.note_repository import NoteRepository
-
 
 # =============================================================================
 # Fixtures (shared _enable/_disable_embeddings, fake_embedder, fake_reranker
@@ -72,10 +72,14 @@ def _seed_notes(service, count=5):
 class TestServerWiring:
     """Verify that embedding service flows through to both services."""
 
-    def test_zettel_service_has_embedding_service(self, zettel_service, embedding_service):
+    def test_zettel_service_has_embedding_service(
+        self, zettel_service, embedding_service
+    ):
         assert zettel_service._embedding_service is embedding_service
 
-    def test_search_service_has_embedding_service(self, search_service, embedding_service):
+    def test_search_service_has_embedding_service(
+        self, search_service, embedding_service
+    ):
         assert search_service._embedding_service is embedding_service
 
     def test_auto_embed_on_create(self, zettel_service, repo, fake_embedder):
@@ -84,7 +88,9 @@ class TestServerWiring:
         assert fake_embedder.embed_count == 1
 
     def test_semantic_search_works_through_search_service(
-        self, zettel_service, search_service,
+        self,
+        zettel_service,
+        search_service,
     ):
         _seed_notes(zettel_service, count=3)
         results = search_service.semantic_search("topic", limit=3)
@@ -168,6 +174,7 @@ class TestReindexEmbeddings:
     def test_reindex_without_service_raises(self, repo, _enable_embeddings):
         zs = ZettelService(repository=repo, embedding_service=None)
         from znote_mcp.exceptions import EmbeddingError
+
         with pytest.raises(EmbeddingError):
             zs.reindex_embeddings()
 
@@ -222,7 +229,9 @@ class TestMcpGracefulDegradation:
         similar = zs.find_similar_notes(n1.id, threshold=0.0)
         assert len(similar) > 0
 
-    def test_create_embedding_service_returns_none_when_disabled(self, _disable_embeddings):
+    def test_create_embedding_service_returns_none_when_disabled(
+        self, _disable_embeddings
+    ):
         """The server factory method should return None when disabled."""
         # We test the logic, not the actual static method (to avoid import issues)
         assert not config.embeddings_enabled

@@ -2,6 +2,7 @@
 
 Tests for database backup, restore, and rotation functionality.
 """
+
 import os
 import sqlite3
 import tempfile
@@ -54,11 +55,7 @@ class TestBackupManager:
     @pytest.fixture
     def backup_manager(self, temp_backup_dir):
         """Create a BackupManager with temp directory."""
-        return BackupManager(
-            backup_dir=temp_backup_dir,
-            max_backups=5,
-            max_age_days=30
-        )
+        return BackupManager(backup_dir=temp_backup_dir, max_backups=5, max_age_days=30)
 
     def test_backup_manager_creates_directory(self, temp_backup_dir):
         """Test that BackupManager creates backup directory if needed."""
@@ -68,7 +65,7 @@ class TestBackupManager:
 
     def test_backup_database(self, backup_manager, temp_db_file):
         """Test backing up a SQLite database."""
-        with patch('znote_mcp.backup.config') as mock_config:
+        with patch("znote_mcp.backup.config") as mock_config:
             mock_config.get_db_url.return_value = f"sqlite:///{temp_db_file}"
 
             backup_path = backup_manager.backup_database(compress=False)
@@ -85,7 +82,7 @@ class TestBackupManager:
 
     def test_backup_database_compressed(self, backup_manager, temp_db_file):
         """Test backing up a database with compression."""
-        with patch('znote_mcp.backup.config') as mock_config:
+        with patch("znote_mcp.backup.config") as mock_config:
             mock_config.get_db_url.return_value = f"sqlite:///{temp_db_file}"
 
             backup_path = backup_manager.backup_database(compress=True)
@@ -98,7 +95,7 @@ class TestBackupManager:
 
     def test_backup_database_with_label(self, backup_manager, temp_db_file):
         """Test backup with custom label."""
-        with patch('znote_mcp.backup.config') as mock_config:
+        with patch("znote_mcp.backup.config") as mock_config:
             mock_config.get_db_url.return_value = f"sqlite:///{temp_db_file}"
 
             backup_path = backup_manager.backup_database(label="pre-migration")
@@ -108,7 +105,7 @@ class TestBackupManager:
 
     def test_backup_notes(self, backup_manager, temp_notes_dir):
         """Test backing up notes directory."""
-        with patch('znote_mcp.backup.config') as mock_config:
+        with patch("znote_mcp.backup.config") as mock_config:
             mock_config.get_absolute_path.return_value = temp_notes_dir
             mock_config.notes_dir = temp_notes_dir
 
@@ -120,7 +117,7 @@ class TestBackupManager:
 
     def test_list_backups(self, backup_manager, temp_db_file):
         """Test listing available backups."""
-        with patch('znote_mcp.backup.config') as mock_config:
+        with patch("znote_mcp.backup.config") as mock_config:
             mock_config.get_db_url.return_value = f"sqlite:///{temp_db_file}"
 
             # Create multiple backups
@@ -141,7 +138,7 @@ class TestBackupManager:
         # Create manager with backup_dir
         manager = BackupManager(backup_dir=temp_backup_dir)
 
-        with patch('znote_mcp.backup.config') as mock_config:
+        with patch("znote_mcp.backup.config") as mock_config:
             mock_config.get_db_url.return_value = f"sqlite:///{temp_db_file}"
 
             # Create backup
@@ -161,7 +158,7 @@ class TestBackupManager:
             assert count_before == 2
 
             # Patch backup_database to skip pre-restore backup (avoids infinite recursion)
-            with patch.object(manager, 'backup_database', return_value=None):
+            with patch.object(manager, "backup_database", return_value=None):
                 # Restore from backup
                 result = manager.restore_database(backup_path)
 
@@ -179,7 +176,7 @@ class TestBackupManager:
         # Try to restore from outside backup_dir
         outside_path = Path("/tmp/malicious_file.db")
 
-        with patch('znote_mcp.backup.config') as mock_config:
+        with patch("znote_mcp.backup.config") as mock_config:
             mock_config.get_db_url.return_value = "sqlite:///test.db"
 
             result = backup_manager.restore_database(outside_path)
@@ -209,7 +206,7 @@ class TestSymlinkProtection:
                 yield {
                     "backup_dir": backup_path,
                     "db_path": db_path,
-                    "manager": manager
+                    "manager": manager,
                 }
 
     def test_restore_rejects_symlinks(self, backup_setup):
@@ -229,8 +226,10 @@ class TestSymlinkProtection:
         try:
             symlink_path.symlink_to(external_file)
 
-            with patch('znote_mcp.backup.config') as mock_config:
-                mock_config.get_db_url.return_value = f"sqlite:///{backup_setup['db_path']}"
+            with patch("znote_mcp.backup.config") as mock_config:
+                mock_config.get_db_url.return_value = (
+                    f"sqlite:///{backup_setup['db_path']}"
+                )
 
                 # Should reject symlink
                 result = manager.restore_database(symlink_path)
@@ -250,9 +249,7 @@ class TestBackupRotation:
         """Create a BackupManager with low rotation limits."""
         with tempfile.TemporaryDirectory() as temp_dir:
             manager = BackupManager(
-                backup_dir=Path(temp_dir),
-                max_backups=3,
-                max_age_days=1
+                backup_dir=Path(temp_dir), max_backups=3, max_age_days=1
             )
             yield manager
 
@@ -279,10 +276,10 @@ class TestBackupNow:
     def test_backup_now_returns_dict(self):
         """Test that backup_now returns a dictionary."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            with patch('znote_mcp.backup.backup_manager') as mock_manager:
+            with patch("znote_mcp.backup.backup_manager") as mock_manager:
                 mock_manager.create_full_backup.return_value = {
                     "database": Path(temp_dir) / "db.gz",
-                    "notes": Path(temp_dir) / "notes.tar.gz"
+                    "notes": Path(temp_dir) / "notes.tar.gz",
                 }
 
                 result = backup_now(label="test")

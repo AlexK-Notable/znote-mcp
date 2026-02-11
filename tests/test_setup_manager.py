@@ -1,4 +1,5 @@
 """Tests for the self-setup manager (semantic dependency auto-install)."""
+
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -37,8 +38,10 @@ class TestMarkerFastPath:
     def test_marker_exists_no_imports_no_subprocess(self, project_root: Path) -> None:
         marker = project_root / ".venv" / f"{_MARKER_PREFIX}1.4.0"
         marker.touch()
-        with patch("znote_mcp.setup_manager._check_imports") as mock_ci, \
-             patch("znote_mcp.setup_manager._run_install") as mock_ri:
+        with (
+            patch("znote_mcp.setup_manager._check_imports") as mock_ci,
+            patch("znote_mcp.setup_manager._run_install") as mock_ri,
+        ):
             ensure_semantic_deps(project_root, "1.4.0")
             mock_ci.assert_not_called()
             mock_ri.assert_not_called()
@@ -69,8 +72,10 @@ class TestDepsAlreadyInstalled:
         assert (project_root / ".venv" / f"{_MARKER_PREFIX}2.0.0").exists()
 
     def test_importable_no_install(self, project_root: Path) -> None:
-        with patch("znote_mcp.setup_manager._check_imports", return_value=True), \
-             patch("znote_mcp.setup_manager._run_install") as mock_ri:
+        with (
+            patch("znote_mcp.setup_manager._check_imports", return_value=True),
+            patch("znote_mcp.setup_manager._run_install") as mock_ri,
+        ):
             ensure_semantic_deps(project_root, "2.0.0")
             mock_ri.assert_not_called()
 
@@ -79,8 +84,10 @@ class TestInstallSucceeds:
     """Deps missing, uv install succeeds → marker written."""
 
     def test_install_success_writes_marker(self, project_root: Path) -> None:
-        with patch("znote_mcp.setup_manager._check_imports", return_value=False), \
-             patch("znote_mcp.setup_manager._run_install", return_value=True):
+        with (
+            patch("znote_mcp.setup_manager._check_imports", return_value=False),
+            patch("znote_mcp.setup_manager._run_install", return_value=True),
+        ):
             result = ensure_semantic_deps(project_root, "1.4.0")
         assert result is True
         assert (project_root / ".venv" / f"{_MARKER_PREFIX}1.4.0").exists()
@@ -90,8 +97,10 @@ class TestInstallFails:
     """Deps missing, install fails → return False, no marker."""
 
     def test_install_failure_returns_false(self, project_root: Path) -> None:
-        with patch("znote_mcp.setup_manager._check_imports", return_value=False), \
-             patch("znote_mcp.setup_manager._run_install", return_value=False):
+        with (
+            patch("znote_mcp.setup_manager._check_imports", return_value=False),
+            patch("znote_mcp.setup_manager._run_install", return_value=False),
+        ):
             result = ensure_semantic_deps(project_root, "1.4.0")
         assert result is False
         assert not (project_root / ".venv" / f"{_MARKER_PREFIX}1.4.0").exists()
@@ -105,8 +114,10 @@ class TestRunInstall:
             assert _run_install() is False
 
     def test_subprocess_called_with_packages(self) -> None:
-        with patch("shutil.which", return_value="/usr/bin/uv"), \
-             patch("subprocess.run") as mock_run:
+        with (
+            patch("shutil.which", return_value="/usr/bin/uv"),
+            patch("subprocess.run") as mock_run,
+        ):
             _run_install()
             mock_run.assert_called_once()
             cmd = mock_run.call_args[0][0]
@@ -115,13 +126,20 @@ class TestRunInstall:
             assert "onnxruntime>=1.17.0" in cmd
 
     def test_subprocess_failure_returns_false(self) -> None:
-        with patch("shutil.which", return_value="/usr/bin/uv"), \
-             patch("subprocess.run", side_effect=subprocess.CalledProcessError(1, "uv", stderr="error")):
+        with (
+            patch("shutil.which", return_value="/usr/bin/uv"),
+            patch(
+                "subprocess.run",
+                side_effect=subprocess.CalledProcessError(1, "uv", stderr="error"),
+            ),
+        ):
             assert _run_install() is False
 
     def test_subprocess_timeout_returns_false(self) -> None:
-        with patch("shutil.which", return_value="/usr/bin/uv"), \
-             patch("subprocess.run", side_effect=subprocess.TimeoutExpired("uv", 300)):
+        with (
+            patch("shutil.which", return_value="/usr/bin/uv"),
+            patch("subprocess.run", side_effect=subprocess.TimeoutExpired("uv", 300)),
+        ):
             assert _run_install() is False
 
 
@@ -180,17 +198,16 @@ class TestWarmupModelMarkerFastPath:
     def test_marker_exists_returns_true(self, project_root: Path) -> None:
         marker = project_root / ".venv" / f"{_MODEL_MARKER_PREFIX}1.4.0"
         marker.touch()
-        assert _warmup_models(
-            project_root / ".venv", "1.4.0", EMBED_MODEL, RERANKER_MODEL
-        ) is True
+        assert (
+            _warmup_models(project_root / ".venv", "1.4.0", EMBED_MODEL, RERANKER_MODEL)
+            is True
+        )
 
     def test_marker_exists_no_download(self, project_root: Path) -> None:
         marker = project_root / ".venv" / f"{_MODEL_MARKER_PREFIX}1.4.0"
         marker.touch()
         with patch("znote_mcp.setup_manager.snapshot_download", create=True) as mock_dl:
-            _warmup_models(
-                project_root / ".venv", "1.4.0", EMBED_MODEL, RERANKER_MODEL
-            )
+            _warmup_models(project_root / ".venv", "1.4.0", EMBED_MODEL, RERANKER_MODEL)
             mock_dl.assert_not_called()
 
 
@@ -220,9 +237,7 @@ class TestWarmupDownloadsBothModels:
             "sys.modules",
             {"huggingface_hub": MagicMock(snapshot_download=MagicMock())},
         ):
-            _warmup_models(
-                project_root / ".venv", "1.4.0", EMBED_MODEL, RERANKER_MODEL
-            )
+            _warmup_models(project_root / ".venv", "1.4.0", EMBED_MODEL, RERANKER_MODEL)
         assert (project_root / ".venv" / f"{_MODEL_MARKER_PREFIX}1.4.0").exists()
 
     def test_passes_cache_dir(self, project_root: Path) -> None:

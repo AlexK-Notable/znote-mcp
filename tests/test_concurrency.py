@@ -5,11 +5,12 @@ These tests simulate concurrent access patterns to verify:
 2. In-memory databases provide process isolation
 3. Git-based versioning enables safe concurrent updates
 """
+
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import List, Tuple
-import time
 
 import pytest
 
@@ -40,9 +41,7 @@ class TestConcurrentAccess:
         """
         # Pre-initialize the git repo to avoid concurrent init race
         initial_repo = NoteRepository(
-            notes_dir=shared_notes_dir,
-            use_git=True,
-            in_memory_db=True
+            notes_dir=shared_notes_dir, use_git=True, in_memory_db=True
         )
 
         results: List[VersionedNote] = []
@@ -54,9 +53,7 @@ class TestConcurrentAccess:
                 # Small stagger to reduce git lock contention
                 time.sleep(0.1 * index)
                 repo = NoteRepository(
-                    notes_dir=shared_notes_dir,
-                    use_git=True,
-                    in_memory_db=True
+                    notes_dir=shared_notes_dir, use_git=True, in_memory_db=True
                 )
                 note = Note(
                     title=f"Concurrent Note {index}",
@@ -71,10 +68,7 @@ class TestConcurrentAccess:
                     errors.append(e)
 
         # Create notes from multiple threads (simulating processes)
-        threads = [
-            threading.Thread(target=create_note, args=(i,))
-            for i in range(5)
-        ]
+        threads = [threading.Thread(target=create_note, args=(i,)) for i in range(5)]
         for t in threads:
             t.start()
         for t in threads:
@@ -90,9 +84,7 @@ class TestConcurrentAccess:
         """Test that concurrent updates to same note detect conflicts."""
         # First, create a note
         repo1 = NoteRepository(
-            notes_dir=shared_notes_dir,
-            use_git=True,
-            in_memory_db=True
+            notes_dir=shared_notes_dir, use_git=True, in_memory_db=True
         )
         note = Note(
             title="Shared Note",
@@ -110,9 +102,7 @@ class TestConcurrentAccess:
             """Update the note, returning result."""
             # Each "process" gets its own repository instance
             repo = NoteRepository(
-                notes_dir=shared_notes_dir,
-                use_git=True,
-                in_memory_db=True
+                notes_dir=shared_notes_dir, use_git=True, in_memory_db=True
             )
             updated = Note(
                 id=note_id,
@@ -157,9 +147,7 @@ class TestConcurrentAccess:
         """Test that version changes are visible across repository instances."""
         # Create note with repo1
         repo1 = NoteRepository(
-            notes_dir=shared_notes_dir,
-            use_git=True,
-            in_memory_db=True
+            notes_dir=shared_notes_dir, use_git=True, in_memory_db=True
         )
         note = Note(
             title="Cross-Instance Test",
@@ -172,9 +160,7 @@ class TestConcurrentAccess:
 
         # Update with repo2 (simulating different process)
         repo2 = NoteRepository(
-            notes_dir=shared_notes_dir,
-            use_git=True,
-            in_memory_db=True
+            notes_dir=shared_notes_dir, use_git=True, in_memory_db=True
         )
         updated = Note(
             id=note_id,
@@ -196,9 +182,7 @@ class TestConcurrentAccess:
         """Test that in-memory DBs are isolated per repository instance."""
         # Create note with repo1
         repo1 = NoteRepository(
-            notes_dir=shared_notes_dir,
-            use_git=True,
-            in_memory_db=True
+            notes_dir=shared_notes_dir, use_git=True, in_memory_db=True
         )
         note = Note(
             title="Isolation Test",
@@ -211,9 +195,7 @@ class TestConcurrentAccess:
         # Repo2 with fresh in-memory DB won't have the note indexed
         # until it rebuilds from markdown files
         repo2 = NoteRepository(
-            notes_dir=shared_notes_dir,
-            use_git=True,
-            in_memory_db=True
+            notes_dir=shared_notes_dir, use_git=True, in_memory_db=True
         )
 
         # repo2 should still be able to read the note (from markdown file)
@@ -235,9 +217,7 @@ class TestConcurrentAccess:
         """
         # Setup: Create initial note
         repo_setup = NoteRepository(
-            notes_dir=shared_notes_dir,
-            use_git=True,
-            in_memory_db=True
+            notes_dir=shared_notes_dir, use_git=True, in_memory_db=True
         )
         note = Note(
             title="OCC Test",
@@ -250,14 +230,10 @@ class TestConcurrentAccess:
 
         # Process A and B both read V1
         repo_a = NoteRepository(
-            notes_dir=shared_notes_dir,
-            use_git=True,
-            in_memory_db=True
+            notes_dir=shared_notes_dir, use_git=True, in_memory_db=True
         )
         repo_b = NoteRepository(
-            notes_dir=shared_notes_dir,
-            use_git=True,
-            in_memory_db=True
+            notes_dir=shared_notes_dir, use_git=True, in_memory_db=True
         )
 
         # Process A updates first
@@ -307,9 +283,7 @@ class TestGitDisabledMode:
     def test_versioned_operations_work_without_git(self, temp_dir):
         """Test that versioned operations still work when git is disabled."""
         repo = NoteRepository(
-            notes_dir=temp_dir,
-            use_git=False,  # Git disabled
-            in_memory_db=True
+            notes_dir=temp_dir, use_git=False, in_memory_db=True  # Git disabled
         )
 
         # Create should return placeholder version
@@ -326,11 +300,7 @@ class TestGitDisabledMode:
 
     def test_no_conflict_detection_without_git(self, temp_dir):
         """Test that without git, no conflict detection occurs."""
-        repo = NoteRepository(
-            notes_dir=temp_dir,
-            use_git=False,
-            in_memory_db=True
-        )
+        repo = NoteRepository(notes_dir=temp_dir, use_git=False, in_memory_db=True)
 
         note = Note(
             title="No Git Test",

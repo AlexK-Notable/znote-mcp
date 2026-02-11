@@ -1,8 +1,9 @@
 """Service layer for Zettelkasten operations."""
+
 import datetime
 import hashlib
-from datetime import timezone
 import logging
+from datetime import timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
@@ -10,9 +11,9 @@ from znote_mcp.config import config
 from znote_mcp.exceptions import (
     BulkOperationError,
     ErrorCode,
+    LinkError,
     NoteNotFoundError,
     NoteValidationError,
-    LinkError,
     ValidationError,
 )
 from znote_mcp.models.schema import (
@@ -20,11 +21,11 @@ from znote_mcp.models.schema import (
     Link,
     LinkType,
     Note,
-    NoteType,
     NotePurpose,
+    NoteType,
     Tag,
-    VersionInfo,
     VersionedNote,
+    VersionInfo,
 )
 from znote_mcp.storage.note_repository import NoteRepository
 
@@ -33,24 +34,62 @@ logger = logging.getLogger(__name__)
 # Keywords for auto-purpose inference (checked against title, tags, and first 200 chars of content)
 _PURPOSE_KEYWORDS: Dict[NotePurpose, List[str]] = {
     NotePurpose.BUGFIXING: [
-        "bug", "fix", "debug", "error", "issue", "crash", "broken",
-        "regression", "patch", "hotfix", "traceback", "exception",
-        "stack trace", "segfault", "failing", "failure",
+        "bug",
+        "fix",
+        "debug",
+        "error",
+        "issue",
+        "crash",
+        "broken",
+        "regression",
+        "patch",
+        "hotfix",
+        "traceback",
+        "exception",
+        "stack trace",
+        "segfault",
+        "failing",
+        "failure",
     ],
     NotePurpose.PLANNING: [
-        "plan", "design", "architect", "proposal", "rfc", "spec",
-        "blueprint", "roadmap", "milestone", "phase", "implementation plan",
-        "sprint", "epic", "strategy", "scope",
+        "plan",
+        "design",
+        "architect",
+        "proposal",
+        "rfc",
+        "spec",
+        "blueprint",
+        "roadmap",
+        "milestone",
+        "phase",
+        "implementation plan",
+        "sprint",
+        "epic",
+        "strategy",
+        "scope",
     ],
     NotePurpose.RESEARCH: [
-        "research", "analysis", "investigation", "study", "exploration",
-        "comparison", "evaluate", "assessment", "survey", "literature review",
-        "findings", "benchmark", "experiment", "hypothesis",
+        "research",
+        "analysis",
+        "investigation",
+        "study",
+        "exploration",
+        "comparison",
+        "evaluate",
+        "assessment",
+        "survey",
+        "literature review",
+        "findings",
+        "benchmark",
+        "experiment",
+        "hypothesis",
     ],
 }
 
 
-def _infer_purpose(title: str, content: str, tags: Optional[List[str]] = None) -> NotePurpose:
+def _infer_purpose(
+    title: str, content: str, tags: Optional[List[str]] = None
+) -> NotePurpose:
     """Infer note purpose from title, content, and tags using keyword matching.
 
     Only the first 200 characters of content are checked to keep inference fast
@@ -83,6 +122,7 @@ def _infer_purpose(title: str, content: str, tags: Optional[List[str]] = None) -
 
     return best_purpose
 
+
 class ZettelService:
     """Service for managing Zettelkasten notes."""
 
@@ -110,12 +150,6 @@ class ZettelService:
         else:
             self.repository = NoteRepository()
         self._embedding_service = embedding_service
-
-    def initialize(self) -> None:
-        """Initialize the service and dependencies."""
-        # Nothing to do here for synchronous implementation
-        # The repository is initialized in its constructor
-        pass
 
     # =========================================================================
     # Embedding Helpers (fire-and-forget — never fail the main operation)
@@ -162,9 +196,7 @@ class ZettelService:
                 return
 
             # Generate and store embedding
-            vector = self._embedding_service.embed(
-                f"{note.title}\n{note.content}"
-            )
+            vector = self._embedding_service.embed(f"{note.title}\n{note.content}")
             self.repository.store_embedding(
                 note_id=note.id,
                 embedding=vector,
@@ -238,23 +270,23 @@ class ZettelService:
             stats["failed"] = len(all_notes)
             return stats
 
-        # Store results (per-note to isolate individual failures)
+        # Build batch and store in a single transaction
+        batch = []
         for note, vector in zip(all_notes, vectors):
             try:
                 content_hash = self._content_hash(note.title, note.content)
-                stored = self.repository.store_embedding(
-                    note_id=note.id,
-                    embedding=vector,
-                    model_name=config.embedding_model,
-                    content_hash=content_hash,
-                )
-                if stored:
-                    stats["embedded"] += 1
-                else:
-                    stats["skipped"] += 1
+                batch.append((note.id, vector, config.embedding_model, content_hash))
             except Exception as e:
-                logger.warning(f"Failed to store embedding for note {note.id}: {e}")
+                logger.warning(f"Failed to prepare embedding for note {note.id}: {e}")
                 stats["failed"] += 1
+
+        if batch:
+            try:
+                stored_count = self.repository.store_embeddings_batch(batch)
+                stats["embedded"] = stored_count
+            except Exception as e:
+                logger.error(f"Batch embedding storage failed: {e}")
+                stats["failed"] += len(batch)
 
         logger.info(
             f"Reindex complete: {stats['embedded']} embedded, "
@@ -262,7 +294,7 @@ class ZettelService:
             f"out of {stats['total']} total"
         )
         return stats
-    
+
     def create_note(
         self,
         title: str,
@@ -272,7 +304,7 @@ class ZettelService:
         note_purpose: NotePurpose = NotePurpose.GENERAL,
         tags: Optional[List[str]] = None,
         plan_id: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> Note:
         """Create a new note.
 
@@ -291,15 +323,13 @@ class ZettelService:
         """
         if not title:
             raise NoteValidationError(
-                "Title is required",
-                field="title",
-                code=ErrorCode.NOTE_TITLE_REQUIRED
+                "Title is required", field="title", code=ErrorCode.NOTE_TITLE_REQUIRED
             )
         if not content:
             raise NoteValidationError(
                 "Content is required",
                 field="content",
-                code=ErrorCode.NOTE_CONTENT_REQUIRED
+                code=ErrorCode.NOTE_CONTENT_REQUIRED,
             )
 
         # Auto-infer purpose when left at default
@@ -307,7 +337,9 @@ class ZettelService:
             inferred = _infer_purpose(title, content, tags)
             if inferred != NotePurpose.GENERAL:
                 note_purpose = inferred
-                logger.debug(f"Auto-inferred purpose '{note_purpose.value}' for note '{title}'")
+                logger.debug(
+                    f"Auto-inferred purpose '{note_purpose.value}' for note '{title}'"
+                )
 
         # Create note object
         note = Note(
@@ -318,7 +350,7 @@ class ZettelService:
             note_purpose=note_purpose,
             tags=[Tag(name=tag) for tag in (tags or [])],
             plan_id=plan_id,
-            metadata=metadata or {}
+            metadata=metadata or {},
         )
 
         # Save to repository
@@ -332,11 +364,11 @@ class ZettelService:
     def get_note(self, note_id: str) -> Optional[Note]:
         """Retrieve a note by ID."""
         return self.repository.get(note_id)
-    
+
     def get_note_by_title(self, title: str) -> Optional[Note]:
         """Retrieve a note by title."""
         return self.repository.get_by_title(title)
-    
+
     def update_note(
         self,
         note_id: str,
@@ -347,7 +379,7 @@ class ZettelService:
         note_purpose: Optional[NotePurpose] = None,
         tags: Optional[List[str]] = None,
         plan_id: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> Note:
         """Update an existing note.
 
@@ -401,12 +433,8 @@ class ZettelService:
         """Delete a note."""
         self.repository.delete(note_id)
         self._delete_embedding(note_id)
-    
-    def get_all_notes(
-        self,
-        limit: Optional[int] = None,
-        offset: int = 0
-    ) -> List[Note]:
+
+    def get_all_notes(self, limit: Optional[int] = None, offset: int = 0) -> List[Note]:
         """Get all notes with optional pagination.
 
         Args:
@@ -455,11 +483,11 @@ class ZettelService:
             Total count of matching notes.
         """
         return self.repository.count_search_results(**kwargs)
-    
+
     def get_notes_by_tag(self, tag: str) -> List[Note]:
         """Get notes by tag."""
         return self.repository.find_by_tag(tag)
-    
+
     def add_tag_to_note(self, note_id: str, tag: str) -> Note:
         """Add a tag to a note."""
         note = self.repository.get(note_id)
@@ -475,7 +503,7 @@ class ZettelService:
             raise NoteNotFoundError(note_id)
         note.remove_tag(tag)
         return self.repository.update(note)
-    
+
     def get_all_tags(self) -> List[Tag]:
         """Get all tags in the system."""
         return self.repository.get_all_tags()
@@ -516,10 +544,10 @@ class ZettelService:
         link_type: LinkType = LinkType.REFERENCE,
         description: Optional[str] = None,
         bidirectional: bool = False,
-        bidirectional_type: Optional[LinkType] = None
+        bidirectional_type: Optional[LinkType] = None,
     ) -> Tuple[Note, Optional[Note]]:
         """Create a link between notes with proper bidirectional semantics.
-        
+
         Args:
             source_id: ID of the source note
             target_id: ID of the target note
@@ -528,17 +556,21 @@ class ZettelService:
             bidirectional: Whether to create a link in both directions
             bidirectional_type: Optional custom link type for the reverse direction
                 If not provided, an appropriate inverse relation will be used
-        
+
         Returns:
             Tuple of (source_note, target_note or None)
         """
         source_note = self.repository.get(source_id)
         if not source_note:
-            raise NoteNotFoundError(source_id, f"Source note with ID '{source_id}' not found")
+            raise NoteNotFoundError(
+                source_id, f"Source note with ID '{source_id}' not found"
+            )
         target_note = self.repository.get(target_id)
         if not target_note:
-            raise NoteNotFoundError(target_id, f"Target note with ID '{target_id}' not found")
-        
+            raise NoteNotFoundError(
+                target_id, f"Target note with ID '{target_id}' not found"
+            )
+
         # Check if this link already exists before attempting to add it
         for link in source_note.links:
             if link.target_id == target_id and link.link_type == link_type:
@@ -550,7 +582,7 @@ class ZettelService:
             # Only add the link if it doesn't exist
             source_note.add_link(target_id, link_type, description)
             source_note = self.repository.update(source_note)
-        
+
         # If bidirectional, add link from target to source with appropriate semantics
         reverse_note = None
         if bidirectional:
@@ -569,38 +601,40 @@ class ZettelService:
                     LinkType.QUESTIONED_BY: LinkType.QUESTIONS,
                     LinkType.SUPPORTS: LinkType.SUPPORTED_BY,
                     LinkType.SUPPORTED_BY: LinkType.SUPPORTS,
-                    LinkType.RELATED: LinkType.RELATED
+                    LinkType.RELATED: LinkType.RELATED,
                 }
                 bidirectional_type = inverse_map.get(link_type, link_type)
-            
+
             # Check if the reverse link already exists before adding it
             for link in target_note.links:
                 if link.target_id == source_id and link.link_type == bidirectional_type:
                     # Reverse link already exists, no need to add it again
                     return source_note, target_note
-                    
+
             # Only add the reverse link if it doesn't exist
             target_note.add_link(source_id, bidirectional_type, description)
             reverse_note = self.repository.update(target_note)
-        
+
         return source_note, reverse_note
-    
+
     def remove_link(
         self,
         source_id: str,
         target_id: str,
         link_type: Optional[LinkType] = None,
-        bidirectional: bool = False
+        bidirectional: bool = False,
     ) -> Tuple[Note, Optional[Note]]:
         """Remove a link between notes."""
         source_note = self.repository.get(source_id)
         if not source_note:
-            raise NoteNotFoundError(source_id, f"Source note with ID '{source_id}' not found")
-        
+            raise NoteNotFoundError(
+                source_id, f"Source note with ID '{source_id}' not found"
+            )
+
         # Remove link from source to target
         source_note.remove_link(target_id, link_type)
         source_note = self.repository.update(source_note)
-        
+
         # If bidirectional, remove link from target to source
         reverse_note = None
         if bidirectional:
@@ -608,22 +642,20 @@ class ZettelService:
             if target_note:
                 target_note.remove_link(source_id, link_type)
                 reverse_note = self.repository.update(target_note)
-        
+
         return source_note, reverse_note
-    
-    def get_linked_notes(
-        self, note_id: str, direction: str = "outgoing"
-    ) -> List[Note]:
+
+    def get_linked_notes(self, note_id: str, direction: str = "outgoing") -> List[Note]:
         """Get notes linked to/from a note."""
         note = self.repository.get(note_id)
         if not note:
             raise NoteNotFoundError(note_id)
         return self.repository.find_linked_notes(note_id, direction)
-    
+
     def rebuild_index(self) -> None:
         """Rebuild the database index from files."""
         self.repository.rebuild_index()
-    
+
     def export_note(self, note_id: str, format: str = "markdown") -> str:
         """Export a note in the specified format."""
         note = self.repository.get(note_id)
@@ -634,11 +666,9 @@ class ZettelService:
             return note.to_markdown()
         else:
             raise ValidationError(
-                f"Unsupported export format: {format}",
-                field="format",
-                value=format
+                f"Unsupported export format: {format}", field="format", value=format
             )
-    
+
     def sync_to_obsidian(self) -> int:
         """Sync all notes to the Obsidian vault.
 
@@ -651,10 +681,7 @@ class ZettelService:
         return self.repository.sync_to_obsidian()
 
     def fts_search(
-        self,
-        query: str,
-        limit: int = 50,
-        highlight: bool = False
+        self, query: str, limit: int = 50, highlight: bool = False
     ) -> List[Dict[str, Any]]:
         """Full-text search using FTS5.
 
@@ -670,7 +697,7 @@ class ZettelService:
 
     def has_fts(self) -> bool:
         """Check whether FTS5 full-text search is available."""
-        return getattr(self.repository, '_fts_available', False)
+        return getattr(self.repository, "_fts_available", False)
 
     def get_notes_by_ids(self, ids: List[str]) -> List[Note]:
         """Retrieve multiple notes by their IDs in a batch."""
@@ -698,7 +725,9 @@ class ZettelService:
     ) -> List[Tuple[str, float]]:
         """KNN vector search using sqlite-vec."""
         return self.repository.vec_similarity_search(
-            query_vector, limit=limit, exclude_ids=exclude_ids,
+            query_vector,
+            limit=limit,
+            exclude_ids=exclude_ids,
         )
 
     def get_embedding(self, note_id: str) -> Optional[List[float]]:
@@ -738,7 +767,9 @@ class ZettelService:
         """
         return self.repository.reset_fts_availability()
 
-    def find_similar_notes(self, note_id: str, threshold: float = 0.5) -> List[Tuple[Note, float]]:
+    def find_similar_notes(
+        self, note_id: str, threshold: float = 0.5
+    ) -> List[Tuple[Note, float]]:
         """Find notes similar to the given note based on shared tags and links.
 
         Uses SQL-optimized candidate selection to avoid O(N) file reads.
@@ -782,10 +813,10 @@ class ZettelService:
             # Calculate similarity score
             # Weight: 40% tags, 20% outgoing links, 20% incoming links, 20% direct connections
             total_possible = (
-                max(len(note_tags), len(other_tags)) * 0.4 +
-                max(len(note_links), len(other_links)) * 0.2 +
-                1 * 0.2 +  # Possible incoming link
-                1 * 0.2    # Possible outgoing link
+                max(len(note_tags), len(other_tags)) * 0.4
+                + max(len(note_links), len(other_links)) * 0.2
+                + 1 * 0.2  # Possible incoming link
+                + 1 * 0.2  # Possible outgoing link
             )
 
             # Avoid division by zero
@@ -793,10 +824,10 @@ class ZettelService:
                 similarity = 0.0
             else:
                 similarity = (
-                    (tag_overlap * 0.4) +
-                    (link_overlap * 0.2) +
-                    (incoming_overlap * 0.2) +
-                    (outgoing_overlap * 0.2)
+                    (tag_overlap * 0.4)
+                    + (link_overlap * 0.2)
+                    + (incoming_overlap * 0.2)
+                    + (outgoing_overlap * 0.2)
                 ) / total_possible
 
             if similarity >= threshold:
@@ -808,10 +839,7 @@ class ZettelService:
 
     # ========== Bulk Operations ==========
 
-    def bulk_create_notes(
-        self,
-        notes_data: List[Dict[str, Any]]
-    ) -> List[Note]:
+    def bulk_create_notes(self, notes_data: List[Dict[str, Any]]) -> List[Note]:
         """Create multiple notes in a single batch operation.
 
         Args:
@@ -831,13 +859,13 @@ class ZettelService:
                 raise NoteValidationError(
                     "Title is required for all notes",
                     field="title",
-                    code=ErrorCode.NOTE_TITLE_REQUIRED
+                    code=ErrorCode.NOTE_TITLE_REQUIRED,
                 )
             if not data.get("content"):
                 raise NoteValidationError(
                     "Content is required for all notes",
                     field="content",
-                    code=ErrorCode.NOTE_CONTENT_REQUIRED
+                    code=ErrorCode.NOTE_CONTENT_REQUIRED,
                 )
 
             note_type = data.get("note_type", NoteType.PERMANENT)
@@ -865,7 +893,7 @@ class ZettelService:
                 project=data.get("project", "general"),
                 plan_id=data.get("plan_id"),
                 tags=[Tag(name=tag) for tag in data.get("tags", [])],
-                metadata=data.get("metadata", {})
+                metadata=data.get("metadata", {}),
             )
             notes.append(note)
 
@@ -935,8 +963,7 @@ class ZettelService:
     # =========================================================================
 
     def migrate_notes_add_purpose(
-        self,
-        default_purpose: NotePurpose = NotePurpose.GENERAL
+        self, default_purpose: NotePurpose = NotePurpose.GENERAL
     ) -> Dict[str, Any]:
         """Migrate existing notes to include note_purpose field.
 
@@ -957,10 +984,9 @@ class ZettelService:
                 # Check the actual markdown file to see if 'purpose:' exists
                 note_path = self.repository.notes_dir / f"{note.id}.md"
                 if not note_path.exists():
-                    stats["errors"].append({
-                        "id": note.id,
-                        "error": "Markdown file not found"
-                    })
+                    stats["errors"].append(
+                        {"id": note.id, "error": "Markdown file not found"}
+                    )
                     continue
 
                 content = note_path.read_text(encoding="utf-8")
@@ -1014,7 +1040,7 @@ class ZettelService:
         project: str = "general",
         plan_id: Optional[str] = None,
         tags: Optional[List[str]] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> VersionedNote:
         """Create a new note with version tracking.
 
@@ -1036,15 +1062,13 @@ class ZettelService:
         """
         if not title:
             raise NoteValidationError(
-                "Title is required",
-                field="title",
-                code=ErrorCode.NOTE_TITLE_REQUIRED
+                "Title is required", field="title", code=ErrorCode.NOTE_TITLE_REQUIRED
             )
         if not content:
             raise NoteValidationError(
                 "Content is required",
                 field="content",
-                code=ErrorCode.NOTE_CONTENT_REQUIRED
+                code=ErrorCode.NOTE_CONTENT_REQUIRED,
             )
 
         # Auto-infer purpose when left at default
@@ -1052,7 +1076,9 @@ class ZettelService:
             inferred = _infer_purpose(title, content, tags)
             if inferred != NotePurpose.GENERAL:
                 note_purpose = inferred
-                logger.debug(f"Auto-inferred purpose '{note_purpose.value}' for note '{title}'")
+                logger.debug(
+                    f"Auto-inferred purpose '{note_purpose.value}' for note '{title}'"
+                )
 
         # Create note object
         note = Note(
@@ -1063,7 +1089,7 @@ class ZettelService:
             project=project,
             plan_id=plan_id,
             tags=[Tag(name=tag) for tag in (tags or [])],
-            metadata=metadata or {}
+            metadata=metadata or {},
         )
 
         # Save with version tracking
@@ -1085,7 +1111,7 @@ class ZettelService:
         tags: Optional[List[str]] = None,
         plan_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        expected_version: Optional[str] = None
+        expected_version: Optional[str] = None,
     ) -> Union[VersionedNote, ConflictResult]:
         """Update an existing note with version conflict detection.
 
@@ -1144,9 +1170,7 @@ class ZettelService:
         return result
 
     def delete_note_versioned(
-        self,
-        note_id: str,
-        expected_version: Optional[str] = None
+        self, note_id: str, expected_version: Optional[str] = None
     ) -> Union[VersionInfo, ConflictResult]:
         """Delete a note with version conflict detection.
 

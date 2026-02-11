@@ -12,12 +12,12 @@ Tests cover:
 
 Uses FakeEmbeddingProvider from tests/fakes.py with real in-memory SQLite.
 """
+
 import pytest
 
 from znote_mcp.services.embedding_service import EmbeddingService
 from znote_mcp.services.zettel_service import ZettelService
 from znote_mcp.storage.note_repository import NoteRepository
-
 
 # =============================================================================
 # Fixtures (shared _enable/_disable_embeddings, fake_embedder, fake_reranker
@@ -103,7 +103,9 @@ class TestAutoEmbedOnCreate:
         note = service.create_note(title="Alpha", content="First note")
         meta = repo.get_embedding_metadata(note.id)
         assert meta is not None
-        assert meta["content_hash"] == ZettelService._content_hash("Alpha", "First note")
+        assert meta["content_hash"] == ZettelService._content_hash(
+            "Alpha", "First note"
+        )
 
     def test_create_note_versioned_stores_embedding(self, service, repo, fake_embedder):
         result = service.create_note_versioned(title="Beta", content="Versioned note")
@@ -112,8 +114,7 @@ class TestAutoEmbedOnCreate:
 
     def test_bulk_create_stores_all_embeddings(self, service, repo, fake_embedder):
         notes_data = [
-            {"title": f"Note {i}", "content": f"Content {i}"}
-            for i in range(5)
+            {"title": f"Note {i}", "content": f"Content {i}"} for i in range(5)
         ]
         created = service.bulk_create_notes(notes_data)
         assert len(created) == 5
@@ -198,10 +199,12 @@ class TestDeleteCleansUpEmbedding:
         assert repo.get_embedding(note.id) is None
 
     def test_bulk_delete_removes_embeddings(self, service, repo):
-        notes = service.bulk_create_notes([
-            {"title": "A", "content": "Content A"},
-            {"title": "B", "content": "Content B"},
-        ])
+        notes = service.bulk_create_notes(
+            [
+                {"title": "A", "content": "Content A"},
+                {"title": "B", "content": "Content B"},
+            ]
+        )
         ids = [n.id for n in notes]
 
         service.bulk_delete_notes(ids)
@@ -249,6 +252,7 @@ class TestReindexEmbeddings:
 
     def test_reindex_without_embedding_service_raises(self, service_no_embedder):
         from znote_mcp.exceptions import EmbeddingError
+
         with pytest.raises(EmbeddingError):
             service_no_embedder.reindex_embeddings()
 
@@ -301,10 +305,12 @@ class TestFireAndForget:
         assert updated.content == "New content"
 
     def test_bulk_create_succeeds_despite_embed_failure(self, broken_service):
-        notes = broken_service.bulk_create_notes([
-            {"title": "A", "content": "Body A"},
-            {"title": "B", "content": "Body B"},
-        ])
+        notes = broken_service.bulk_create_notes(
+            [
+                {"title": "A", "content": "Body A"},
+                {"title": "B", "content": "Body B"},
+            ]
+        )
         assert len(notes) == 2
 
 
@@ -326,7 +332,9 @@ class TestDisabledEmbeddings:
         service_disabled.update_note(note.id, content="Z")
         assert fake_embedder.embed_count == 0
 
-    def test_delete_does_not_touch_embeddings(self, service_disabled, repo, fake_embedder):
+    def test_delete_does_not_touch_embeddings(
+        self, service_disabled, repo, fake_embedder
+    ):
         note = service_disabled.create_note(title="X", content="Y")
         service_disabled.delete_note(note.id)
         # No error, no embed calls

@@ -1,4 +1,5 @@
 """Tests for versioned CRUD operations."""
+
 import tempfile
 from pathlib import Path
 
@@ -12,8 +13,8 @@ from znote_mcp.models.schema import (
     VersionedNote,
     VersionInfo,
 )
-from znote_mcp.storage.note_repository import NoteRepository
 from znote_mcp.services.zettel_service import ZettelService
+from znote_mcp.storage.note_repository import NoteRepository
 
 
 class TestVersionedRepository:
@@ -34,9 +35,7 @@ class TestVersionedRepository:
     def repository(self, temp_env):
         """Create a repository with git enabled."""
         return NoteRepository(
-            notes_dir=Path(temp_env["notes_dir"]),
-            use_git=True,
-            in_memory_db=True
+            notes_dir=Path(temp_env["notes_dir"]), use_git=True, in_memory_db=True
         )
 
     def test_create_versioned_returns_version(self, repository):
@@ -112,8 +111,7 @@ class TestVersionedRepository:
             note_type=NoteType.PERMANENT,
         )
         result = repository.update_versioned(
-            updated_note,
-            expected_version=created.version.commit_hash
+            updated_note, expected_version=created.version.commit_hash
         )
 
         assert isinstance(result, VersionedNote)
@@ -145,8 +143,7 @@ class TestVersionedRepository:
             note_type=NoteType.PERMANENT,
         )
         result = repository.update_versioned(
-            updated_twice,
-            expected_version=created.version.commit_hash  # Old version
+            updated_twice, expected_version=created.version.commit_hash  # Old version
         )
 
         assert isinstance(result, ConflictResult)
@@ -176,8 +173,7 @@ class TestVersionedRepository:
         created = repository.create_versioned(note)
 
         result = repository.delete_versioned(
-            created.note.id,
-            expected_version=created.version.commit_hash
+            created.note.id, expected_version=created.version.commit_hash
         )
 
         assert isinstance(result, VersionInfo)
@@ -202,8 +198,7 @@ class TestVersionedRepository:
 
         # Try to delete with old version
         result = repository.delete_versioned(
-            created.note.id,
-            expected_version=created.version.commit_hash  # Old version
+            created.note.id, expected_version=created.version.commit_hash  # Old version
         )
 
         assert isinstance(result, ConflictResult)
@@ -228,9 +223,7 @@ class TestVersionedService:
     def service(self, temp_env):
         """Create a ZettelService with git-enabled repository."""
         repo = NoteRepository(
-            notes_dir=Path(temp_env["notes_dir"]),
-            use_git=True,
-            in_memory_db=True
+            notes_dir=Path(temp_env["notes_dir"]), use_git=True, in_memory_db=True
         )
         return ZettelService(repository=repo)
 

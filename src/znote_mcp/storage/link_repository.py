@@ -1,12 +1,13 @@
 """Repository for link storage and retrieval."""
+
 import logging
 from typing import List, Optional
 
 from sqlalchemy import func, select
 
+from znote_mcp.exceptions import ErrorCode, LinkError
 from znote_mcp.models.db_models import DBLink
 from znote_mcp.models.schema import Link, LinkType
-from znote_mcp.exceptions import ErrorCode, LinkError
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +43,9 @@ class LinkRepository:
             # Check if link already exists
             existing = session.scalar(
                 select(DBLink).where(
-                    (DBLink.source_id == link.source_id) &
-                    (DBLink.target_id == link.target_id) &
-                    (DBLink.link_type == link.link_type.value)
+                    (DBLink.source_id == link.source_id)
+                    & (DBLink.target_id == link.target_id)
+                    & (DBLink.link_type == link.link_type.value)
                 )
             )
             if existing:
@@ -53,7 +54,7 @@ class LinkRepository:
                     source_id=link.source_id,
                     target_id=link.target_id,
                     link_type=link.link_type.value,
-                    code=ErrorCode.LINK_ALREADY_EXISTS
+                    code=ErrorCode.LINK_ALREADY_EXISTS,
                 )
 
             db_link = DBLink(
@@ -61,14 +62,16 @@ class LinkRepository:
                 target_id=link.target_id,
                 link_type=link.link_type.value,
                 description=link.description,
-                created_at=link.created_at
+                created_at=link.created_at,
             )
             session.add(db_link)
             session.commit()
 
         return link
 
-    def get(self, source_id: str, target_id: str, link_type: Optional[LinkType] = None) -> Optional[Link]:
+    def get(
+        self, source_id: str, target_id: str, link_type: Optional[LinkType] = None
+    ) -> Optional[Link]:
         """Get a link by source, target, and optionally type.
 
         Args:
@@ -81,8 +84,7 @@ class LinkRepository:
         """
         with self.session_factory() as session:
             query = select(DBLink).where(
-                (DBLink.source_id == source_id) &
-                (DBLink.target_id == target_id)
+                (DBLink.source_id == source_id) & (DBLink.target_id == target_id)
             )
             if link_type:
                 query = query.where(DBLink.link_type == link_type.value)
@@ -96,7 +98,7 @@ class LinkRepository:
                 target_id=db_link.target_id,
                 link_type=LinkType(db_link.link_type),
                 description=db_link.description,
-                created_at=db_link.created_at
+                created_at=db_link.created_at,
             )
 
     def get_outgoing(self, note_id: str) -> List[Link]:
@@ -119,7 +121,7 @@ class LinkRepository:
                     target_id=link.target_id,
                     link_type=LinkType(link.link_type),
                     description=link.description,
-                    created_at=link.created_at
+                    created_at=link.created_at,
                 )
                 for link in db_links
             ]
@@ -144,7 +146,7 @@ class LinkRepository:
                     target_id=link.target_id,
                     link_type=LinkType(link.link_type),
                     description=link.description,
-                    created_at=link.created_at
+                    created_at=link.created_at,
                 )
                 for link in db_links
             ]
@@ -172,7 +174,9 @@ class LinkRepository:
 
         return result
 
-    def delete(self, source_id: str, target_id: str, link_type: Optional[LinkType] = None) -> bool:
+    def delete(
+        self, source_id: str, target_id: str, link_type: Optional[LinkType] = None
+    ) -> bool:
         """Delete a link.
 
         Args:
@@ -185,8 +189,7 @@ class LinkRepository:
         """
         with self.session_factory() as session:
             query = select(DBLink).where(
-                (DBLink.source_id == source_id) &
-                (DBLink.target_id == target_id)
+                (DBLink.source_id == source_id) & (DBLink.target_id == target_id)
             )
             if link_type:
                 query = query.where(DBLink.link_type == link_type.value)
@@ -238,11 +241,17 @@ class LinkRepository:
             Total number of connections.
         """
         with self.session_factory() as session:
-            outgoing_count = session.scalar(
-                select(func.count(DBLink.id)).where(DBLink.source_id == note_id)
-            ) or 0
-            incoming_count = session.scalar(
-                select(func.count(DBLink.id)).where(DBLink.target_id == note_id)
-            ) or 0
+            outgoing_count = (
+                session.scalar(
+                    select(func.count(DBLink.id)).where(DBLink.source_id == note_id)
+                )
+                or 0
+            )
+            incoming_count = (
+                session.scalar(
+                    select(func.count(DBLink.id)).where(DBLink.target_id == note_id)
+                )
+                or 0
+            )
 
             return outgoing_count + incoming_count

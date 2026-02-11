@@ -12,6 +12,7 @@ Design principles (from test strategy):
 - Deterministic: same input → same output, always
 - Inspectable: test code can predict exact outputs
 """
+
 import hashlib
 from typing import List, Sequence, Tuple
 

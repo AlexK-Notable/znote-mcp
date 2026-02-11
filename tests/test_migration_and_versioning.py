@@ -5,14 +5,20 @@ These tests cover:
 - Git versioned CRUD operations (create, update, delete)
 - Version conflict detection and handling
 """
+
 import tempfile
 from pathlib import Path
 
 import pytest
 
 from znote_mcp.models.schema import (
-    Note, NoteType, NotePurpose, Tag,
-    ConflictResult, VersionedNote, VersionInfo
+    ConflictResult,
+    Note,
+    NotePurpose,
+    NoteType,
+    Tag,
+    VersionedNote,
+    VersionInfo,
 )
 from znote_mcp.services.zettel_service import ZettelService
 from znote_mcp.storage.note_repository import NoteRepository
@@ -33,10 +39,9 @@ class TestMigrationAddPurpose:
 
         # Create a note through the repository (adds to DB + file)
         repo = NoteRepository(notes_dir=notes_dir)
-        note = repo.create(Note(
-            title="Old Note",
-            content="This is an old note without purpose."
-        ))
+        note = repo.create(
+            Note(title="Old Note", content="This is an old note without purpose.")
+        )
 
         # Manually rewrite the file to simulate legacy note without purpose
         note_path = notes_dir / f"{note.id}.md"
@@ -69,11 +74,13 @@ This is an old note without purpose."""
 
         # Create a note with purpose through the repository
         repo = NoteRepository(notes_dir=notes_dir)
-        note = repo.create(Note(
-            title="New Note",
-            content="This note already has a purpose.",
-            note_purpose=NotePurpose.RESEARCH
-        ))
+        note = repo.create(
+            Note(
+                title="New Note",
+                content="This note already has a purpose.",
+                note_purpose=NotePurpose.RESEARCH,
+            )
+        )
 
         # Verify purpose exists in file
         note_path = notes_dir / f"{note.id}.md"
@@ -93,10 +100,7 @@ This is an old note without purpose."""
 
         # Create a note through the repository
         repo = NoteRepository(notes_dir=notes_dir)
-        note = repo.create(Note(
-            title="Research Note",
-            content="Content here."
-        ))
+        note = repo.create(Note(title="Research Note", content="Content here."))
 
         # Manually rewrite the file to simulate legacy note without purpose
         note_path = notes_dir / f"{note.id}.md"
@@ -130,10 +134,9 @@ class TestGitVersionedCreate:
         notes_dir, db_dir = temp_dirs
         repo = NoteRepository(notes_dir=notes_dir, use_git=True)
 
-        result = repo.create_versioned(Note(
-            title="Versioned Note",
-            content="Content here"
-        ))
+        result = repo.create_versioned(
+            Note(title="Versioned Note", content="Content here")
+        )
 
         assert isinstance(result, VersionedNote)
         assert result.note.title == "Versioned Note"
@@ -145,10 +148,7 @@ class TestGitVersionedCreate:
         notes_dir, db_dir = temp_dirs
         repo = NoteRepository(notes_dir=notes_dir, use_git=True)
 
-        result = repo.create_versioned(Note(
-            title="Git Note",
-            content="Content"
-        ))
+        result = repo.create_versioned(Note(title="Git Note", content="Content"))
 
         # Verify git commit exists
         assert result.version.commit_hash != "0000000"
@@ -159,10 +159,7 @@ class TestGitVersionedCreate:
         notes_dir, db_dir = temp_dirs
         repo = NoteRepository(notes_dir=notes_dir, use_git=False)
 
-        result = repo.create_versioned(Note(
-            title="Non-Git Note",
-            content="Content"
-        ))
+        result = repo.create_versioned(Note(title="Non-Git Note", content="Content"))
 
         assert isinstance(result, VersionedNote)
         assert result.version.commit_hash == "0000000"
@@ -177,18 +174,15 @@ class TestGitVersionedUpdate:
         repo = NoteRepository(notes_dir=notes_dir, use_git=True)
 
         # Create initial version
-        created = repo.create_versioned(Note(
-            title="Original",
-            content="Original content"
-        ))
+        created = repo.create_versioned(
+            Note(title="Original", content="Original content")
+        )
         original_hash = created.version.commit_hash
 
         # Update
-        result = repo.update_versioned(Note(
-            id=created.note.id,
-            title="Updated",
-            content="Updated content"
-        ))
+        result = repo.update_versioned(
+            Note(id=created.note.id, title="Updated", content="Updated content")
+        )
 
         assert isinstance(result, VersionedNote)
         assert result.note.title == "Updated"
@@ -200,27 +194,18 @@ class TestGitVersionedUpdate:
         repo = NoteRepository(notes_dir=notes_dir, use_git=True)
 
         # Create initial version
-        v1 = repo.create_versioned(Note(
-            title="Version 1",
-            content="Content v1"
-        ))
+        v1 = repo.create_versioned(Note(title="Version 1", content="Content v1"))
         original_hash = v1.version.commit_hash
 
         # Update to v2
-        repo.update_versioned(Note(
-            id=v1.note.id,
-            title="Version 2",
-            content="Content v2"
-        ))
+        repo.update_versioned(
+            Note(id=v1.note.id, title="Version 2", content="Content v2")
+        )
 
         # Try to update with stale v1 hash
         result = repo.update_versioned(
-            Note(
-                id=v1.note.id,
-                title="Conflict",
-                content="This should conflict"
-            ),
-            expected_version=original_hash
+            Note(id=v1.note.id, title="Conflict", content="This should conflict"),
+            expected_version=original_hash,
         )
 
         assert isinstance(result, ConflictResult)
@@ -233,19 +218,12 @@ class TestGitVersionedUpdate:
         repo = NoteRepository(notes_dir=notes_dir, use_git=True)
 
         # Create initial version
-        v1 = repo.create_versioned(Note(
-            title="Version 1",
-            content="Content v1"
-        ))
+        v1 = repo.create_versioned(Note(title="Version 1", content="Content v1"))
 
         # Update with correct version
         result = repo.update_versioned(
-            Note(
-                id=v1.note.id,
-                title="Version 2",
-                content="Content v2"
-            ),
-            expected_version=v1.version.commit_hash
+            Note(id=v1.note.id, title="Version 2", content="Content v2"),
+            expected_version=v1.version.commit_hash,
         )
 
         assert isinstance(result, VersionedNote)
@@ -261,15 +239,11 @@ class TestGitVersionedDelete:
         repo = NoteRepository(notes_dir=notes_dir, use_git=True)
 
         # Create note
-        created = repo.create_versioned(Note(
-            title="To Delete",
-            content="Delete me"
-        ))
+        created = repo.create_versioned(Note(title="To Delete", content="Delete me"))
 
         # Delete with correct version
         result = repo.delete_versioned(
-            created.note.id,
-            expected_version=created.version.commit_hash
+            created.note.id, expected_version=created.version.commit_hash
         )
 
         assert isinstance(result, VersionInfo)
@@ -281,10 +255,7 @@ class TestGitVersionedDelete:
         repo = NoteRepository(notes_dir=notes_dir, use_git=True)
 
         # Create note
-        created = repo.create_versioned(Note(
-            title="To Delete",
-            content="Delete me"
-        ))
+        created = repo.create_versioned(Note(title="To Delete", content="Delete me"))
         note_id = created.note.id
 
         # Delete
@@ -299,23 +270,15 @@ class TestGitVersionedDelete:
         repo = NoteRepository(notes_dir=notes_dir, use_git=True)
 
         # Create and update to get two versions
-        v1 = repo.create_versioned(Note(
-            title="Original",
-            content="Content"
-        ))
+        v1 = repo.create_versioned(Note(title="Original", content="Content"))
         original_hash = v1.version.commit_hash
 
-        repo.update_versioned(Note(
-            id=v1.note.id,
-            title="Updated",
-            content="New content"
-        ))
+        repo.update_versioned(
+            Note(id=v1.note.id, title="Updated", content="New content")
+        )
 
         # Try to delete with stale version
-        result = repo.delete_versioned(
-            v1.note.id,
-            expected_version=original_hash
-        )
+        result = repo.delete_versioned(v1.note.id, expected_version=original_hash)
 
         assert isinstance(result, ConflictResult)
         assert result.status == "conflict"
@@ -326,17 +289,12 @@ class TestGitVersionedDelete:
         repo = NoteRepository(notes_dir=notes_dir, use_git=True)
 
         # Create and update
-        v1 = repo.create_versioned(Note(
-            title="Original",
-            content="Content"
-        ))
+        v1 = repo.create_versioned(Note(title="Original", content="Content"))
         original_hash = v1.version.commit_hash
 
-        repo.update_versioned(Note(
-            id=v1.note.id,
-            title="Updated",
-            content="New content"
-        ))
+        repo.update_versioned(
+            Note(id=v1.note.id, title="Updated", content="New content")
+        )
 
         # Try to delete with stale version (should conflict)
         result = repo.delete_versioned(v1.note.id, expected_version=original_hash)
@@ -358,10 +316,7 @@ class TestGitVersionedGet:
         repo = NoteRepository(notes_dir=notes_dir, use_git=True)
 
         # Create note
-        created = repo.create_versioned(Note(
-            title="Test Note",
-            content="Content"
-        ))
+        created = repo.create_versioned(Note(title="Test Note", content="Content"))
 
         # Get versioned
         result = repo.get_versioned(created.note.id)
@@ -385,15 +340,10 @@ class TestGitVersionedGet:
         repo = NoteRepository(notes_dir=notes_dir, use_git=True)
 
         # Create and update
-        v1 = repo.create_versioned(Note(
-            title="V1",
-            content="Content v1"
-        ))
-        v2 = repo.update_versioned(Note(
-            id=v1.note.id,
-            title="V2",
-            content="Content v2"
-        ))
+        v1 = repo.create_versioned(Note(title="V1", content="Content v1"))
+        v2 = repo.update_versioned(
+            Note(id=v1.note.id, title="V2", content="Content v2")
+        )
 
         # Get should return v2
         result = repo.get_versioned(v1.note.id)

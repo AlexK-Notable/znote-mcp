@@ -1,4 +1,5 @@
 """Repository for project storage and retrieval."""
+
 import json
 import logging
 from pathlib import Path
@@ -8,10 +9,10 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from znote_mcp.config import config
+from znote_mcp.exceptions import ErrorCode, ValidationError
 from znote_mcp.models.db_models import DBProject, get_session_factory, init_db
 from znote_mcp.models.schema import Project, utc_now
 from znote_mcp.storage.base import Repository
-from znote_mcp.exceptions import ErrorCode, ValidationError
 from znote_mcp.utils import escape_like_pattern
 
 logger = logging.getLogger(__name__)
@@ -62,7 +63,7 @@ class ProjectRepository(Repository[Project]):
             if existing:
                 raise ValidationError(
                     f"Project '{project.id}' already exists",
-                    code=ErrorCode.VALIDATION_FAILED
+                    code=ErrorCode.VALIDATION_FAILED,
                 )
 
             # Validate parent exists if specified
@@ -71,13 +72,13 @@ class ProjectRepository(Repository[Project]):
                 if project.parent_id == project.id:
                     raise ValidationError(
                         f"Project '{project.id}' cannot be its own parent",
-                        code=ErrorCode.VALIDATION_FAILED
+                        code=ErrorCode.VALIDATION_FAILED,
                     )
                 parent = session.get(DBProject, project.parent_id)
                 if not parent:
                     raise ValidationError(
                         f"Parent project '{project.parent_id}' not found",
-                        code=ErrorCode.VALIDATION_FAILED
+                        code=ErrorCode.VALIDATION_FAILED,
                     )
 
             # Create DB record
@@ -88,7 +89,9 @@ class ProjectRepository(Repository[Project]):
                 parent_id=project.parent_id,
                 path=project.path,
                 created_at=project.created_at,
-                metadata_json=json.dumps(project.metadata) if project.metadata else None
+                metadata_json=(
+                    json.dumps(project.metadata) if project.metadata else None
+                ),
             )
             session.add(db_project)
             session.commit()
@@ -138,7 +141,7 @@ class ProjectRepository(Repository[Project]):
             if not db_project:
                 raise ValidationError(
                     f"Project '{project.id}' not found",
-                    code=ErrorCode.PROJECT_NOT_FOUND
+                    code=ErrorCode.PROJECT_NOT_FOUND,
                 )
 
             # Validate parent exists if specified and check for cycles
@@ -147,13 +150,13 @@ class ProjectRepository(Repository[Project]):
                 if project.parent_id == project.id:
                     raise ValidationError(
                         f"Project '{project.id}' cannot be its own parent",
-                        code=ErrorCode.VALIDATION_FAILED
+                        code=ErrorCode.VALIDATION_FAILED,
                     )
                 parent = session.get(DBProject, project.parent_id)
                 if not parent:
                     raise ValidationError(
                         f"Parent project '{project.parent_id}' not found",
-                        code=ErrorCode.VALIDATION_FAILED
+                        code=ErrorCode.VALIDATION_FAILED,
                     )
                 # Check for circular reference by walking up the parent chain
                 # If we encounter project.id, it would create a cycle
@@ -163,7 +166,7 @@ class ProjectRepository(Repository[Project]):
                     if current.parent_id in visited:
                         raise ValidationError(
                             f"Setting parent to '{project.parent_id}' would create a circular reference",
-                            code=ErrorCode.VALIDATION_FAILED
+                            code=ErrorCode.VALIDATION_FAILED,
                         )
                     visited.add(current.parent_id)
                     current = session.get(DBProject, current.parent_id)
@@ -173,7 +176,9 @@ class ProjectRepository(Repository[Project]):
             db_project.description = project.description
             db_project.parent_id = project.parent_id
             db_project.path = project.path
-            db_project.metadata_json = json.dumps(project.metadata) if project.metadata else None
+            db_project.metadata_json = (
+                json.dumps(project.metadata) if project.metadata else None
+            )
 
             session.commit()
             logger.info(f"Updated project: {project.id}")
@@ -192,32 +197,33 @@ class ProjectRepository(Repository[Project]):
             db_project = session.get(DBProject, id)
             if not db_project:
                 raise ValidationError(
-                    f"Project '{id}' not found",
-                    code=ErrorCode.PROJECT_NOT_FOUND
+                    f"Project '{id}' not found", code=ErrorCode.PROJECT_NOT_FOUND
                 )
 
             # Check for child projects
-            children = session.execute(
-                select(DBProject).where(DBProject.parent_id == id)
-            ).scalars().all()
+            children = (
+                session.execute(select(DBProject).where(DBProject.parent_id == id))
+                .scalars()
+                .all()
+            )
             if children:
                 child_ids = [c.id for c in children]
                 raise ValidationError(
                     f"Cannot delete project '{id}': has child projects {child_ids}. "
                     "Delete children first.",
-                    code=ErrorCode.VALIDATION_FAILED
+                    code=ErrorCode.VALIDATION_FAILED,
                 )
 
             # Check for notes using this project
             note_count = session.execute(
                 text("SELECT COUNT(*) FROM notes WHERE project = :project_id"),
-                {"project_id": id}
+                {"project_id": id},
             ).scalar()
             if note_count > 0:
                 raise ValidationError(
                     f"Cannot delete project '{id}': {note_count} notes belong to it. "
                     "Move or delete notes first.",
-                    code=ErrorCode.VALIDATION_FAILED
+                    code=ErrorCode.VALIDATION_FAILED,
                 )
 
             session.delete(db_project)
@@ -238,8 +244,10 @@ class ProjectRepository(Repository[Project]):
             query = select(DBProject)
 
             if "name" in kwargs:
-                escaped_name = escape_like_pattern(kwargs['name'])
-                query = query.where(DBProject.name.ilike(f"%{escaped_name}%", escape='\\'))
+                escaped_name = escape_like_pattern(kwargs["name"])
+                query = query.where(
+                    DBProject.name.ilike(f"%{escaped_name}%", escape="\\")
+                )
             if "parent_id" in kwargs:
                 query = query.where(DBProject.parent_id == kwargs["parent_id"])
 
@@ -291,7 +299,7 @@ class ProjectRepository(Repository[Project]):
         with self.session_factory() as session:
             count = session.execute(
                 text("SELECT COUNT(*) FROM notes WHERE project = :project_id"),
-                {"project_id": id}
+                {"project_id": id},
             ).scalar()
             return count or 0
 
@@ -327,10 +335,10 @@ class ProjectRepository(Repository[Project]):
                     "description": p.description,
                     "path": p.path,
                     "parent_id": p.parent_id,
-                    "metadata": p.metadata
+                    "metadata": p.metadata,
                 }
                 for p in projects
-            ]
+            ],
         }
 
         with open(path, "w", encoding="utf-8") as f:
@@ -365,6 +373,7 @@ class ProjectRepository(Repository[Project]):
         # Sort by depth (parents first) to handle dependencies
         def depth(p):
             return p.get("id", "").count("/")
+
         projects_data.sort(key=depth)
 
         for p_data in projects_data:
@@ -374,7 +383,7 @@ class ProjectRepository(Repository[Project]):
                 description=p_data.get("description"),
                 path=p_data.get("path"),
                 parent_id=p_data.get("parent_id"),
-                metadata=p_data.get("metadata", {})
+                metadata=p_data.get("metadata", {}),
             )
 
             # Skip if already exists
@@ -400,5 +409,7 @@ class ProjectRepository(Repository[Project]):
             parent_id=db_project.parent_id,
             path=db_project.path,
             created_at=db_project.created_at,
-            metadata=json.loads(db_project.metadata_json) if db_project.metadata_json else {}
+            metadata=(
+                json.loads(db_project.metadata_json) if db_project.metadata_json else {}
+            ),
         )

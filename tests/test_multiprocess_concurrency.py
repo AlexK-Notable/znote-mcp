@@ -8,6 +8,7 @@ These tests spawn actual separate processes to verify that:
 Unlike thread-based tests, these prove the architecture works
 in real-world scenarios with multiple Claude Code instances.
 """
+
 import json
 import multiprocessing
 import os
@@ -15,7 +16,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Any, Dict, List
 
 import pytest
 
@@ -32,9 +33,7 @@ def worker_create_note(args: Dict[str, Any]) -> Dict[str, Any]:
 
     try:
         repo = NoteRepository(
-            notes_dir=Path(args["notes_dir"]),
-            use_git=True,
-            in_memory_db=True
+            notes_dir=Path(args["notes_dir"]), use_git=True, in_memory_db=True
         )
         note = Note(
             title=f"Process {args['worker_id']} Note",
@@ -60,7 +59,7 @@ def worker_update_note(args: Dict[str, Any]) -> Dict[str, Any]:
     """Worker function that updates a note in a separate process."""
     sys.path.insert(0, args["src_path"])
 
-    from znote_mcp.models.schema import Note, NoteType, ConflictResult
+    from znote_mcp.models.schema import ConflictResult, Note, NoteType
     from znote_mcp.storage.note_repository import NoteRepository
 
     # Optional delay to stagger workers
@@ -69,9 +68,7 @@ def worker_update_note(args: Dict[str, Any]) -> Dict[str, Any]:
 
     try:
         repo = NoteRepository(
-            notes_dir=Path(args["notes_dir"]),
-            use_git=True,
-            in_memory_db=True
+            notes_dir=Path(args["notes_dir"]), use_git=True, in_memory_db=True
         )
 
         updated = Note(
@@ -82,8 +79,7 @@ def worker_update_note(args: Dict[str, Any]) -> Dict[str, Any]:
         )
 
         result = repo.update_versioned(
-            updated,
-            expected_version=args.get("expected_version")
+            updated, expected_version=args.get("expected_version")
         )
 
         if isinstance(result, ConflictResult):
@@ -117,7 +113,7 @@ def worker_read_and_update(args: Dict[str, Any]) -> Dict[str, Any]:
     """
     sys.path.insert(0, args["src_path"])
 
-    from znote_mcp.models.schema import Note, NoteType, ConflictResult
+    from znote_mcp.models.schema import ConflictResult, Note, NoteType
     from znote_mcp.storage.note_repository import NoteRepository
 
     # Stagger start times
@@ -126,15 +122,17 @@ def worker_read_and_update(args: Dict[str, Any]) -> Dict[str, Any]:
 
     try:
         repo = NoteRepository(
-            notes_dir=Path(args["notes_dir"]),
-            use_git=True,
-            in_memory_db=True
+            notes_dir=Path(args["notes_dir"]), use_git=True, in_memory_db=True
         )
 
         # Read current version
         current = repo.get_versioned(args["note_id"])
         if not current:
-            return {"success": False, "error": "Note not found", "worker_id": args["worker_id"]}
+            return {
+                "success": False,
+                "error": "Note not found",
+                "worker_id": args["worker_id"],
+            }
 
         read_version = current.version.commit_hash
 
@@ -186,6 +184,7 @@ class TestMultiProcessConcurrency:
             notes_dir = Path(tmp)
             # Pre-initialize git repo to avoid init race
             from znote_mcp.storage.git_wrapper import GitWrapper
+
             GitWrapper(notes_dir)
             yield notes_dir
 
@@ -223,7 +222,9 @@ class TestMultiProcessConcurrency:
 
         # All versions should be valid (non-placeholder)
         versions = [r["version"] for r in successes]
-        assert all(v != "0000000" for v in versions), "All should have real git versions"
+        assert all(
+            v != "0000000" for v in versions
+        ), "All should have real git versions"
 
     def test_concurrent_updates_same_note_with_stale_version(self, shared_notes_dir):
         """Test that concurrent updates with stale version cause conflicts.
@@ -239,9 +240,7 @@ class TestMultiProcessConcurrency:
         from znote_mcp.storage.note_repository import NoteRepository
 
         repo = NoteRepository(
-            notes_dir=shared_notes_dir,
-            use_git=True,
-            in_memory_db=True
+            notes_dir=shared_notes_dir, use_git=True, in_memory_db=True
         )
         note = Note(
             title="Contested Note",
@@ -276,11 +275,14 @@ class TestMultiProcessConcurrency:
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
         # Exactly one should succeed (the first one to commit)
-        assert len(successes) == 1, f"Expected 1 success, got {len(successes)}: {successes}"
+        assert (
+            len(successes) == 1
+        ), f"Expected 1 success, got {len(successes)}: {successes}"
 
         # The rest should get conflicts
-        assert len(conflicts) == num_workers - 1, \
-            f"Expected {num_workers - 1} conflicts, got {len(conflicts)}"
+        assert (
+            len(conflicts) == num_workers - 1
+        ), f"Expected {num_workers - 1} conflicts, got {len(conflicts)}"
 
     def test_read_modify_write_race(self, shared_notes_dir):
         """Test the realistic read-modify-write pattern under contention.
@@ -298,9 +300,7 @@ class TestMultiProcessConcurrency:
         from znote_mcp.storage.note_repository import NoteRepository
 
         repo = NoteRepository(
-            notes_dir=shared_notes_dir,
-            use_git=True,
-            in_memory_db=True
+            notes_dir=shared_notes_dir, use_git=True, in_memory_db=True
         )
         note = Note(
             title="Race Test Note",
@@ -355,9 +355,7 @@ class TestMultiProcessConcurrency:
         from znote_mcp.storage.note_repository import NoteRepository
 
         repo = NoteRepository(
-            notes_dir=shared_notes_dir,
-            use_git=True,
-            in_memory_db=True
+            notes_dir=shared_notes_dir, use_git=True, in_memory_db=True
         )
         note = Note(
             title="Stress Test Note",
@@ -406,10 +404,12 @@ class TestMultiProcessConcurrency:
         # Verify git history has the right number of commits
         # (1 create + number of successful updates)
         from znote_mcp.storage.git_wrapper import GitWrapper
+
         git = GitWrapper(shared_notes_dir)
         history = git.get_history(shared_notes_dir / f"{note_id}.md", limit=100)
-        assert len(history) == 1 + len(successes), \
-            f"Expected {1 + len(successes)} commits, got {len(history)}"
+        assert len(history) == 1 + len(
+            successes
+        ), f"Expected {1 + len(successes)} commits, got {len(history)}"
 
 
 class TestDataIntegrity:
@@ -484,7 +484,7 @@ class TestDataIntegrity:
 
     def test_conflict_preserves_data(self, notes_dir):
         """Test that a conflict doesn't corrupt or lose data."""
-        from znote_mcp.models.schema import Note, NoteType, ConflictResult
+        from znote_mcp.models.schema import ConflictResult, Note, NoteType
         from znote_mcp.storage.note_repository import NoteRepository
 
         repo = NoteRepository(notes_dir=notes_dir, use_git=True, in_memory_db=True)
@@ -552,6 +552,7 @@ class TestDataIntegrity:
 
         # Verify via git history
         from znote_mcp.storage.git_wrapper import GitWrapper
+
         git = GitWrapper(notes_dir)
         history = git.get_history(notes_dir / f"{note_id}.md", limit=100)
         assert len(history) == 51  # 1 create + 50 updates

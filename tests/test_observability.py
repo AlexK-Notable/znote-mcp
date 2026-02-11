@@ -2,6 +2,7 @@
 
 Tests for metrics collection, logging configuration, and error sanitization.
 """
+
 import json
 import logging
 import tempfile
@@ -91,8 +92,7 @@ class TestMetricsCollector:
     def metrics_collector(self, temp_metrics_file):
         """Create a MetricsCollector with temp file."""
         return MetricsCollector(
-            metrics_file=temp_metrics_file,
-            auto_save_interval=0  # Disable auto-save
+            metrics_file=temp_metrics_file, auto_save_interval=0  # Disable auto-save
         )
 
     def test_record_successful_operation(self, metrics_collector):
@@ -147,8 +147,7 @@ class TestMetricsCollector:
         """Test saving and loading metrics."""
         # Create and save
         collector1 = MetricsCollector(
-            metrics_file=temp_metrics_file,
-            auto_save_interval=0
+            metrics_file=temp_metrics_file, auto_save_interval=0
         )
         collector1.record_operation("op1", 100.0, True)
         collector1.record_operation("op2", 200.0, False, "Error")
@@ -164,8 +163,7 @@ class TestMetricsCollector:
 
         # Create new collector and verify it loads the data
         collector2 = MetricsCollector(
-            metrics_file=temp_metrics_file,
-            auto_save_interval=0
+            metrics_file=temp_metrics_file, auto_save_interval=0
         )
         metrics = collector2.get_metrics()
         assert "op1" in metrics
@@ -203,9 +201,11 @@ class TestTimedOperation:
             metrics_file = Path(f.name)
 
         try:
-            collector = MetricsCollector(metrics_file=metrics_file, auto_save_interval=0)
+            collector = MetricsCollector(
+                metrics_file=metrics_file, auto_save_interval=0
+            )
 
-            with patch('znote_mcp.observability.metrics', collector):
+            with patch("znote_mcp.observability.metrics", collector):
                 with timed_operation("test_op") as op:
                     time.sleep(0.01)  # 10ms
                     op["custom_data"] = "value"
@@ -223,9 +223,11 @@ class TestTimedOperation:
             metrics_file = Path(f.name)
 
         try:
-            collector = MetricsCollector(metrics_file=metrics_file, auto_save_interval=0)
+            collector = MetricsCollector(
+                metrics_file=metrics_file, auto_save_interval=0
+            )
 
-            with patch('znote_mcp.observability.metrics', collector):
+            with patch("znote_mcp.observability.metrics", collector):
                 try:
                     with timed_operation("test_op"):
                         raise ValueError("Test error")

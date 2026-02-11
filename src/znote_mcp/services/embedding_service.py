@@ -14,6 +14,7 @@ Usage:
     ranked = service.rerank("query", ["doc1", "doc2"])
     service.shutdown()  # Clean up on server exit
 """
+
 from __future__ import annotations
 
 import logging
@@ -24,6 +25,7 @@ from znote_mcp.exceptions import EmbeddingError, ErrorCode
 
 if TYPE_CHECKING:
     import numpy as np
+
     from znote_mcp.services.embedding_types import EmbeddingProvider, RerankerProvider
 
 logger = logging.getLogger(__name__)

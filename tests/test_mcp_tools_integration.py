@@ -8,14 +8,15 @@ Tests cover:
 - Admin tools (zk_system, zk_status)
 - Restore tool (zk_restore)
 """
+
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from znote_mcp.models.schema import Note, NoteType, NotePurpose, Project
+from znote_mcp.models.schema import Note, NotePurpose, NoteType, Project
 from znote_mcp.services.zettel_service import ZettelService
 from znote_mcp.storage.note_repository import NoteRepository
 from znote_mcp.storage.project_repository import ProjectRepository
@@ -39,9 +40,7 @@ class TestProjectMcpToolsIntegration:
 
         # Create project through service (simulating MCP tool behavior)
         project = Project(
-            id="test-project",
-            name="Test Project",
-            description="A test project"
+            id="test-project", name="Test Project", description="A test project"
         )
         created = project_repo.create(project)
 
@@ -60,11 +59,13 @@ class TestProjectMcpToolsIntegration:
 
         # Create multiple projects
         for i in range(3):
-            project_repo.create(Project(
-                id=f"project-{i}",
-                name=f"Project {i}",
-                description=f"Description {i}"
-            ))
+            project_repo.create(
+                Project(
+                    id=f"project-{i}",
+                    name=f"Project {i}",
+                    description=f"Description {i}",
+                )
+            )
 
         # List projects
         projects = project_repo.get_all()
@@ -79,13 +80,15 @@ class TestProjectMcpToolsIntegration:
         service, project_repo, notes_dir = setup_services
 
         # Create project with metadata
-        project_repo.create(Project(
-            id="detailed-project",
-            name="Detailed Project",
-            description="Project with details",
-            path="/some/path",
-            metadata={"key": "value"}
-        ))
+        project_repo.create(
+            Project(
+                id="detailed-project",
+                name="Detailed Project",
+                description="Project with details",
+                path="/some/path",
+                metadata={"key": "value"},
+            )
+        )
 
         # Get project
         project = project_repo.get("detailed-project")
@@ -102,10 +105,7 @@ class TestProjectMcpToolsIntegration:
         service, project_repo, notes_dir = setup_services
 
         # Create project
-        project_repo.create(Project(
-            id="to-delete",
-            name="To Delete"
-        ))
+        project_repo.create(Project(id="to-delete", name="To Delete"))
 
         # Verify exists
         assert project_repo.get("to-delete") is not None
@@ -121,20 +121,16 @@ class TestProjectMcpToolsIntegration:
         service, project_repo, notes_dir = setup_services
 
         # Create project
-        project_repo.create(Project(
-            id="has-notes",
-            name="Has Notes"
-        ))
+        project_repo.create(Project(id="has-notes", name="Has Notes"))
 
         # Create note in project
         service.create_note(
-            title="Note in Project",
-            content="Content",
-            project="has-notes"
+            title="Note in Project", content="Content", project="has-notes"
         )
 
         # Try to delete project - should fail
         from znote_mcp.exceptions import ValidationError
+
         with pytest.raises(ValidationError) as exc_info:
             project_repo.delete("has-notes")
 
@@ -221,19 +217,13 @@ class TestStatusToolIntegration:
 
         # Create notes of different types
         service.create_note(
-            title="Fleeting 1",
-            content="Content",
-            note_type=NoteType.FLEETING
+            title="Fleeting 1", content="Content", note_type=NoteType.FLEETING
         )
         service.create_note(
-            title="Permanent 1",
-            content="Content",
-            note_type=NoteType.PERMANENT
+            title="Permanent 1", content="Content", note_type=NoteType.PERMANENT
         )
         service.create_note(
-            title="Permanent 2",
-            content="Content",
-            note_type=NoteType.PERMANENT
+            title="Permanent 2", content="Content", note_type=NoteType.PERMANENT
         )
 
         # Get status
@@ -252,20 +242,12 @@ class TestStatusToolIntegration:
 
         # Create notes with tags
         service.create_note(
-            title="Note 1",
-            content="Content",
-            tags=["python", "programming"]
+            title="Note 1", content="Content", tags=["python", "programming"]
         )
         service.create_note(
-            title="Note 2",
-            content="Content",
-            tags=["python", "tutorial"]
+            title="Note 2", content="Content", tags=["python", "tutorial"]
         )
-        service.create_note(
-            title="Note 3",
-            content="Content",
-            tags=["javascript"]
-        )
+        service.create_note(title="Note 3", content="Content", tags=["javascript"])
 
         # Get all tags
         tags = repo.get_all_tags()
@@ -291,10 +273,7 @@ class TestRestoreToolIntegration:
         service, repo, notes_dir = setup_services
 
         # Create a note
-        note = service.create_note(
-            title="Important Note",
-            content="Important content"
-        )
+        note = service.create_note(title="Important Note", content="Important content")
         note_id = note.id
 
         # Verify file exists
@@ -306,10 +285,14 @@ class TestRestoreToolIntegration:
 
         # Note can still be read from file (dual-storage architecture)
         # But DB count should be lower
-        from sqlalchemy import select, func
+        from sqlalchemy import func, select
+
         from znote_mcp.models.db_models import DBNote
+
         with repo.session_factory() as session:
-            db_count = session.execute(select(func.count()).select_from(DBNote)).scalar()
+            db_count = session.execute(
+                select(func.count()).select_from(DBNote)
+            ).scalar()
         assert db_count == 0  # DB has no notes
 
         # Rebuild index should recover from files
@@ -317,7 +300,9 @@ class TestRestoreToolIntegration:
 
         # Now DB should have the note again
         with repo.session_factory() as session:
-            db_count = session.execute(select(func.count()).select_from(DBNote)).scalar()
+            db_count = session.execute(
+                select(func.count()).select_from(DBNote)
+            ).scalar()
         assert db_count == 1
 
     def test_rebuild_handles_missing_files(self, setup_services):
@@ -345,10 +330,7 @@ class TestRestoreToolIntegration:
         service, repo, notes_dir = setup_services
 
         # Create a note
-        note = service.create_note(
-            title="Original Title",
-            content="Original content"
-        )
+        note = service.create_note(title="Original Title", content="Original content")
         note_id = note.id
 
         # Manually modify the file (simulating external edit)
@@ -362,7 +344,9 @@ class TestRestoreToolIntegration:
 
         # DB should have updated title
         from sqlalchemy import select
+
         from znote_mcp.models.db_models import DBNote
+
         with repo.session_factory() as session:
             db_note = session.execute(
                 select(DBNote).where(DBNote.id == note_id)
@@ -393,7 +377,7 @@ class TestBulkProjectUpdateIntegration:
             note = service.create_note(
                 title=f"Note {i}",
                 content=f"Content {i}",
-                project=f"old-project-{i % 2}"
+                project=f"old-project-{i % 2}",
             )
             notes.append(note)
 
@@ -419,7 +403,7 @@ class TestBulkProjectUpdateIntegration:
             content="Full content",
             project="original",
             note_type=NoteType.PERMANENT,
-            tags=["tag1", "tag2"]
+            tags=["tag1", "tag2"],
         )
 
         # Move to new project

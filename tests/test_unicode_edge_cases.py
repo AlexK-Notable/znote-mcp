@@ -3,6 +3,7 @@
 Tests that verify proper handling of Unicode characters, emojis, RTL text,
 combining characters, and other internationalization concerns.
 """
+
 import pytest
 
 from znote_mcp.models.schema import LinkType, NoteType
@@ -15,8 +16,7 @@ class TestUnicodeInTitles:
     def test_emoji_in_title(self, zettel_service):
         """Test notes with emoji in titles."""
         note = zettel_service.create_note(
-            title="🚀 Rocket Science 🌟",
-            content="Space exploration concepts."
+            title="🚀 Rocket Science 🌟", content="Space exploration concepts."
         )
 
         retrieved = zettel_service.get_note(note.id)
@@ -26,8 +26,7 @@ class TestUnicodeInTitles:
     def test_chinese_characters_in_title(self, zettel_service):
         """Test notes with Chinese characters in titles."""
         note = zettel_service.create_note(
-            title="中文标题测试",
-            content="这是中文内容。"
+            title="中文标题测试", content="这是中文内容。"
         )
 
         retrieved = zettel_service.get_note(note.id)
@@ -37,7 +36,7 @@ class TestUnicodeInTitles:
         """Test notes with Japanese characters (Hiragana, Katakana, Kanji)."""
         note = zettel_service.create_note(
             title="日本語のタイトル テスト",
-            content="ひらがな、カタカナ、漢字のテスト。"
+            content="ひらがな、カタカナ、漢字のテスト。",
         )
 
         retrieved = zettel_service.get_note(note.id)
@@ -47,8 +46,7 @@ class TestUnicodeInTitles:
     def test_korean_characters_in_title(self, zettel_service):
         """Test notes with Korean (Hangul) characters."""
         note = zettel_service.create_note(
-            title="한국어 제목 테스트",
-            content="한글 내용입니다."
+            title="한국어 제목 테스트", content="한글 내용입니다."
         )
 
         retrieved = zettel_service.get_note(note.id)
@@ -57,8 +55,7 @@ class TestUnicodeInTitles:
     def test_arabic_rtl_title(self, zettel_service):
         """Test notes with Arabic right-to-left text."""
         note = zettel_service.create_note(
-            title="اختبار العنوان العربي",
-            content="محتوى باللغة العربية."
+            title="اختبار العنوان العربي", content="محتوى باللغة العربية."
         )
 
         retrieved = zettel_service.get_note(note.id)
@@ -66,10 +63,7 @@ class TestUnicodeInTitles:
 
     def test_hebrew_rtl_title(self, zettel_service):
         """Test notes with Hebrew right-to-left text."""
-        note = zettel_service.create_note(
-            title="כותרת בעברית",
-            content="תוכן בעברית."
-        )
+        note = zettel_service.create_note(title="כותרת בעברית", content="תוכן בעברית.")
 
         retrieved = zettel_service.get_note(note.id)
         assert "בעברית" in retrieved.title
@@ -77,8 +71,7 @@ class TestUnicodeInTitles:
     def test_mixed_script_title(self, zettel_service):
         """Test notes with mixed scripts in title."""
         note = zettel_service.create_note(
-            title="English 中文 日本語 한국어 Mixed",
-            content="Multi-language content."
+            title="English 中文 日本語 한국어 Mixed", content="Multi-language content."
         )
 
         retrieved = zettel_service.get_note(note.id)
@@ -95,7 +88,7 @@ class TestUnicodeInContent:
         """Test notes with mathematical symbols."""
         note = zettel_service.create_note(
             title="Math Formulas",
-            content="∀x ∈ ℝ: x² ≥ 0, ∑∞ₙ₌₁ 1/n² = π²/6, √2 ≈ 1.414"
+            content="∀x ∈ ℝ: x² ≥ 0, ∑∞ₙ₌₁ 1/n² = π²/6, √2 ≈ 1.414",
         )
 
         retrieved = zettel_service.get_note(note.id)
@@ -110,7 +103,7 @@ class TestUnicodeInContent:
         """Test notes with various currency symbols."""
         note = zettel_service.create_note(
             title="Currency Symbols",
-            content="USD: $100, EUR: €85, GBP: £75, JPY: ¥11,000, BTC: ₿0.003"
+            content="USD: $100, EUR: €85, GBP: £75, JPY: ¥11,000, BTC: ₿0.003",
         )
 
         retrieved = zettel_service.get_note(note.id)
@@ -131,7 +124,7 @@ class TestUnicodeInContent:
 │  ├── Module 1   │
 │  └── Module 2   │
 └─────────────────┘
-"""
+""",
         )
 
         retrieved = zettel_service.get_note(note.id)
@@ -144,7 +137,7 @@ class TestUnicodeInContent:
         """Test notes with complex emoji sequences."""
         note = zettel_service.create_note(
             title="Emoji Test",
-            content="Family: 👨‍👩‍👧‍👦 Flag: 🇯🇵 Skin tone: 👍🏻 ZWJ: 👩‍💻"
+            content="Family: 👨‍👩‍👧‍👦 Flag: 🇯🇵 Skin tone: 👍🏻 ZWJ: 👩‍💻",
         )
 
         retrieved = zettel_service.get_note(note.id)
@@ -156,7 +149,7 @@ class TestUnicodeInContent:
         # Using combining characters (separate diacritics)
         note = zettel_service.create_note(
             title="Combining Characters",
-            content="Ḉ̧óṃb̧ĩñĩñg̃ characters: café naïve résumé"
+            content="Ḉ̧óṃb̧ĩñĩñg̃ characters: café naïve résumé",
         )
 
         retrieved = zettel_service.get_note(note.id)
@@ -166,8 +159,7 @@ class TestUnicodeInContent:
         """Test notes with zero-width characters."""
         # Zero-width space (U+200B) and zero-width non-joiner (U+200C)
         note = zettel_service.create_note(
-            title="Zero Width Test",
-            content="word\u200Bwith\u200Czero\u200Dwidth"
+            title="Zero Width Test", content="word\u200bwith\u200czero\u200dwidth"
         )
 
         retrieved = zettel_service.get_note(note.id)
@@ -182,9 +174,7 @@ class TestUnicodeInTags:
     def test_emoji_tag(self, zettel_service):
         """Test tags with emoji."""
         note = zettel_service.create_note(
-            title="Emoji Tagged",
-            content="Content",
-            tags=["🔥hot", "⭐starred"]
+            title="Emoji Tagged", content="Content", tags=["🔥hot", "⭐starred"]
         )
 
         tag_names = {tag.name for tag in note.tags}
@@ -194,9 +184,7 @@ class TestUnicodeInTags:
     def test_chinese_tags(self, zettel_service):
         """Test tags with Chinese characters."""
         note = zettel_service.create_note(
-            title="Chinese Tagged",
-            content="Content",
-            tags=["中文", "标签", "测试"]
+            title="Chinese Tagged", content="Content", tags=["中文", "标签", "测试"]
         )
 
         tag_names = {tag.name for tag in note.tags}
@@ -207,9 +195,7 @@ class TestUnicodeInTags:
     def test_accented_tags(self, zettel_service):
         """Test tags with accented characters."""
         note = zettel_service.create_note(
-            title="Accented Tags",
-            content="Content",
-            tags=["café", "naïve", "résumé"]
+            title="Accented Tags", content="Content", tags=["café", "naïve", "résumé"]
         )
 
         tag_names = {tag.name for tag in note.tags}
@@ -222,8 +208,7 @@ class TestUnicodeSearch:
     def test_search_chinese_text(self, zettel_service):
         """Test full-text search with Chinese characters."""
         zettel_service.create_note(
-            title="中文测试",
-            content="这是一个中文内容的测试笔记。"
+            title="中文测试", content="这是一个中文内容的测试笔记。"
         )
 
         search_service = SearchService(zettel_service)
@@ -235,8 +220,7 @@ class TestUnicodeSearch:
     def test_search_emoji(self, zettel_service):
         """Test searching for emoji."""
         zettel_service.create_note(
-            title="🚀 Rocket Launch",
-            content="The 🚀 is launching today!"
+            title="🚀 Rocket Launch", content="The 🚀 is launching today!"
         )
 
         search_service = SearchService(zettel_service)
@@ -248,7 +232,7 @@ class TestUnicodeSearch:
         """Test searching for accented characters."""
         zettel_service.create_note(
             title="Café Culture",
-            content="The café is famous for its résumé of pastries."
+            content="The café is famous for its résumé of pastries.",
         )
 
         search_service = SearchService(zettel_service)
@@ -259,8 +243,7 @@ class TestUnicodeSearch:
     def test_case_insensitive_unicode_search(self, zettel_service):
         """Test that Unicode search is case-insensitive where applicable."""
         zettel_service.create_note(
-            title="German Umlauts",
-            content="Größe means size. GRÖSSE is also valid."
+            title="German Umlauts", content="Größe means size. GRÖSSE is also valid."
         )
 
         search_service = SearchService(zettel_service)
@@ -279,12 +262,10 @@ class TestUnicodeLinks:
     def test_unicode_link_description(self, zettel_service):
         """Test links with Unicode descriptions."""
         note1 = zettel_service.create_note(
-            title="Source 来源",
-            content="Source content"
+            title="Source 来源", content="Source content"
         )
         note2 = zettel_service.create_note(
-            title="Target 目标",
-            content="Target content"
+            title="Target 目标", content="Target content"
         )
 
         # Create link with Unicode description
@@ -292,7 +273,7 @@ class TestUnicodeLinks:
             note1.id,
             note2.id,
             LinkType.REFERENCE,
-            description="参考链接 - Reference Link 📚"
+            description="参考链接 - Reference Link 📚",
         )
 
         # Verify link was created
@@ -308,8 +289,7 @@ class TestUnicodeNormalization:
         """Test searching for composed vs decomposed Unicode."""
         # Create note with composed form (é as single character)
         note = zettel_service.create_note(
-            title="Café Note",  # composed é (U+00E9)
-            content="Visit the café today."
+            title="Café Note", content="Visit the café today."  # composed é (U+00E9)
         )
 
         search_service = SearchService(zettel_service)
@@ -323,7 +303,7 @@ class TestUnicodeNormalization:
         # Fullwidth characters used in CJK text
         note = zettel_service.create_note(
             title="Ｆｕｌｌｗｉｄｔｈ Test",  # Fullwidth ASCII
-            content="ＡＢＣＤ = ABCD"
+            content="ＡＢＣＤ = ABCD",
         )
 
         retrieved = zettel_service.get_note(note.id)
@@ -339,10 +319,7 @@ class TestUnicodeBoundaryConditions:
         # Long string with mix of BMP and non-BMP characters
         long_unicode = "こんにちは" * 1000 + "🌟" * 100
 
-        note = zettel_service.create_note(
-            title="Long Unicode",
-            content=long_unicode
-        )
+        note = zettel_service.create_note(title="Long Unicode", content=long_unicode)
 
         retrieved = zettel_service.get_note(note.id)
         # Should handle without crashing
@@ -355,8 +332,7 @@ class TestUnicodeBoundaryConditions:
 
         try:
             note = zettel_service.create_note(
-                title="Null Test",
-                content=content_with_null
+                title="Null Test", content=content_with_null
             )
             # If it succeeds, check that something was stored
             retrieved = zettel_service.get_note(note.id)
@@ -370,10 +346,7 @@ class TestUnicodeBoundaryConditions:
         # UTF-8 BOM at start of content
         content_with_bom = "\ufeffContent with BOM"
 
-        note = zettel_service.create_note(
-            title="BOM Test",
-            content=content_with_bom
-        )
+        note = zettel_service.create_note(title="BOM Test", content=content_with_bom)
 
         retrieved = zettel_service.get_note(note.id)
         # BOM might be stripped or preserved
@@ -382,12 +355,9 @@ class TestUnicodeBoundaryConditions:
     def test_private_use_area_characters(self, zettel_service):
         """Test handling of Private Use Area characters."""
         # PUA characters (often used for custom icons/fonts)
-        pua_content = "Custom symbol: \uE000 \uF000 end"
+        pua_content = "Custom symbol: \ue000 \uf000 end"
 
-        note = zettel_service.create_note(
-            title="PUA Test",
-            content=pua_content
-        )
+        note = zettel_service.create_note(title="PUA Test", content=pua_content)
 
         retrieved = zettel_service.get_note(note.id)
         # Should handle without crashing
@@ -398,10 +368,7 @@ class TestUnicodeBoundaryConditions:
         # Characters outside BMP require surrogate pairs in UTF-16
         non_bmp = "𝄞 Musical symbols 𝔄𝔅ℭ Fraktur 🦄 Unicorn"
 
-        note = zettel_service.create_note(
-            title="Non-BMP Characters",
-            content=non_bmp
-        )
+        note = zettel_service.create_note(title="Non-BMP Characters", content=non_bmp)
 
         retrieved = zettel_service.get_note(note.id)
         # Should preserve or at least not crash

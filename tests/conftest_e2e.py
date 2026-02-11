@@ -11,6 +11,7 @@ Usage:
     # Persist test data for debugging:
     ZETTELKASTEN_TEST_PERSIST=1 uv run pytest tests/test_e2e.py -v
 """
+
 import os
 import shutil
 import tempfile
@@ -28,10 +29,13 @@ from znote_mcp.services.search_service import SearchService
 from znote_mcp.services.zettel_service import ZettelService
 from znote_mcp.storage.note_repository import NoteRepository
 
-
 # Fixture paths - explicitly within the test directory
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
-PERSIST_MODE = os.environ.get("ZETTELKASTEN_TEST_PERSIST", "").lower() in ("1", "true", "yes")
+PERSIST_MODE = os.environ.get("ZETTELKASTEN_TEST_PERSIST", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
 
 
 class IsolatedTestEnvironment:
@@ -129,7 +133,11 @@ class IsolatedTestEnvironment:
             "notes_dir": str(self.notes_dir),
             "database_path": str(self.database_path),
             "obsidian_dir": str(self.obsidian_dir),
-            "notes_count": len(list(self.notes_dir.glob("**/*.md"))) if self.notes_dir.exists() else 0,
+            "notes_count": (
+                len(list(self.notes_dir.glob("**/*.md")))
+                if self.notes_dir.exists()
+                else 0
+            ),
             "db_exists": self.database_path.exists(),
         }
 
@@ -157,8 +165,7 @@ def isolated_env(e2e_session_id) -> Generator[IsolatedTestEnvironment, None, Non
             pass
     """
     env = IsolatedTestEnvironment(
-        persist=PERSIST_MODE,
-        session_id=f"{e2e_session_id}_{os.getpid()}"
+        persist=PERSIST_MODE, session_id=f"{e2e_session_id}_{os.getpid()}"
     )
     with env:
         yield env
@@ -172,7 +179,6 @@ def e2e_zettel_service(isolated_env) -> Generator[ZettelService, None, None]:
 
     # Create service
     service = ZettelService()
-    service.initialize()
 
     yield service
 

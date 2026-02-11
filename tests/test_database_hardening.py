@@ -1,4 +1,5 @@
 """Tests for database hardening measures (WAL mode, health check, auto-recovery, FTS degradation)."""
+
 import sqlite3
 import tempfile
 from pathlib import Path
@@ -29,8 +30,10 @@ class TestWALMode:
             result = session.execute(text("PRAGMA journal_mode")).fetchone()
             journal_mode = result[0].lower()
             # In-memory mode uses "memory" journal, persistent uses "wal"
-            assert journal_mode in ("wal", "memory"), \
-                f"Journal mode should be WAL or MEMORY, got {journal_mode}"
+            assert journal_mode in (
+                "wal",
+                "memory",
+            ), f"Journal mode should be WAL or MEMORY, got {journal_mode}"
 
     def test_synchronous_mode(self, note_repository):
         """Verify appropriate synchronous mode based on database type.
@@ -42,8 +45,10 @@ class TestWALMode:
             result = session.execute(text("PRAGMA synchronous")).fetchone()
             sync_mode = result[0]
             # In-memory mode uses 0 (OFF), persistent uses 1 (NORMAL)
-            assert sync_mode in (0, 1), \
-                f"Synchronous mode should be 0 (OFF) or 1 (NORMAL), got {sync_mode}"
+            assert sync_mode in (
+                0,
+                1,
+            ), f"Synchronous mode should be 0 (OFF) or 1 (NORMAL), got {sync_mode}"
 
 
 class TestDatabaseHealthCheck:
@@ -214,7 +219,9 @@ class TestAutoRecovery:
         assert len(all_notes) == 1
         assert all_notes[0].title == "Backup Test Note"
 
-    def test_health_check_triggers_rebuild_on_unhealthy(self, note_repository, temp_dirs):
+    def test_health_check_triggers_rebuild_on_unhealthy(
+        self, note_repository, temp_dirs
+    ):
         """Test that _initialize_with_health_check handles unhealthy state."""
         # This test verifies the health check path exists and works
         # by checking that the repository can handle being re-initialized
@@ -242,9 +249,7 @@ class TestDatabaseCorruptionError:
     def test_database_corruption_error_basic(self):
         """Test DatabaseCorruptionError has correct attributes."""
         error = DatabaseCorruptionError(
-            message="Test corruption",
-            recovered=True,
-            backup_path="/tmp/backup.bak"
+            message="Test corruption", recovered=True, backup_path="/tmp/backup.bak"
         )
 
         assert error.message == "Test corruption"
@@ -255,9 +260,7 @@ class TestDatabaseCorruptionError:
     def test_database_corruption_error_to_dict(self):
         """Test DatabaseCorruptionError serialization."""
         error = DatabaseCorruptionError(
-            message="Test corruption",
-            recovered=False,
-            backup_path="/tmp/backup.bak"
+            message="Test corruption", recovered=False, backup_path="/tmp/backup.bak"
         )
 
         error_dict = error.to_dict()
@@ -271,11 +274,10 @@ class TestDatabaseCorruptionError:
     def test_fts_corrupted_error_code(self):
         """Test FTS corruption uses correct error code."""
         error = DatabaseCorruptionError(
-            message="FTS index corrupted",
-            code=ErrorCode.FTS_CORRUPTED
+            message="FTS index corrupted", code=ErrorCode.DATABASE_CORRUPTED
         )
 
-        assert error.code == ErrorCode.FTS_CORRUPTED
+        assert error.code == ErrorCode.DATABASE_CORRUPTED
 
 
 class TestServiceLayerHealthCheck:
@@ -336,7 +338,10 @@ class TestHealthCheckSeverityLevels:
         assert health["critical_issues"] == []
         assert health["needs_sync"] is True
         # May have warning about mismatch in issues
-        assert any("mismatch" in issue.lower() for issue in health["issues"]) or len(health["issues"]) == 0
+        assert (
+            any("mismatch" in issue.lower() for issue in health["issues"])
+            or len(health["issues"]) == 0
+        )
 
     def test_health_check_includes_needs_sync_flag(self, note_repository, temp_dirs):
         """Test that health check includes needs_sync flag for incremental sync."""
@@ -361,7 +366,9 @@ class TestHealthCheckSeverityLevels:
 class TestPathValidation:
     """Tests for path misconfiguration detection."""
 
-    def test_validate_notes_dir_logs_warning_for_nested_notes_dir(self, temp_dirs, caplog):
+    def test_validate_notes_dir_logs_warning_for_nested_notes_dir(
+        self, temp_dirs, caplog
+    ):
         """Test that passing base directory instead of notes directory logs warning."""
         import logging
 
@@ -378,10 +385,13 @@ class TestPathValidation:
 
         # Put .md files in the nested 'notes' directory
         for i in range(5):
-            (nested_notes / "notes" / f"note-{i}.md").write_text(f"# Note {i}\n\nContent.")
+            (nested_notes / "notes" / f"note-{i}.md").write_text(
+                f"# Note {i}\n\nContent."
+            )
 
         # Create a separate temp database for this test
         import tempfile
+
         with tempfile.TemporaryDirectory() as temp_db_dir:
             db_path = Path(temp_db_dir) / "test.db"
 
@@ -400,10 +410,11 @@ class TestPathValidation:
 
                 # Check that warning was logged
                 warning_logged = any(
-                    "POSSIBLE PATH ERROR" in record.message
-                    for record in caplog.records
+                    "POSSIBLE PATH ERROR" in record.message for record in caplog.records
                 )
-                assert warning_logged, "Should warn when notes/ subdirectory has more .md files"
+                assert (
+                    warning_logged
+                ), "Should warn when notes/ subdirectory has more .md files"
 
             finally:
                 # Restore original config
@@ -419,6 +430,7 @@ class TestPathValidation:
             # The existing note_repository fixture was already created,
             # so we need to create a new one to capture the init logs
             import tempfile
+
             with tempfile.TemporaryDirectory() as temp_dir:
                 notes_dir = Path(temp_dir) / "notes"
                 notes_dir.mkdir()

@@ -7,6 +7,7 @@ using a version-keyed marker file to skip the check on subsequent starts.
 Also pre-downloads embedding/reranker ONNX models in a background thread
 so the first semantic search doesn't block on a large download.
 """
+
 import logging
 import shutil
 import subprocess
@@ -86,7 +87,9 @@ def _run_install() -> bool:
         logger.info("Semantic dependencies installed successfully")
         return True
     except subprocess.CalledProcessError as exc:
-        logger.warning("Failed to install semantic deps (exit %d): %s", exc.returncode, exc.stderr)
+        logger.warning(
+            "Failed to install semantic deps (exit %d): %s", exc.returncode, exc.stderr
+        )
         return False
     except subprocess.TimeoutExpired:
         logger.warning("Semantic deps install timed out after %ds", _INSTALL_TIMEOUT)

@@ -6,17 +6,18 @@ These tests verify the system handles failures gracefully:
 3. Corrupted state recovery
 4. Graceful degradation when git is unavailable
 """
+
 import os
 import stat
 import subprocess
 import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from znote_mcp.models.schema import Note, NoteType, VersionedNote
-from znote_mcp.storage.git_wrapper import GitWrapper, GitError, GitConflictError
+from znote_mcp.storage.git_wrapper import GitConflictError, GitError, GitWrapper
 from znote_mcp.storage.note_repository import NoteRepository
 
 
@@ -144,11 +145,7 @@ class TestRepositoryRecovery:
 
     def test_rebuilds_index_on_corruption(self, notes_dir):
         """Test that index is rebuilt from files when corrupted."""
-        repo = NoteRepository(
-            notes_dir=notes_dir,
-            use_git=True,
-            in_memory_db=True
-        )
+        repo = NoteRepository(notes_dir=notes_dir, use_git=True, in_memory_db=True)
 
         # Create some notes
         note1 = Note(
@@ -166,11 +163,7 @@ class TestRepositoryRecovery:
 
         # Create new repo instance (simulates process restart)
         # In-memory DB is fresh, should rebuild from files
-        repo2 = NoteRepository(
-            notes_dir=notes_dir,
-            use_git=True,
-            in_memory_db=True
-        )
+        repo2 = NoteRepository(notes_dir=notes_dir, use_git=True, in_memory_db=True)
 
         # Notes should be accessible
         retrieved1 = repo2.get_versioned(created1.note.id)
@@ -185,7 +178,8 @@ class TestRepositoryRecovery:
         """Test handling of markdown files created outside the system."""
         # Create a note file directly (outside the system)
         orphan_file = notes_dir / "orphan_note.md"
-        orphan_file.write_text("""---
+        orphan_file.write_text(
+            """---
 title: Orphan Note
 note_type: permanent
 created_at: 2024-01-01T00:00:00
@@ -194,17 +188,14 @@ tags: []
 ---
 
 This note was created outside the system.
-""")
+"""
+        )
 
         # Initialize git in the notes dir
         GitWrapper(notes_dir)
 
         # Create repo - should handle the orphan file
-        repo = NoteRepository(
-            notes_dir=notes_dir,
-            use_git=True,
-            in_memory_db=True
-        )
+        repo = NoteRepository(notes_dir=notes_dir, use_git=True, in_memory_db=True)
 
         # The orphan should be indexed (depending on implementation)
         # At minimum, it shouldn't crash
@@ -218,20 +209,12 @@ This note was created outside the system.
         GitWrapper(notes_dir)
 
         # Should handle gracefully
-        repo = NoteRepository(
-            notes_dir=notes_dir,
-            use_git=True,
-            in_memory_db=True
-        )
+        repo = NoteRepository(notes_dir=notes_dir, use_git=True, in_memory_db=True)
         # Should not crash
 
     def test_recovery_after_partial_write(self, notes_dir):
         """Test recovery when a write was interrupted."""
-        repo = NoteRepository(
-            notes_dir=notes_dir,
-            use_git=True,
-            in_memory_db=True
-        )
+        repo = NoteRepository(notes_dir=notes_dir, use_git=True, in_memory_db=True)
 
         note = Note(
             title="Partial Write Test",
@@ -246,11 +229,7 @@ This note was created outside the system.
         note_file.write_text("Corrupted partial content...")
 
         # New repo instance should handle this
-        repo2 = NoteRepository(
-            notes_dir=notes_dir,
-            use_git=True,
-            in_memory_db=True
-        )
+        repo2 = NoteRepository(notes_dir=notes_dir, use_git=True, in_memory_db=True)
 
         # Should either read the corrupted content or handle error
         # Key is no crash
@@ -267,14 +246,14 @@ class TestGracefulDegradation:
     def test_works_without_git_binary(self, notes_dir):
         """Test that system works (without versioning) if git isn't installed."""
         # Mock subprocess to simulate missing git
-        with patch('subprocess.run') as mock_run:
+        with patch("subprocess.run") as mock_run:
             mock_run.side_effect = FileNotFoundError("git not found")
 
             # Should fall back gracefully
             repo = NoteRepository(
                 notes_dir=notes_dir,
                 use_git=False,  # Explicitly disable since git would fail
-                in_memory_db=True
+                in_memory_db=True,
             )
 
             note = Note(
@@ -289,11 +268,7 @@ class TestGracefulDegradation:
 
     def test_git_disabled_still_functional(self, notes_dir):
         """Test full CRUD works with git disabled."""
-        repo = NoteRepository(
-            notes_dir=notes_dir,
-            use_git=False,
-            in_memory_db=True
-        )
+        repo = NoteRepository(notes_dir=notes_dir, use_git=False, in_memory_db=True)
 
         # Create
         note = Note(
@@ -337,11 +312,7 @@ class TestConcurrencyEdgeCases:
         """Test behavior when delete races with update."""
         from znote_mcp.models.schema import ConflictResult
 
-        repo = NoteRepository(
-            notes_dir=notes_dir,
-            use_git=True,
-            in_memory_db=True
-        )
+        repo = NoteRepository(notes_dir=notes_dir, use_git=True, in_memory_db=True)
 
         note = Note(
             title="Delete Race Test",

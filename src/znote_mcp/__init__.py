@@ -6,6 +6,7 @@ to form a network of knowledge.
 
 This version uses synchronous operations.
 """
+
 from importlib.metadata import PackageNotFoundError, version
 
 try:

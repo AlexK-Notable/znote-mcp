@@ -1,25 +1,36 @@
 # tests/test_models.py
 """Tests for the data models used in the Zettelkasten MCP server."""
 import datetime
-import time
 import re
-import pytest
+import time
 from unittest.mock import patch
+
+import pytest
 from pydantic import ValidationError
+
 from znote_mcp.models.schema import (
-    Link, LinkType, Note, NoteType, NotePurpose, Tag, Project,
-    generate_id, validate_project_path
+    Link,
+    LinkType,
+    Note,
+    NotePurpose,
+    NoteType,
+    Project,
+    Tag,
+    generate_id,
+    validate_project_path,
 )
+
 
 class TestNoteModel:
     """Tests for the Note model."""
+
     def test_note_creation(self):
         """Test creating a note with valid values."""
         note = Note(
             title="Test Note",
             content="This is a test note.",
             note_type=NoteType.PERMANENT,
-            tags=[Tag(name="test"), Tag(name="example")]
+            tags=[Tag(name="test"), Tag(name="example")],
         )
         assert note.id is not None
         assert note.title == "Test Note"
@@ -47,7 +58,7 @@ class TestNoteModel:
         note = Note(
             title="Tag Test",
             content="Testing tag operations.",
-            tags=[Tag(name="initial")]
+            tags=[Tag(name="initial")],
         )
         assert len(note.tags) == 1
         # Add tag as string
@@ -72,9 +83,7 @@ class TestNoteModel:
     def test_note_link_operations(self):
         """Test adding and removing links."""
         note = Note(
-            title="Link Test",
-            content="Testing link operations.",
-            id="source123"
+            title="Link Test", content="Testing link operations.", id="source123"
         )
         # Add link
         note.add_link("target456", LinkType.REFERENCE, "Test link")
@@ -104,7 +113,7 @@ class TestNoteModel:
             title="Markdown Test",
             content="Testing markdown conversion.",
             note_type=NoteType.PERMANENT,
-            tags=[Tag(name="test"), Tag(name="markdown")]
+            tags=[Tag(name="test"), Tag(name="markdown")],
         )
         note.add_link("target123", LinkType.REFERENCE, "Reference link")
         markdown = note.to_markdown()
@@ -119,13 +128,14 @@ class TestNoteModel:
 
 class TestLinkModel:
     """Tests for the Link model."""
+
     def test_link_creation(self):
         """Test creating a link with valid values."""
         link = Link(
             source_id="source123",
             target_id="target456",
             link_type=LinkType.REFERENCE,
-            description="Test description"
+            description="Test description",
         )
         assert link.source_id == "source123"
         assert link.target_id == "target456"
@@ -147,10 +157,7 @@ class TestLinkModel:
 
     def test_link_immutability(self):
         """Test that Link objects are immutable."""
-        link = Link(
-            source_id="source123", 
-            target_id="target456"
-        )
+        link = Link(source_id="source123", target_id="target456")
         # Attempt to modify link should fail
         with pytest.raises(Exception):
             link.source_id = "newsource"
@@ -158,6 +165,7 @@ class TestLinkModel:
 
 class TestTagModel:
     """Tests for the Tag model."""
+
     def test_tag_creation(self):
         """Test creating a tag with valid values."""
         tag = Tag(name="test")
@@ -189,8 +197,10 @@ class TestHelperFunctions:
         id_str = generate_id()
 
         # Verify it matches the expected format: YYYYMMDDTHHMMSSsssssscccccc (27 chars)
-        pattern = r'^\d{8}T\d{6}\d{12}$'  # 8 + T + 6 + 12 = 27 chars
-        assert re.match(pattern, id_str), f"ID {id_str} does not match expected ISO 8601 format"
+        pattern = r"^\d{8}T\d{6}\d{12}$"  # 8 + T + 6 + 12 = 27 chars
+        assert re.match(
+            pattern, id_str
+        ), f"ID {id_str} does not match expected ISO 8601 format"
 
         # Verify the parts make sense
         date_part = id_str[:8]
@@ -200,17 +210,19 @@ class TestHelperFunctions:
         counter_part = id_str[21:]
 
         assert len(date_part) == 8, "Date part should be 8 digits (YYYYMMDD)"
-        assert separator == 'T', "Date/time separator should be 'T' per ISO 8601"
+        assert separator == "T", "Date/time separator should be 'T' per ISO 8601"
         assert len(time_part) == 6, "Time part should be 6 digits (HHMMSS)"
         assert len(microseconds_part) == 6, "Microseconds part should be 6 digits"
         assert len(counter_part) == 6, "Counter part should be 6 digits"
-        assert len(id_str) == 27, f"Total ID length should be 27 chars, got {len(id_str)}"
+        assert (
+            len(id_str) == 27
+        ), f"Total ID length should be 27 chars, got {len(id_str)}"
 
     def test_iso8601_uniqueness(self):
         """Test that ISO 8601 IDs with nanosecond precision are unique even in rapid succession."""
         # Generate multiple IDs as quickly as possible
         ids = [generate_id() for _ in range(1000)]
-        
+
         # Verify they are all unique
         unique_ids = set(ids)
         assert len(unique_ids) == 1000, "Generated IDs should all be unique"
@@ -243,7 +255,7 @@ class TestNotePurpose:
         note = Note(
             title="Planning Note",
             content="This is a planning note.",
-            note_purpose=NotePurpose.PLANNING
+            note_purpose=NotePurpose.PLANNING,
         )
         assert note.note_purpose == NotePurpose.PLANNING
         assert note.note_purpose.value == "planning"
@@ -259,7 +271,7 @@ class TestNotePurpose:
             title="Plan Revision",
             content="Updated plan details.",
             note_purpose=NotePurpose.PLANNING,
-            plan_id="plan-20240126-auth"
+            plan_id="plan-20240126-auth",
         )
         assert note.plan_id == "plan-20240126-auth"
 
@@ -388,9 +400,7 @@ class TestProjectModel:
     def test_project_creation(self):
         """Test creating a project with valid values."""
         project = Project(
-            id="my-project",
-            name="My Project",
-            description="A test project"
+            id="my-project", name="My Project", description="A test project"
         )
         assert project.id == "my-project"
         assert project.name == "My Project"
@@ -407,7 +417,7 @@ class TestProjectModel:
             name="Frontend App",
             description="React web application",
             parent_id="monorepo",
-            path="/home/user/monorepo/frontend"
+            path="/home/user/monorepo/frontend",
         )
         assert project.id == "monorepo/frontend"
         assert project.parent_id == "monorepo"
@@ -418,7 +428,7 @@ class TestProjectModel:
         project = Project(
             id="my-repo",
             name="My Repo",
-            metadata={"git_remote": "https://github.com/user/repo.git"}
+            metadata={"git_remote": "https://github.com/user/repo.git"},
         )
         assert project.metadata["git_remote"] == "https://github.com/user/repo.git"
 

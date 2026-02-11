@@ -6,10 +6,11 @@ These tests cover:
 - bulk_update_project: Moving multiple notes to a different project
 - bulk_delete_notes: Deleting multiple notes at once
 """
+
 import pytest
 
 from znote_mcp.exceptions import BulkOperationError, ErrorCode
-from znote_mcp.models.schema import Note, Tag, NoteType, NotePurpose
+from znote_mcp.models.schema import Note, NotePurpose, NoteType, Tag
 from znote_mcp.services.zettel_service import ZettelService
 from znote_mcp.storage.note_repository import NoteRepository
 
@@ -22,10 +23,7 @@ class TestBulkAddTags:
         # Create some notes
         notes = []
         for i in range(3):
-            note = zettel_service.create_note(
-                title=f"Note {i}",
-                content=f"Content {i}"
-            )
+            note = zettel_service.create_note(title=f"Note {i}", content=f"Content {i}")
             notes.append(note)
 
         note_ids = [n.id for n in notes]
@@ -47,9 +45,7 @@ class TestBulkAddTags:
         """Adding tags that already exist should not duplicate them."""
         # Create a note with existing tag
         note = zettel_service.create_note(
-            title="Tagged Note",
-            content="Content",
-            tags=["existing"]
+            title="Tagged Note", content="Content", tags=["existing"]
         )
 
         # Add tags including existing one
@@ -73,10 +69,7 @@ class TestBulkAddTags:
     def test_bulk_add_tags_with_nonexistent_note_raises_error(self, zettel_service):
         """Nonexistent notes should raise an error."""
         # Create one real note
-        note = zettel_service.create_note(
-            title="Real Note",
-            content="Content"
-        )
+        note = zettel_service.create_note(title="Real Note", content="Content")
 
         # Mix real and fake note IDs - the bulk operation validates all IDs
         note_ids = [note.id, "nonexistent-id"]
@@ -95,9 +88,7 @@ class TestBulkRemoveTags:
         notes = []
         for i in range(3):
             note = zettel_service.create_note(
-                title=f"Note {i}",
-                content=f"Content {i}",
-                tags=["common", f"unique{i}"]
+                title=f"Note {i}", content=f"Content {i}", tags=["common", f"unique{i}"]
             )
             notes.append(note)
 
@@ -118,9 +109,7 @@ class TestBulkRemoveTags:
     def test_bulk_remove_tags_nonexistent_tag(self, zettel_service):
         """Removing nonexistent tags should not cause errors."""
         note = zettel_service.create_note(
-            title="Test Note",
-            content="Content",
-            tags=["existing"]
+            title="Test Note", content="Content", tags=["existing"]
         )
 
         # Try to remove a tag that doesn't exist
@@ -151,9 +140,7 @@ class TestBulkUpdateProject:
         notes = []
         for i in range(3):
             note = zettel_service.create_note(
-                title=f"Note {i}",
-                content=f"Content {i}",
-                project=f"project-{i}"
+                title=f"Note {i}", content=f"Content {i}", project=f"project-{i}"
             )
             notes.append(note)
 
@@ -176,7 +163,7 @@ class TestBulkUpdateProject:
             content="Original content",
             project="original-project",
             note_type=NoteType.PERMANENT,  # Use enum directly
-            tags=["tag1", "tag2"]
+            tags=["tag1", "tag2"],
         )
 
         # Get the actual stored content (may include title header from file)
@@ -201,12 +188,12 @@ class TestBulkUpdateProject:
 
         assert exc_info.value.code == ErrorCode.BULK_OPERATION_EMPTY_INPUT
 
-    def test_bulk_update_project_with_nonexistent_notes_raises_error(self, zettel_service):
+    def test_bulk_update_project_with_nonexistent_notes_raises_error(
+        self, zettel_service
+    ):
         """Nonexistent notes should raise an error."""
         note = zettel_service.create_note(
-            title="Real Note",
-            content="Content",
-            project="old-project"
+            title="Real Note", content="Content", project="old-project"
         )
 
         # Mix real and fake note IDs - operation validates all IDs
@@ -225,10 +212,7 @@ class TestBulkDeleteNotes:
         # Create notes
         notes = []
         for i in range(3):
-            note = zettel_service.create_note(
-                title=f"Note {i}",
-                content=f"Content {i}"
-            )
+            note = zettel_service.create_note(title=f"Note {i}", content=f"Content {i}")
             notes.append(note)
 
         note_ids = [n.id for n in notes]
@@ -245,14 +229,8 @@ class TestBulkDeleteNotes:
     def test_bulk_delete_notes_with_links(self, zettel_service):
         """Deleting notes should handle links correctly."""
         # Create two notes and link them
-        note1 = zettel_service.create_note(
-            title="Note 1",
-            content="Content 1"
-        )
-        note2 = zettel_service.create_note(
-            title="Note 2",
-            content="Content 2"
-        )
+        note1 = zettel_service.create_note(title="Note 1", content="Content 1")
+        note2 = zettel_service.create_note(title="Note 2", content="Content 2")
 
         # Create link from note1 to note2
         zettel_service.create_link(note1.id, note2.id)
@@ -274,10 +252,7 @@ class TestBulkDeleteNotes:
 
     def test_bulk_delete_notes_with_nonexistent_notes(self, zettel_service):
         """Nonexistent notes should be skipped (not cause errors)."""
-        note = zettel_service.create_note(
-            title="Real Note",
-            content="Content"
-        )
+        note = zettel_service.create_note(title="Real Note", content="Content")
 
         # Mix real and fake note IDs
         note_ids = [note.id, "fake-id"]
@@ -317,7 +292,7 @@ class TestBulkCreateNotes:
                 "note_purpose": "research",
                 "plan_id": "plan-123",
                 "tags": ["tag1", "tag2"],
-                "metadata": {"key": "value"}
+                "metadata": {"key": "value"},
             }
         ]
 
@@ -348,14 +323,14 @@ class TestBulkCreateNotes:
 
     def test_bulk_create_notes_default_values(self, zettel_service):
         """Notes should get default values when not specified."""
-        notes_data = [
-            {"title": "Minimal Note", "content": "Just content"}
-        ]
+        notes_data = [{"title": "Minimal Note", "content": "Just content"}]
 
         created = zettel_service.bulk_create_notes(notes_data)
 
         assert len(created) == 1
         note = created[0]
         assert note.project == "general"  # Default project
-        assert note.note_type == NoteType.PERMANENT  # Default type (permanent is default)
+        assert (
+            note.note_type == NoteType.PERMANENT
+        )  # Default type (permanent is default)
         assert note.note_purpose == NotePurpose.GENERAL  # Default purpose

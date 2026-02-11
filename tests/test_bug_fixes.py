@@ -3,19 +3,20 @@
 These tests verify that bugs discovered during the two-tier code review
 process have been properly fixed and won't regress.
 """
+
 import tempfile
 from datetime import timezone
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import select
 
-from znote_mcp.models.db_models import DBNote, DBLink, DBProject
-from znote_mcp.models.schema import Note, NoteType, NotePurpose, Tag, ConflictResult
+from znote_mcp.backup import BackupManager
+from znote_mcp.models.db_models import DBLink, DBNote, DBProject
+from znote_mcp.models.schema import ConflictResult, Note, NotePurpose, NoteType, Tag
 from znote_mcp.storage.note_repository import NoteRepository, escape_like_pattern
 from znote_mcp.storage.project_repository import ProjectRepository
-from znote_mcp.backup import BackupManager
 
 
 class TestLikePatternEscaping:
@@ -44,18 +45,15 @@ class TestLikePatternEscaping:
     def test_search_with_percent_finds_literal_match(self, note_repository):
         """Search for '100%' should not match all notes."""
         # Create notes with and without %
-        note1 = note_repository.create(Note(
-            title="100% Complete",
-            content="This task is fully done"
-        ))
-        note2 = note_repository.create(Note(
-            title="Half Done",
-            content="This is 50% progress"
-        ))
-        note3 = note_repository.create(Note(
-            title="Other Note",
-            content="Random content without percent"
-        ))
+        note1 = note_repository.create(
+            Note(title="100% Complete", content="This task is fully done")
+        )
+        note2 = note_repository.create(
+            Note(title="Half Done", content="This is 50% progress")
+        )
+        note3 = note_repository.create(
+            Note(title="Other Note", content="Random content without percent")
+        )
 
         # Search for literal "100%" - should only find note1
         results = note_repository.search(content="100%")
@@ -66,14 +64,12 @@ class TestLikePatternEscaping:
     def test_search_with_underscore_finds_literal_match(self, note_repository):
         """Search for 'file_name' should not match 'filename'."""
         # Create notes with and without _
-        note1 = note_repository.create(Note(
-            title="file_name.txt",
-            content="File with underscore"
-        ))
-        note2 = note_repository.create(Note(
-            title="filename.txt",
-            content="File without underscore"
-        ))
+        note1 = note_repository.create(
+            Note(title="file_name.txt", content="File with underscore")
+        )
+        note2 = note_repository.create(
+            Note(title="filename.txt", content="File without underscore")
+        )
 
         # Search for literal "file_name" - should only find note1
         results = note_repository.search(title="file_name")
@@ -87,10 +83,7 @@ class TestTimezoneConsistency:
 
     def test_note_created_at_is_timezone_aware(self, note_repository):
         """Note created_at should be timezone-aware UTC."""
-        note = note_repository.create(Note(
-            title="TZ Test",
-            content="Testing timezone"
-        ))
+        note = note_repository.create(Note(title="TZ Test", content="Testing timezone"))
 
         retrieved = note_repository.get(note.id)
 
@@ -99,10 +92,7 @@ class TestTimezoneConsistency:
 
     def test_note_updated_at_is_timezone_aware(self, note_repository):
         """Note updated_at should be timezone-aware UTC."""
-        note = note_repository.create(Note(
-            title="TZ Test",
-            content="Testing timezone"
-        ))
+        note = note_repository.create(Note(title="TZ Test", content="Testing timezone"))
 
         retrieved = note_repository.get(note.id)
 
@@ -111,10 +101,7 @@ class TestTimezoneConsistency:
 
     def test_db_timestamps_match_model_timestamps(self, note_repository):
         """DB and model timestamps should be close (within 1 second)."""
-        note = note_repository.create(Note(
-            title="TZ Test",
-            content="Testing timezone"
-        ))
+        note = note_repository.create(Note(title="TZ Test", content="Testing timezone"))
 
         # Get from file (model)
         file_note = note_repository.get(note.id)
@@ -145,7 +132,7 @@ class TestBulkCreateFieldPersistence:
             {
                 "title": "Project Note",
                 "content": "Note in specific project",
-                "project": "test-project"
+                "project": "test-project",
             }
         ]
 
@@ -164,7 +151,7 @@ class TestBulkCreateFieldPersistence:
             {
                 "title": "Research Note",
                 "content": "Investigation content",
-                "note_purpose": "research"
+                "note_purpose": "research",
             }
         ]
 
@@ -184,7 +171,7 @@ class TestBulkCreateFieldPersistence:
                 "title": "Planning Note",
                 "content": "Plan content",
                 "note_purpose": "planning",
-                "plan_id": "plan-123-abc"
+                "plan_id": "plan-123-abc",
             }
         ]
 
@@ -207,7 +194,7 @@ class TestBulkCreateFieldPersistence:
                 "note_purpose": "bugfixing",
                 "plan_id": "debug-session-001",
                 "note_type": "fleeting",
-                "tags": ["bug", "urgent"]
+                "tags": ["bug", "urgent"],
             }
         ]
 
@@ -267,7 +254,7 @@ class TestBackupPathTraversal:
             # This should fail because it's not a valid SQLite DB,
             # but it should NOT fail the path validation
             # The error will be from SQLite, not from path validation
-            with patch.object(manager, '_lock'):
+            with patch.object(manager, "_lock"):
                 # We'll just check the path validation passes
                 # by verifying the backup_path.exists() check is reached
                 result = manager.restore_database(str(backup_path))
@@ -283,23 +270,19 @@ class TestDeleteVersionedConflict:
         repo = NoteRepository(notes_dir=notes_dir, use_git=True)
 
         # Create a versioned note
-        versioned = repo.create_versioned(Note(
-            title="Test Note",
-            content="Original content"
-        ))
+        versioned = repo.create_versioned(
+            Note(title="Test Note", content="Original content")
+        )
         original_version = versioned.version.commit_hash
 
         # Update to create new version
-        updated = repo.update_versioned(Note(
-            id=versioned.note.id,
-            title="Updated Title",
-            content="Updated content"
-        ))
+        updated = repo.update_versioned(
+            Note(id=versioned.note.id, title="Updated Title", content="Updated content")
+        )
 
         # Try to delete with old version
         result = repo.delete_versioned(
-            versioned.note.id,
-            expected_version=original_version
+            versioned.note.id, expected_version=original_version
         )
 
         # Should return ConflictResult
@@ -313,23 +296,19 @@ class TestDeleteVersionedConflict:
         repo = NoteRepository(notes_dir=notes_dir, use_git=True)
 
         # Create a versioned note
-        versioned = repo.create_versioned(Note(
-            title="Test Note",
-            content="Original content"
-        ))
+        versioned = repo.create_versioned(
+            Note(title="Test Note", content="Original content")
+        )
         original_version = versioned.version.commit_hash
 
         # Update to create new version
-        repo.update_versioned(Note(
-            id=versioned.note.id,
-            title="Updated Title",
-            content="Updated content"
-        ))
+        repo.update_versioned(
+            Note(id=versioned.note.id, title="Updated Title", content="Updated content")
+        )
 
         # Try to delete with old version (should conflict)
         result = repo.delete_versioned(
-            versioned.note.id,
-            expected_version=original_version
+            versioned.note.id, expected_version=original_version
         )
 
         assert isinstance(result, ConflictResult)
@@ -345,15 +324,11 @@ class TestDeleteVersionedConflict:
         repo = NoteRepository(notes_dir=notes_dir, use_git=True)
 
         # Create a versioned note
-        versioned = repo.create_versioned(Note(
-            title="Test Note",
-            content="Content"
-        ))
+        versioned = repo.create_versioned(Note(title="Test Note", content="Content"))
 
         # Delete with correct version
         result = repo.delete_versioned(
-            versioned.note.id,
-            expected_version=versioned.version.commit_hash
+            versioned.note.id, expected_version=versioned.version.commit_hash
         )
 
         # Should succeed (not a ConflictResult)
@@ -370,21 +345,25 @@ class TestSearchCountConsistency:
     def test_search_and_count_return_same_number(self, note_repository):
         """search() results count should match count_search_results()."""
         # Create some notes
-        note_repository.create(Note(
-            title="Python Guide",
-            content="Learn Python programming",
-            tags=[Tag(name="python")]
-        ))
-        note_repository.create(Note(
-            title="Go Guide",
-            content="Learn Go programming",
-            tags=[Tag(name="go")]
-        ))
-        note_repository.create(Note(
-            title="Python Tips",
-            content="Advanced Python tips",
-            tags=[Tag(name="python")]
-        ))
+        note_repository.create(
+            Note(
+                title="Python Guide",
+                content="Learn Python programming",
+                tags=[Tag(name="python")],
+            )
+        )
+        note_repository.create(
+            Note(
+                title="Go Guide", content="Learn Go programming", tags=[Tag(name="go")]
+            )
+        )
+        note_repository.create(
+            Note(
+                title="Python Tips",
+                content="Advanced Python tips",
+                tags=[Tag(name="python")],
+            )
+        )
 
         # Search and count with same criteria
         results = note_repository.search(content="Python")
@@ -395,20 +374,17 @@ class TestSearchCountConsistency:
 
     def test_search_and_count_consistency_with_tags(self, note_repository):
         """search() and count_search_results() should be consistent with tag filters."""
-        note_repository.create(Note(
-            title="Tagged Note 1",
-            content="Content 1",
-            tags=[Tag(name="important")]
-        ))
-        note_repository.create(Note(
-            title="Tagged Note 2",
-            content="Content 2",
-            tags=[Tag(name="important")]
-        ))
-        note_repository.create(Note(
-            title="Untagged Note",
-            content="Content 3"
-        ))
+        note_repository.create(
+            Note(
+                title="Tagged Note 1", content="Content 1", tags=[Tag(name="important")]
+            )
+        )
+        note_repository.create(
+            Note(
+                title="Tagged Note 2", content="Content 2", tags=[Tag(name="important")]
+            )
+        )
+        note_repository.create(Note(title="Untagged Note", content="Content 3"))
 
         results = note_repository.search(tag="important")
         count = note_repository.count_search_results(tag="important")

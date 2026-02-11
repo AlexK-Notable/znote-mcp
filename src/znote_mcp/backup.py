@@ -5,6 +5,7 @@ Provides automated and manual backup capabilities for:
 - Markdown note files
 - Configuration files
 """
+
 import gzip
 import logging
 import shutil
@@ -12,7 +13,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from znote_mcp.config import config
 
@@ -107,7 +108,9 @@ class BackupManager:
 
                 # Get backup size
                 size_mb = backup_path.stat().st_size / (1024 * 1024)
-                logger.info(f"Database backup created: {backup_path} ({size_mb:.2f} MB)")
+                logger.info(
+                    f"Database backup created: {backup_path} ({size_mb:.2f} MB)"
+                )
 
                 # Rotate old backups
                 self._rotate_backups()
@@ -170,7 +173,9 @@ class BackupManager:
 
                 # Create archive
                 fmt = "gztar" if compress else "tar"
-                archive_base = str(backup_path).replace(".tar.gz", "").replace(".tar", "")
+                archive_base = (
+                    str(backup_path).replace(".tar.gz", "").replace(".tar", "")
+                )
                 shutil.make_archive(
                     archive_base,
                     fmt,
@@ -228,7 +233,7 @@ class BackupManager:
 
         for backups in [db_backups, notes_backups]:
             # Remove by count (keep newest N)
-            for backup in backups[self.max_backups:]:
+            for backup in backups[self.max_backups :]:
                 try:
                     backup.unlink()
                     removed += 1
@@ -238,7 +243,7 @@ class BackupManager:
 
             # Remove by age
             max_age_seconds = self.max_age_days * 24 * 60 * 60
-            for backup in backups[:self.max_backups]:
+            for backup in backups[: self.max_backups]:
                 try:
                     age = now.timestamp() - backup.stat().st_mtime
                     if age > max_age_seconds:
@@ -253,7 +258,7 @@ class BackupManager:
 
         return removed
 
-    def list_backups(self) -> List[Dict[str, any]]:
+    def list_backups(self) -> List[Dict[str, Any]]:
         """List all available backups.
 
         Returns:
@@ -264,16 +269,18 @@ class BackupManager:
         for pattern in ["zettelkasten_*.db*", "notes_*.tar*"]:
             for path in self.backup_dir.glob(pattern):
                 stat = path.stat()
-                backups.append({
-                    "path": str(path),
-                    "name": path.name,
-                    "type": "database" if "zettelkasten" in path.name else "notes",
-                    "size_bytes": stat.st_size,
-                    "size_mb": round(stat.st_size / (1024 * 1024), 2),
-                    "created_at": datetime.fromtimestamp(
-                        stat.st_mtime, tz=timezone.utc
-                    ).isoformat(),
-                })
+                backups.append(
+                    {
+                        "path": str(path),
+                        "name": path.name,
+                        "type": "database" if "zettelkasten" in path.name else "notes",
+                        "size_bytes": stat.st_size,
+                        "size_mb": round(stat.st_size / (1024 * 1024), 2),
+                        "created_at": datetime.fromtimestamp(
+                            stat.st_mtime, tz=timezone.utc
+                        ).isoformat(),
+                    }
+                )
 
         # Sort by creation time (newest first)
         backups.sort(key=lambda b: b["created_at"], reverse=True)

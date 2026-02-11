@@ -6,18 +6,18 @@ Covers:
 - Markdown normalization for Obsidian (broken table fixing)
 - Obsidian sync cleanup behavior
 """
+
 import datetime
-from datetime import timezone
 import tempfile
+from datetime import timezone
 from pathlib import Path
 
 import pytest
 
-from znote_mcp.models.schema import Note, NoteType, NotePurpose, Tag
+from znote_mcp.models.schema import Note, NotePurpose, NoteType, Tag
 from znote_mcp.services.zettel_service import _infer_purpose
 from znote_mcp.storage.note_repository import NoteRepository
 from znote_mcp.storage.obsidian_mirror import ObsidianMirror
-
 
 # =============================================================================
 # Auto-Purpose Inference Tests
@@ -28,28 +28,54 @@ class TestAutoPurposeInference:
     """Tests for the _infer_purpose() function."""
 
     def test_bugfixing_from_title(self):
-        assert _infer_purpose("Debug memory leak in parser", "Some content") == NotePurpose.BUGFIXING
+        assert (
+            _infer_purpose("Debug memory leak in parser", "Some content")
+            == NotePurpose.BUGFIXING
+        )
 
     def test_bugfixing_from_content(self):
-        assert _infer_purpose("Investigation", "Found a bug in the authentication flow") == NotePurpose.BUGFIXING
+        assert (
+            _infer_purpose("Investigation", "Found a bug in the authentication flow")
+            == NotePurpose.BUGFIXING
+        )
 
     def test_bugfixing_from_tags(self):
-        assert _infer_purpose("Session notes", "Some content", ["bugfix", "auth"]) == NotePurpose.BUGFIXING
+        assert (
+            _infer_purpose("Session notes", "Some content", ["bugfix", "auth"])
+            == NotePurpose.BUGFIXING
+        )
 
     def test_planning_from_title(self):
-        assert _infer_purpose("Architecture Plan for v2", "Details here") == NotePurpose.PLANNING
+        assert (
+            _infer_purpose("Architecture Plan for v2", "Details here")
+            == NotePurpose.PLANNING
+        )
 
     def test_planning_from_content(self):
-        assert _infer_purpose("Notes", "This is a design proposal for the new API") == NotePurpose.PLANNING
+        assert (
+            _infer_purpose("Notes", "This is a design proposal for the new API")
+            == NotePurpose.PLANNING
+        )
 
     def test_research_from_title(self):
-        assert _infer_purpose("Research: React vs Vue comparison", "Content") == NotePurpose.RESEARCH
+        assert (
+            _infer_purpose("Research: React vs Vue comparison", "Content")
+            == NotePurpose.RESEARCH
+        )
 
     def test_research_from_content(self):
-        assert _infer_purpose("Notes", "This analysis evaluates three different approaches") == NotePurpose.RESEARCH
+        assert (
+            _infer_purpose(
+                "Notes", "This analysis evaluates three different approaches"
+            )
+            == NotePurpose.RESEARCH
+        )
 
     def test_general_when_no_signal(self):
-        assert _infer_purpose("My Notes", "Just some random thoughts here") == NotePurpose.GENERAL
+        assert (
+            _infer_purpose("My Notes", "Just some random thoughts here")
+            == NotePurpose.GENERAL
+        )
 
     def test_explicit_purpose_preserved(self, zettel_service):
         """When purpose is explicitly set, inference should NOT override it."""
@@ -79,9 +105,7 @@ class TestAutoPurposeInference:
     def test_strongest_signal_wins(self):
         """When multiple purposes match, the one with more keyword hits wins."""
         # "debug" + "error" + "fix" = 3 bugfixing hits vs "plan" = 1 planning hit
-        result = _infer_purpose(
-            "Debug plan", "Fix the error in the plan module"
-        )
+        result = _infer_purpose("Debug plan", "Fix the error in the plan module")
         assert result == NotePurpose.BUGFIXING
 
     def test_content_only_checks_first_200_chars(self):
@@ -153,11 +177,7 @@ class TestMarkdownNormalization:
 
     def test_fix_fragmented_separator_with_trailing_pipe(self):
         """Handle fragments like |------| (with trailing pipe)."""
-        markdown = (
-            "| A | B |\n"
-            "|------|\n"
-            "|------|\n"
-        )
+        markdown = "| A | B |\n" "|------|\n" "|------|\n"
         # Fragments with trailing pipe won't match our ^\s*\|[\s\-:]*$ pattern
         # but let's verify we handle mixed cases
         result = ObsidianMirror.normalize_markdown(markdown)
@@ -166,9 +186,7 @@ class TestMarkdownNormalization:
     def test_preserve_valid_table(self):
         """A properly formatted table should not be modified."""
         markdown = (
-            "| Header1 | Header2 |\n"
-            "| ------ | ------ |\n"
-            "| data1 | data2 |\n"
+            "| Header1 | Header2 |\n" "| ------ | ------ |\n" "| data1 | data2 |\n"
         )
         result = ObsidianMirror.normalize_markdown(markdown)
         assert result == markdown
@@ -317,9 +335,10 @@ class TestObsidianLinkCascade:
     @pytest.fixture
     def obsidian_service(self, test_config):
         """Create a zettel_service backed by a repo with Obsidian vault."""
-        from znote_mcp.services.zettel_service import ZettelService
         from sqlalchemy import create_engine
+
         from znote_mcp.models.db_models import Base
+        from znote_mcp.services.zettel_service import ZettelService
 
         with tempfile.TemporaryDirectory() as vault_dir:
             database_path = test_config.get_absolute_path(test_config.database_path)
@@ -374,6 +393,7 @@ class TestObsidianLinkCascade:
 
         # Update B's content only (title stays the same)
         import time
+
         time.sleep(0.05)  # Ensure different mtime
         service.update_note(note_b.id, content="Updated content only")
 
@@ -393,9 +413,11 @@ class TestObsidianLinkCascade:
 
         # Patch cascade to simulate failure — update should still succeed
         from unittest.mock import patch
+
         with patch.object(
-            service.repository, '_cascade_obsidian_remirror',
-            side_effect=Exception("Simulated cascade failure")
+            service.repository,
+            "_cascade_obsidian_remirror",
+            side_effect=Exception("Simulated cascade failure"),
         ):
             # This should NOT raise despite cascade failure
             updated = service.update_note(note_b.id, title="Changed Title")
@@ -437,6 +459,7 @@ class TestObsidianFrontmatter:
         content = files[0].read_text()
 
         import yaml
+
         # Parse frontmatter
         assert content.startswith("---")
         fm_end = content.index("---", 3)
@@ -462,6 +485,7 @@ class TestObsidianFrontmatter:
         content = files[0].read_text()
 
         import yaml
+
         assert content.startswith("---")
         fm_end = content.index("---", 3)
         fm_block = content[3:fm_end].strip()

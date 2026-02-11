@@ -1,136 +1,11 @@
 # tests/test_search_service.py
 """Tests for the search service in the Zettelkasten MCP server."""
 from datetime import datetime, timedelta, timezone
+
 import pytest
+
 from znote_mcp.models.schema import LinkType, NoteType
-from znote_mcp.services.search_service import SearchResult, SearchService
-
-
-class TestSearchService:
-    """Tests for the SearchService class."""
-    
-    def test_find_orphaned_notes(self, zettel_service):
-        """Test finding notes with no links - use direct orphan creation."""
-        # Create a single orphaned note
-        orphan = zettel_service.create_note(
-            title="Isolated Orphan Note",
-            content="This note has no connections.",
-            tags=["orphan", "isolated"]
-        )
-        
-        # Create two connected notes
-        note1 = zettel_service.create_note(
-            title="Connected Note 1",
-            content="This note has connections.",
-            tags=["connected"]
-        )
-        note2 = zettel_service.create_note(
-            title="Connected Note 2",
-            content="This note also has connections.",
-            tags=["connected"]
-        )
-        
-        # Link the connected notes
-        zettel_service.create_link(note1.id, note2.id)
-        
-        # Use direct SQL query instead of search service
-        orphans = zettel_service.repository.search(tags=["isolated"])
-        assert len(orphans) == 1
-        assert orphans[0].id == orphan.id
-
-    def test_find_central_notes(self, zettel_service):
-        """Test finding notes with the most connections."""
-        # Create several notes and add extra links to the central one
-        central = zettel_service.create_note(
-            title="Central Hub Note",
-            content="This is the central hub note.",
-            tags=["central", "hub"]
-        )
-        
-        peripheral1 = zettel_service.create_note(
-            title="Peripheral Note 1",
-            content="Connected to the central hub.",
-            tags=["peripheral"]
-        )
-        
-        peripheral2 = zettel_service.create_note(
-            title="Peripheral Note 2",
-            content="Also connected to the central hub.",
-            tags=["peripheral"]
-        )
-        
-        # Create links with different types to avoid constraint issues
-        zettel_service.create_link(central.id, peripheral1.id, LinkType.REFERENCE)
-        zettel_service.create_link(central.id, peripheral2.id, LinkType.SUPPORTS)
-        
-        # Verify we can find linked notes
-        linked = zettel_service.get_linked_notes(central.id, "outgoing")
-        assert len(linked) == 2
-        assert {n.id for n in linked} == {peripheral1.id, peripheral2.id}
-
-    def test_find_notes_by_date_range(self, zettel_service):
-        """Test finding notes within a date range."""
-        # Create a note and ensure we can retrieve it by tag
-        note = zettel_service.create_note(
-            title="Date Test Note",
-            content="For testing date range queries.",
-            tags=["date-test", "search"]
-        )
-        
-        # Test retrieving by tag
-        found_notes = zettel_service.get_notes_by_tag("date-test")
-        assert len(found_notes) == 1
-        assert found_notes[0].id == note.id
-
-    def test_find_similar_notes(self, zettel_service):
-        """Test finding notes similar to a given note."""
-        # Create test notes with shared tags
-        note1 = zettel_service.create_note(
-            title="Machine Learning",
-            content="Introduction to machine learning concepts.",
-            tags=["AI", "machine learning", "data science"]
-        )
-        note2 = zettel_service.create_note(
-            title="Neural Networks",
-            content="Overview of neural network architectures.",
-            tags=["AI", "machine learning", "neural networks"]
-        )
-        
-        # Create link to ensure similarity
-        zettel_service.create_link(note1.id, note2.id)
-        
-        # Verify we can find the note by tag
-        ai_notes = zettel_service.get_notes_by_tag("AI")
-        assert len(ai_notes) == 2
-        assert {n.id for n in ai_notes} == {note1.id, note2.id}
-
-    def test_search_combined(self, zettel_service):
-        """Test combined search with multiple criteria."""
-        # Create test notes
-        note1 = zettel_service.create_note(
-            title="Python Data Analysis",
-            content="Using Python for data analysis.",
-            note_type=NoteType.PERMANENT,
-            tags=["python", "data science", "analysis"]
-        )
-        note2 = zettel_service.create_note(
-            title="Python Web Development",
-            content="Using Python for web development.",
-            note_type=NoteType.PERMANENT,
-            tags=["python", "web", "development"]
-        )
-        
-        # Test tag-based search
-        python_notes = zettel_service.get_notes_by_tag("python")
-        assert len(python_notes) == 2
-        assert {n.id for n in python_notes} == {note1.id, note2.id}
-        
-        # Test tag and type filtering
-        permanent_notes = zettel_service.repository.search(
-            note_type=NoteType.PERMANENT,
-            tags=["python"]
-        )
-        assert len(permanent_notes) == 2
+from znote_mcp.services.search_service import SearchService
 
 
 class TestSearchServiceDirect:
@@ -141,7 +16,9 @@ class TestSearchServiceDirect:
         orphan1 = zettel_service.create_note(title="Orphan 1", content="Alone")
         orphan2 = zettel_service.create_note(title="Orphan 2", content="Also alone")
         connected1 = zettel_service.create_note(title="Connected 1", content="Linked")
-        connected2 = zettel_service.create_note(title="Connected 2", content="Also linked")
+        connected2 = zettel_service.create_note(
+            title="Connected 2", content="Also linked"
+        )
 
         # Create a link between connected notes
         zettel_service.create_link(connected1.id, connected2.id, LinkType.REFERENCE)
@@ -185,10 +62,9 @@ class TestSearchServiceDirect:
         # Create several notes with varying connections
         notes = []
         for i in range(5):
-            notes.append(zettel_service.create_note(
-                title=f"Note {i}",
-                content=f"Content {i}"
-            ))
+            notes.append(
+                zettel_service.create_note(title=f"Note {i}", content=f"Content {i}")
+            )
 
         # Create links: note0 has 4 links, note1 has 3, etc.
         zettel_service.create_link(notes[0].id, notes[1].id, LinkType.REFERENCE)
@@ -205,8 +81,7 @@ class TestSearchServiceDirect:
     def test_find_notes_by_date_range_start_date(self, zettel_service):
         """Test find_notes_by_date_range with start_date filter."""
         note = zettel_service.create_note(
-            title="Recent Note",
-            content="Created recently"
+            title="Recent Note", content="Created recently"
         )
 
         search_service = SearchService(zettel_service)
@@ -221,8 +96,7 @@ class TestSearchServiceDirect:
     def test_find_notes_by_date_range_end_date(self, zettel_service):
         """Test find_notes_by_date_range with end_date filter."""
         note = zettel_service.create_note(
-            title="Test Note",
-            content="For date range test"
+            title="Test Note", content="For date range test"
         )
 
         search_service = SearchService(zettel_service)
@@ -246,13 +120,13 @@ class TestSearchServiceDirect:
         base = zettel_service.create_note(
             title="Base Note",
             content="The starting point",
-            tags=["python", "testing", "development"]
+            tags=["python", "testing", "development"],
         )
         # Share 2 of 3 tags to meet default threshold of 0.5
         highly_similar = zettel_service.create_note(
             title="Highly Similar Note",
             content="Very related content",
-            tags=["python", "testing", "qa"]
+            tags=["python", "testing", "qa"],
         )
         # Also create a direct link to ensure similarity
         zettel_service.create_link(base.id, highly_similar.id, LinkType.REFERENCE)
@@ -274,8 +148,7 @@ class TestSearchServiceDirect:
     def test_search_combined_text_only(self, zettel_service):
         """Test search_combined with only text filter."""
         note = zettel_service.create_note(
-            title="Database Design",
-            content="SQL and NoSQL databases."
+            title="Database Design", content="SQL and NoSQL databases."
         )
 
         search_service = SearchService(zettel_service)
@@ -288,14 +161,10 @@ class TestSearchServiceDirect:
     def test_search_combined_tags_only(self, zettel_service):
         """Test search_combined with only tags filter."""
         note1 = zettel_service.create_note(
-            title="Python Note",
-            content="Content",
-            tags=["python"]
+            title="Python Note", content="Content", tags=["python"]
         )
         note2 = zettel_service.create_note(
-            title="Other Note",
-            content="Content",
-            tags=["other"]
+            title="Other Note", content="Content", tags=["other"]
         )
 
         search_service = SearchService(zettel_service)
@@ -311,12 +180,10 @@ class TestSearchServiceDirect:
         permanent = zettel_service.create_note(
             title="Permanent Note",
             content="Evergreen content",
-            note_type=NoteType.PERMANENT
+            note_type=NoteType.PERMANENT,
         )
         fleeting = zettel_service.create_note(
-            title="Fleeting Note",
-            content="Quick thought",
-            note_type=NoteType.FLEETING
+            title="Fleeting Note", content="Quick thought", note_type=NoteType.FLEETING
         )
 
         search_service = SearchService(zettel_service)
@@ -332,26 +199,24 @@ class TestSearchServiceDirect:
             title="Python Web Development",
             content="Building web apps with Python Flask.",
             note_type=NoteType.PERMANENT,
-            tags=["python", "web"]
+            tags=["python", "web"],
         )
         wrong_type = zettel_service.create_note(
             title="Python Scripting",
             content="Quick Python scripts",
             note_type=NoteType.FLEETING,
-            tags=["python", "scripting"]
+            tags=["python", "scripting"],
         )
         wrong_tag = zettel_service.create_note(
             title="JavaScript Web",
             content="Building with JavaScript",
             note_type=NoteType.PERMANENT,
-            tags=["javascript", "web"]
+            tags=["javascript", "web"],
         )
 
         search_service = SearchService(zettel_service)
         results = search_service.search_combined(
-            text="Python",
-            tags=["python"],
-            note_type=NoteType.PERMANENT
+            text="Python", tags=["python"], note_type=NoteType.PERMANENT
         )
 
         result_ids = [r.note.id for r in results]
@@ -361,10 +226,7 @@ class TestSearchServiceDirect:
 
     def test_search_combined_date_range(self, zettel_service):
         """Test search_combined with date range filters."""
-        note = zettel_service.create_note(
-            title="Current Note",
-            content="Just created"
-        )
+        note = zettel_service.create_note(title="Current Note", content="Just created")
 
         search_service = SearchService(zettel_service)
 
@@ -384,11 +246,11 @@ class TestSearchCombinedFts:
         """FTS5 should be used for text queries when available."""
         note1 = zettel_service.create_note(
             title="Python Async Programming",
-            content="Asyncio is a library for concurrent Python code."
+            content="Asyncio is a library for concurrent Python code.",
         )
         note2 = zettel_service.create_note(
             title="JavaScript Promises",
-            content="Promises handle asynchronous JavaScript operations."
+            content="Promises handle asynchronous JavaScript operations.",
         )
 
         search_service = SearchService(zettel_service)
@@ -401,8 +263,7 @@ class TestSearchCombinedFts:
     def test_search_combined_fallback_without_fts(self, zettel_service):
         """Graceful degradation when FTS5 is unavailable."""
         note = zettel_service.create_note(
-            title="Fallback Test",
-            content="This tests the fallback path."
+            title="Fallback Test", content="This tests the fallback path."
         )
 
         search_service = SearchService(zettel_service)
@@ -422,11 +283,10 @@ class TestSearchCombinedFts:
         tagged = zettel_service.create_note(
             title="Python Guide",
             content="Complete Python programming guide.",
-            tags=["python"]
+            tags=["python"],
         )
         untagged = zettel_service.create_note(
-            title="Python Tips",
-            content="Quick Python tips and tricks."
+            title="Python Tips", content="Quick Python tips and tricks."
         )
 
         search_service = SearchService(zettel_service)

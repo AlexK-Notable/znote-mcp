@@ -3,13 +3,15 @@
 These tests use real ZettelService and SearchService instances (not mocks)
 to verify end-to-end behavior of MCP tools.
 """
-import pytest
+
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from znote_mcp.models.schema import NotePurpose, NoteType
 from znote_mcp.server.mcp_server import ZettelkastenMcpServer
-from znote_mcp.services.zettel_service import ZettelService
 from znote_mcp.services.search_service import SearchService
-from znote_mcp.models.schema import NoteType, NotePurpose
+from znote_mcp.services.zettel_service import ZettelService
 
 
 def extract_note_id(result: str) -> str:
@@ -37,20 +39,20 @@ class TestMCPIntegration:
 
         def mock_tool_decorator(*args, **kwargs):
             def tool_wrapper(func):
-                name = kwargs.get('name')
+                name = kwargs.get("name")
                 registered_tools[name] = func
                 return func
+
             return tool_wrapper
 
         mock_mcp.tool = mock_tool_decorator
 
-        with patch('znote_mcp.server.mcp_server.FastMCP', return_value=mock_mcp):
+        with patch("znote_mcp.server.mcp_server.FastMCP", return_value=mock_mcp):
             # Create server with real services injected
             server = ZettelkastenMcpServer()
             # Replace mocked services with real ones
             server.zettel_service = zettel_service
             server.search_service = SearchService(zettel_service)
-            server.search_service.initialize()
 
         return server, registered_tools
 
@@ -59,19 +61,22 @@ class TestMCPIntegration:
         server, tools = mcp_server
 
         # Create a note
-        create_result = tools['zk_create_note'](
+        create_result = tools["zk_create_note"](
             title="Integration Test Note",
             content="This is test content for integration testing.",
             note_type="permanent",
-            tags="test, integration"
+            tags="test, integration",
         )
 
-        assert "successfully" in create_result.lower() or "created" in create_result.lower()
+        assert (
+            "successfully" in create_result.lower()
+            or "created" in create_result.lower()
+        )
 
         note_id = extract_note_id(create_result)
 
         # Retrieve the note
-        get_result = tools['zk_get_note'](note_id)
+        get_result = tools["zk_get_note"](note_id)
 
         assert "Integration Test Note" in get_result
         assert "test content" in get_result.lower()
@@ -82,24 +87,21 @@ class TestMCPIntegration:
         server, tools = mcp_server
 
         # Create a note first
-        create_result = tools['zk_create_note'](
-            title="Note to Update",
-            content="Original content",
-            note_type="fleeting"
+        create_result = tools["zk_create_note"](
+            title="Note to Update", content="Original content", note_type="fleeting"
         )
 
         note_id = extract_note_id(create_result)
 
         # Update the note
-        update_result = tools['zk_update_note'](
-            note_id=note_id,
-            content="Updated content via integration test"
+        update_result = tools["zk_update_note"](
+            note_id=note_id, content="Updated content via integration test"
         )
 
         assert "updated" in update_result.lower()
 
         # Verify the update
-        get_result = tools['zk_get_note'](note_id)
+        get_result = tools["zk_get_note"](note_id)
         assert "Updated content" in get_result
 
     def test_delete_note_with_real_service(self, mcp_server):
@@ -107,21 +109,20 @@ class TestMCPIntegration:
         server, tools = mcp_server
 
         # Create a note
-        create_result = tools['zk_create_note'](
-            title="Note to Delete",
-            content="This will be deleted"
+        create_result = tools["zk_create_note"](
+            title="Note to Delete", content="This will be deleted"
         )
 
         note_id = extract_note_id(create_result)
 
         # Delete the note (may fail if git not configured in temp dir)
-        delete_result = tools['zk_delete_note'](note_id)
+        delete_result = tools["zk_delete_note"](note_id)
         # Either succeeded or failed due to git issues in test env
         assert "deleted" in delete_result.lower() or "error" in delete_result.lower()
 
         # If delete succeeded, verify it's gone
         if "deleted" in delete_result.lower():
-            get_result = tools['zk_get_note'](note_id)
+            get_result = tools["zk_get_note"](note_id)
             assert "not found" in get_result.lower()
 
     def test_search_notes_integration(self, mcp_server):
@@ -129,21 +130,21 @@ class TestMCPIntegration:
         server, tools = mcp_server
 
         # Create several notes
-        tools['zk_create_note'](
+        tools["zk_create_note"](
             title="Python Programming Guide",
-            content="Learn Python programming with examples"
+            content="Learn Python programming with examples",
         )
-        tools['zk_create_note'](
+        tools["zk_create_note"](
             title="JavaScript Basics",
-            content="Introduction to JavaScript for beginners"
+            content="Introduction to JavaScript for beginners",
         )
-        tools['zk_create_note'](
+        tools["zk_create_note"](
             title="Advanced Python Patterns",
-            content="Design patterns in Python programming"
+            content="Design patterns in Python programming",
         )
 
         # Search for Python
-        search_result = tools['zk_search_notes'](query="Python")
+        search_result = tools["zk_search_notes"](query="Python")
 
         assert "Python" in search_result
         # Should find both Python notes
@@ -154,29 +155,25 @@ class TestMCPIntegration:
         server, tools = mcp_server
 
         # Create two notes
-        result1 = tools['zk_create_note'](
-            title="Source Note",
-            content="This note references another"
+        result1 = tools["zk_create_note"](
+            title="Source Note", content="This note references another"
         )
-        result2 = tools['zk_create_note'](
-            title="Target Note",
-            content="This is the target"
+        result2 = tools["zk_create_note"](
+            title="Target Note", content="This is the target"
         )
 
         source_id = extract_note_id(result1)
         target_id = extract_note_id(result2)
 
         # Create a link
-        link_result = tools['zk_create_link'](
-            source_id=source_id,
-            target_id=target_id,
-            link_type="reference"
+        link_result = tools["zk_create_link"](
+            source_id=source_id, target_id=target_id, link_type="reference"
         )
 
         assert "created" in link_result.lower() or "link" in link_result.lower()
 
         # Verify link appears in find_related
-        related_result = tools['zk_find_related'](source_id)
+        related_result = tools["zk_find_related"](source_id)
         assert target_id in related_result or "Target Note" in related_result
 
     def test_tag_operations_integration(self, mcp_server):
@@ -184,22 +181,19 @@ class TestMCPIntegration:
         server, tools = mcp_server
 
         # Create a note
-        result = tools['zk_create_note'](
-            title="Tagged Note",
-            content="Note with tags"
-        )
+        result = tools["zk_create_note"](title="Tagged Note", content="Note with tags")
         note_id = extract_note_id(result)
 
         # Add a tag
-        add_result = tools['zk_add_tag'](note_id, "new-tag")
+        add_result = tools["zk_add_tag"](note_id, "new-tag")
         assert "added" in add_result.lower() or "new-tag" in add_result
 
         # Verify tag is present
-        get_result = tools['zk_get_note'](note_id)
+        get_result = tools["zk_get_note"](note_id)
         assert "new-tag" in get_result
 
         # Remove the tag
-        remove_result = tools['zk_remove_tag'](note_id, "new-tag")
+        remove_result = tools["zk_remove_tag"](note_id, "new-tag")
         assert "removed" in remove_result.lower()
 
     def test_bulk_operations_integration(self, mcp_server):
@@ -207,18 +201,20 @@ class TestMCPIntegration:
         server, tools = mcp_server
         import json
 
-        notes_data = json.dumps([
-            {"title": "Bulk Note 1", "content": "First bulk note"},
-            {"title": "Bulk Note 2", "content": "Second bulk note"},
-            {"title": "Bulk Note 3", "content": "Third bulk note"}
-        ])
+        notes_data = json.dumps(
+            [
+                {"title": "Bulk Note 1", "content": "First bulk note"},
+                {"title": "Bulk Note 2", "content": "Second bulk note"},
+                {"title": "Bulk Note 3", "content": "Third bulk note"},
+            ]
+        )
 
-        result = tools['zk_bulk_create_notes'](notes_data)
+        result = tools["zk_bulk_create_notes"](notes_data)
 
         assert "3" in result or "created" in result.lower()
 
         # Verify notes exist
-        list_result = tools['zk_list_notes']()
+        list_result = tools["zk_list_notes"]()
         assert "Bulk Note 1" in list_result
         assert "Bulk Note 2" in list_result
         assert "Bulk Note 3" in list_result
@@ -228,14 +224,14 @@ class TestMCPIntegration:
         server, tools = mcp_server
 
         # Create some notes with tags
-        tools['zk_create_note'](
+        tools["zk_create_note"](
             title="Status Test Note",
             content="Content for status test",
-            tags="status-test, important"
+            tags="status-test, important",
         )
 
         # Get status
-        status_result = tools['zk_status']()
+        status_result = tools["zk_status"]()
 
         assert "Summary" in status_result or "Total Notes" in status_result
         assert "Tags" in status_result
@@ -246,18 +242,16 @@ class TestMCPIntegration:
         server, tools = mcp_server
 
         # Create a note with tags
-        result = tools['zk_create_note'](
-            title="Note with Tag",
-            content="Will be deleted",
-            tags="orphan-test-tag"
+        result = tools["zk_create_note"](
+            title="Note with Tag", content="Will be deleted", tags="orphan-test-tag"
         )
         note_id = extract_note_id(result)
 
         # Delete the note (tag becomes orphaned)
-        tools['zk_delete_note'](note_id)
+        tools["zk_delete_note"](note_id)
 
         # Cleanup orphaned tags
-        cleanup_result = tools['zk_cleanup_tags']()
+        cleanup_result = tools["zk_cleanup_tags"]()
 
         # Should report cleanup or no orphans
         assert "clean" in cleanup_result.lower() or "unused" in cleanup_result.lower()
@@ -267,24 +261,27 @@ class TestMCPIntegration:
         server, tools = mcp_server
 
         # Create a note
-        result = tools['zk_create_note'](
-            title="History Test Note",
-            content="Initial content"
+        result = tools["zk_create_note"](
+            title="History Test Note", content="Initial content"
         )
         note_id = extract_note_id(result)
 
         # Get history (may be empty if git not enabled)
-        history_result = tools['zk_note_history'](note_id)
+        history_result = tools["zk_note_history"](note_id)
 
         # Should return some response (history or "git not enabled" message)
-        assert note_id in history_result or "history" in history_result.lower() or "git" in history_result.lower()
+        assert (
+            note_id in history_result
+            or "history" in history_result.lower()
+            or "git" in history_result.lower()
+        )
 
     def test_error_handling_invalid_note_id(self, mcp_server):
         """Test error handling for invalid note IDs."""
         server, tools = mcp_server
 
         # Try to get non-existent note
-        result = tools['zk_get_note']("nonexistent-note-id-12345")
+        result = tools["zk_get_note"]("nonexistent-note-id-12345")
         assert "not found" in result.lower() or "error" in result.lower()
 
     def test_error_handling_invalid_link(self, mcp_server):
@@ -292,10 +289,8 @@ class TestMCPIntegration:
         server, tools = mcp_server
 
         # Try to create link with non-existent notes
-        result = tools['zk_create_link'](
-            source_id="nonexistent-1",
-            target_id="nonexistent-2",
-            link_type="reference"
+        result = tools["zk_create_link"](
+            source_id="nonexistent-1", target_id="nonexistent-2", link_type="reference"
         )
         assert "error" in result.lower() or "not found" in result.lower()
 
@@ -311,18 +306,18 @@ class TestMCPProjectIntegration:
 
         def mock_tool_decorator(*args, **kwargs):
             def tool_wrapper(func):
-                name = kwargs.get('name')
+                name = kwargs.get("name")
                 registered_tools[name] = func
                 return func
+
             return tool_wrapper
 
         mock_mcp.tool = mock_tool_decorator
 
-        with patch('znote_mcp.server.mcp_server.FastMCP', return_value=mock_mcp):
+        with patch("znote_mcp.server.mcp_server.FastMCP", return_value=mock_mcp):
             server = ZettelkastenMcpServer()
             server.zettel_service = zettel_service
             server.search_service = SearchService(zettel_service)
-            server.search_service.initialize()
 
         return server, registered_tools
 
@@ -330,16 +325,16 @@ class TestMCPProjectIntegration:
         """Test creating notes with project assignment."""
         server, tools = mcp_server
 
-        result = tools['zk_create_note'](
+        result = tools["zk_create_note"](
             title="Project Note",
             content="Note in a specific project",
-            project="my-project"
+            project="my-project",
         )
 
         note_id = extract_note_id(result)
 
         # Verify project is set
-        get_result = tools['zk_get_note'](note_id)
+        get_result = tools["zk_get_note"](note_id)
         assert "my-project" in get_result
 
     def test_list_notes_by_project(self, mcp_server):
@@ -347,19 +342,15 @@ class TestMCPProjectIntegration:
         server, tools = mcp_server
 
         # Create notes in different projects
-        tools['zk_create_note'](
-            title="Project A Note",
-            content="In project A",
-            project="project-a"
+        tools["zk_create_note"](
+            title="Project A Note", content="In project A", project="project-a"
         )
-        tools['zk_create_note'](
-            title="Project B Note",
-            content="In project B",
-            project="project-b"
+        tools["zk_create_note"](
+            title="Project B Note", content="In project B", project="project-b"
         )
 
         # List notes for project A
-        result = tools['zk_list_notes'](project="project-a")
+        result = tools["zk_list_notes"](project="project-a")
 
         assert "Project A Note" in result
         # Project B note may or may not be excluded depending on implementation

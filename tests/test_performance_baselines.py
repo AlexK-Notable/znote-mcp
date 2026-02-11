@@ -6,7 +6,9 @@ They can be used to detect performance regressions in future changes.
 Note: These tests use reasonable thresholds that should pass on most systems.
 Actual performance will vary based on hardware and system load.
 """
+
 import time
+
 import pytest
 
 from znote_mcp.models.schema import Note, NoteType, Tag
@@ -24,7 +26,7 @@ class TestNoteOperationPerformance:
         note = zettel_service.create_note(
             title="Performance Test Note",
             content="This is a performance test note with some content.",
-            tags=["perf", "test"]
+            tags=["perf", "test"],
         )
 
         elapsed = time.perf_counter() - start
@@ -36,10 +38,7 @@ class TestNoteOperationPerformance:
     def test_single_note_read_performance(self, zettel_service):
         """Single note read should complete in reasonable time."""
         # Create a note first
-        note = zettel_service.create_note(
-            title="Read Test",
-            content="Content"
-        )
+        note = zettel_service.create_note(title="Read Test", content="Content")
 
         start = time.perf_counter()
         retrieved = zettel_service.get_note(note.id)
@@ -52,15 +51,11 @@ class TestNoteOperationPerformance:
     def test_single_note_update_performance(self, zettel_service):
         """Single note update should complete in reasonable time."""
         note = zettel_service.create_note(
-            title="Update Test",
-            content="Original content"
+            title="Update Test", content="Original content"
         )
 
         start = time.perf_counter()
-        updated = zettel_service.update_note(
-            note.id,
-            content="Updated content"
-        )
+        updated = zettel_service.update_note(note.id, content="Updated content")
         elapsed = time.perf_counter() - start
 
         # Should complete in under 100ms
@@ -69,10 +64,7 @@ class TestNoteOperationPerformance:
 
     def test_single_note_delete_performance(self, zettel_service):
         """Single note deletion should complete in reasonable time."""
-        note = zettel_service.create_note(
-            title="Delete Test",
-            content="Content"
-        )
+        note = zettel_service.create_note(title="Delete Test", content="Content")
 
         start = time.perf_counter()
         zettel_service.delete_note(note.id)
@@ -88,8 +80,7 @@ class TestBulkOperationPerformance:
     def test_bulk_create_10_notes(self, zettel_service):
         """Bulk creation of 10 notes should be efficient."""
         notes_data = [
-            {"title": f"Bulk Note {i}", "content": f"Content {i}"}
-            for i in range(10)
+            {"title": f"Bulk Note {i}", "content": f"Content {i}"} for i in range(10)
         ]
 
         start = time.perf_counter()
@@ -107,16 +98,14 @@ class TestBulkOperationPerformance:
         start_individual = time.perf_counter()
         for i in range(5):
             note = zettel_service.create_note(
-                title=f"Individual Note {i}",
-                content=f"Content {i}"
+                title=f"Individual Note {i}", content=f"Content {i}"
             )
             individual_notes.append(note)
         individual_time = time.perf_counter() - start_individual
 
         # Time bulk create
         bulk_data = [
-            {"title": f"Bulk Note {i}", "content": f"Content {i}"}
-            for i in range(5)
+            {"title": f"Bulk Note {i}", "content": f"Content {i}"} for i in range(5)
         ]
         start_bulk = time.perf_counter()
         bulk_notes = zettel_service.bulk_create_notes(bulk_data)
@@ -124,9 +113,9 @@ class TestBulkOperationPerformance:
 
         # Bulk should be faster (or at least not significantly slower)
         # Allow some variance since both are fast operations
-        assert bulk_time <= individual_time * 1.5, (
-            f"Bulk ({bulk_time:.3f}s) should be similar or faster than individual ({individual_time:.3f}s)"
-        )
+        assert (
+            bulk_time <= individual_time * 1.5
+        ), f"Bulk ({bulk_time:.3f}s) should be similar or faster than individual ({individual_time:.3f}s)"
 
     def test_bulk_delete_performance(self, zettel_service):
         """Bulk deletion should be efficient."""
@@ -134,8 +123,7 @@ class TestBulkOperationPerformance:
         notes = []
         for i in range(10):
             note = zettel_service.create_note(
-                title=f"To Delete {i}",
-                content=f"Content {i}"
+                title=f"To Delete {i}", content=f"Content {i}"
             )
             notes.append(note)
 
@@ -155,8 +143,7 @@ class TestBulkOperationPerformance:
         notes = []
         for i in range(10):
             note = zettel_service.create_note(
-                title=f"Tag Test {i}",
-                content=f"Content {i}"
+                title=f"Tag Test {i}", content=f"Content {i}"
             )
             notes.append(note)
 
@@ -181,7 +168,7 @@ class TestSearchPerformance:
             zettel_service.create_note(
                 title=f"Search Test {i}",
                 content=f"This is note number {i} with searchable content.",
-                tags=["searchable"] if i % 2 == 0 else ["other"]
+                tags=["searchable"] if i % 2 == 0 else ["other"],
             )
 
         start = time.perf_counter()
@@ -199,7 +186,7 @@ class TestSearchPerformance:
             zettel_service.create_note(
                 title=f"Tagged {i}",
                 content=f"Content {i}",
-                tags=["python"] if i % 3 == 0 else ["other"]
+                tags=["python"] if i % 3 == 0 else ["other"],
             )
 
         start = time.perf_counter()
@@ -215,7 +202,7 @@ class TestSearchPerformance:
         for i in range(20):
             zettel_service.create_note(
                 title=f"FTS Note {i}",
-                content=f"This note discusses topic {i} in depth with various keywords."
+                content=f"This note discusses topic {i} in depth with various keywords.",
             )
 
         start = time.perf_counter()

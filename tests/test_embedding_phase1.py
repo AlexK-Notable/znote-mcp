@@ -10,6 +10,7 @@ Tests cover:
 
 These tests use ONLY fake providers — no real models.
 """
+
 import time
 
 import numpy as np
@@ -19,7 +20,6 @@ from tests.fakes import FakeEmbeddingProvider, FakeRerankerProvider
 from znote_mcp.config import ZettelkastenConfig
 from znote_mcp.exceptions import EmbeddingError, ErrorCode
 from znote_mcp.services.embedding_service import EmbeddingService
-
 
 # =============================================================================
 # FakeEmbeddingProvider Tests
@@ -138,9 +138,9 @@ class TestFakeRerankerProvider:
         """Documents should be ranked by descending score."""
         provider = FakeRerankerProvider()
         docs = [
-            "nothing related",          # 0.0
-            "hello there",              # 0.5 (1 of 2)
-            "hello world is here",      # 1.0 (2 of 2)
+            "nothing related",  # 0.0
+            "hello there",  # 0.5 (1 of 2)
+            "hello world is here",  # 1.0 (2 of 2)
         ]
         results = provider.rerank("hello world", docs, top_k=3)
         assert results[0][0] == 2  # Best match first
@@ -212,9 +212,7 @@ class TestEmbeddingServiceLifecycle:
         svc_no = EmbeddingService(embedder=embedder, reranker=None)
         assert not svc_no.has_reranker
 
-        svc_yes = EmbeddingService(
-            embedder=embedder, reranker=FakeRerankerProvider()
-        )
+        svc_yes = EmbeddingService(embedder=embedder, reranker=FakeRerankerProvider())
         assert svc_yes.has_reranker
         svc_no.shutdown()
         svc_yes.shutdown()
@@ -460,7 +458,6 @@ class TestEmbeddingErrorCodes:
         assert ErrorCode.EMBEDDING_UNAVAILABLE.value == 8001
         assert ErrorCode.EMBEDDING_MODEL_LOAD_FAILED.value == 8002
         assert ErrorCode.EMBEDDING_INFERENCE_FAILED.value == 8003
-        assert ErrorCode.VECTOR_STORE_ERROR.value == 8004
         assert ErrorCode.RERANKER_FAILED.value == 8005
 
     def test_embedding_error_inherits_from_zettelkasten_error(self):

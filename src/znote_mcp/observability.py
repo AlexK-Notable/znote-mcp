@@ -3,6 +3,7 @@
 Provides structured logging, timing metrics, operation tracking,
 and persistent disk logging with rotation.
 """
+
 import functools
 import json
 import logging
@@ -11,7 +12,7 @@ import time
 import uuid
 from collections import defaultdict
 from contextlib import contextmanager
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -29,7 +30,7 @@ LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s - %(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%dT%H:%M:%S%z"
 
 # Type variable for decorators
-F = TypeVar('F', bound=Callable[..., Any])
+F = TypeVar("F", bound=Callable[..., Any])
 
 # Global flag to track if logging has been configured
 _logging_configured = False
@@ -38,7 +39,9 @@ _logging_configured = False
 _MAX_ERROR_MESSAGE_LENGTH = 200
 
 
-def _sanitize_error_message(error: Optional[str], max_length: int = _MAX_ERROR_MESSAGE_LENGTH) -> Optional[str]:
+def _sanitize_error_message(
+    error: Optional[str], max_length: int = _MAX_ERROR_MESSAGE_LENGTH
+) -> Optional[str]:
     """Sanitize error message for safe storage in metrics.
 
     Prevents sensitive information leakage by:
@@ -61,15 +64,15 @@ def _sanitize_error_message(error: Optional[str], max_length: int = _MAX_ERROR_M
     sanitized = error.replace(home_dir, "~")
 
     # Remove newlines and carriage returns
-    sanitized = sanitized.replace('\n', ' ').replace('\r', ' ')
+    sanitized = sanitized.replace("\n", " ").replace("\r", " ")
 
     # Collapse multiple spaces
-    while '  ' in sanitized:
-        sanitized = sanitized.replace('  ', ' ')
+    while "  " in sanitized:
+        sanitized = sanitized.replace("  ", " ")
 
     # Truncate to max length
     if len(sanitized) > max_length:
-        sanitized = sanitized[:max_length - 3] + "..."
+        sanitized = sanitized[: max_length - 3] + "..."
 
     return sanitized.strip()
 
@@ -138,7 +141,9 @@ def configure_logging(
         root_logger.addHandler(console_handler)
 
     _logging_configured = True
-    root_logger.info(f"Logging configured: {log_file} (max {max_bytes} bytes, {backup_count} backups)")
+    root_logger.info(
+        f"Logging configured: {log_file} (max {max_bytes} bytes, {backup_count} backups)"
+    )
 
     return log_path
 
@@ -151,11 +156,12 @@ def is_logging_configured() -> bool:
 @dataclass
 class OperationMetrics:
     """Metrics for a single operation type."""
+
     count: int = 0
     success_count: int = 0
     error_count: int = 0
     total_duration_ms: float = 0.0
-    min_duration_ms: float = float('inf')
+    min_duration_ms: float = float("inf")
     max_duration_ms: float = 0.0
     last_error: Optional[str] = None
     last_error_time: Optional[datetime] = None
@@ -184,7 +190,9 @@ class MetricsCollector:
         self._metrics: Dict[str, OperationMetrics] = defaultdict(OperationMetrics)
         self._lock = Lock()
         self._start_time = datetime.now(timezone.utc)
-        self._metrics_file = Path(metrics_file) if metrics_file else DEFAULT_METRICS_FILE
+        self._metrics_file = (
+            Path(metrics_file) if metrics_file else DEFAULT_METRICS_FILE
+        )
         self._auto_save_interval = auto_save_interval
         self._operation_count_since_save = 0
 
@@ -196,7 +204,7 @@ class MetricsCollector:
         operation: str,
         duration_ms: float,
         success: bool,
-        error: Optional[str] = None
+        error: Optional[str] = None,
     ) -> None:
         """Record metrics for an operation.
 
@@ -239,17 +247,19 @@ class MetricsCollector:
             for op, m in self._metrics.items():
                 avg_duration = m.total_duration_ms / m.count if m.count > 0 else 0
                 # Handle case where no operations have completed
-                min_dur = m.min_duration_ms if m.min_duration_ms != float('inf') else 0
+                min_dur = m.min_duration_ms if m.min_duration_ms != float("inf") else 0
                 result[op] = {
-                    'count': m.count,
-                    'success_count': m.success_count,
-                    'error_count': m.error_count,
-                    'success_rate': m.success_count / m.count if m.count > 0 else 0,
-                    'avg_duration_ms': round(avg_duration, 2),
-                    'min_duration_ms': round(min_dur, 2),
-                    'max_duration_ms': round(m.max_duration_ms, 2),
-                    'last_error': m.last_error,
-                    'last_error_time': m.last_error_time.isoformat() if m.last_error_time else None
+                    "count": m.count,
+                    "success_count": m.success_count,
+                    "error_count": m.error_count,
+                    "success_rate": m.success_count / m.count if m.count > 0 else 0,
+                    "avg_duration_ms": round(avg_duration, 2),
+                    "min_duration_ms": round(min_dur, 2),
+                    "max_duration_ms": round(m.max_duration_ms, 2),
+                    "last_error": m.last_error,
+                    "last_error_time": (
+                        m.last_error_time.isoformat() if m.last_error_time else None
+                    ),
                 }
             return result
 
@@ -265,12 +275,16 @@ class MetricsCollector:
             total_errors = sum(m.error_count for m in self._metrics.values())
 
             return {
-                'uptime_seconds': (datetime.now(timezone.utc) - self._start_time).total_seconds(),
-                'total_operations': total_ops,
-                'total_success': total_success,
-                'total_errors': total_errors,
-                'overall_success_rate': total_success / total_ops if total_ops > 0 else 1.0,
-                'operations_tracked': list(self._metrics.keys())
+                "uptime_seconds": (
+                    datetime.now(timezone.utc) - self._start_time
+                ).total_seconds(),
+                "total_operations": total_ops,
+                "total_success": total_success,
+                "total_errors": total_errors,
+                "overall_success_rate": (
+                    total_success / total_ops if total_ops > 0 else 1.0
+                ),
+                "operations_tracked": list(self._metrics.keys()),
             }
 
     def reset(self) -> None:
@@ -308,7 +322,9 @@ class MetricsCollector:
                 m.max_duration_ms = op_data.get("max_duration_ms", 0.0)
                 m.last_error = op_data.get("last_error")
                 if op_data.get("last_error_time"):
-                    m.last_error_time = datetime.fromisoformat(op_data["last_error_time"])
+                    m.last_error_time = datetime.fromisoformat(
+                        op_data["last_error_time"]
+                    )
 
             logger.debug(f"Loaded metrics from {self._metrics_file}")
             return True
@@ -340,10 +356,14 @@ class MetricsCollector:
                     "success_count": m.success_count,
                     "error_count": m.error_count,
                     "total_duration_ms": m.total_duration_ms,
-                    "min_duration_ms": m.min_duration_ms if m.min_duration_ms != float("inf") else None,
+                    "min_duration_ms": (
+                        m.min_duration_ms if m.min_duration_ms != float("inf") else None
+                    ),
                     "max_duration_ms": m.max_duration_ms,
                     "last_error": m.last_error,
-                    "last_error_time": m.last_error_time.isoformat() if m.last_error_time else None,
+                    "last_error_time": (
+                        m.last_error_time.isoformat() if m.last_error_time else None
+                    ),
                 }
 
             # Atomic write via temp file
@@ -399,10 +419,10 @@ def timed_operation(operation: str, **context):
     """
     correlation_id = str(uuid.uuid4())[:8]
     start_time = time.perf_counter()
-    result_info: Dict[str, Any] = {'correlation_id': correlation_id}
+    result_info: Dict[str, Any] = {"correlation_id": correlation_id}
 
     # Log start
-    context_str = ', '.join(f'{k}={v}' for k, v in context.items())
+    context_str = ", ".join(f"{k}={v}" for k, v in context.items())
     logger.debug(f"[{correlation_id}] START {operation} ({context_str})")
 
     error_msg = None
@@ -419,8 +439,10 @@ def timed_operation(operation: str, **context):
         metrics.record_operation(operation, duration_ms, success, error_msg)
 
         # Log completion
-        result_str = ', '.join(f'{k}={v}' for k, v in result_info.items() if k != 'correlation_id')
-        status = 'OK' if success else f'ERROR: {error_msg}'
+        result_str = ", ".join(
+            f"{k}={v}" for k, v in result_info.items() if k != "correlation_id"
+        )
+        status = "OK" if success else f"ERROR: {error_msg}"
         logger.debug(
             f"[{correlation_id}] END {operation} "
             f"({duration_ms:.2f}ms) [{status}] {result_str}"
@@ -441,6 +463,7 @@ def traced(operation_name: Optional[str] = None) -> Callable[[F], F]:
         def create_note(self, title: str, content: str) -> Note:
             ...
     """
+
     def decorator(func: F) -> F:
         op_name = operation_name or func.__name__
 
@@ -448,19 +471,20 @@ def traced(operation_name: Optional[str] = None) -> Callable[[F], F]:
         def wrapper(*args, **kwargs):
             # Extract useful context from args/kwargs for logging
             context = {}
-            if 'note_id' in kwargs:
-                context['note_id'] = kwargs['note_id']
-            elif 'title' in kwargs:
-                context['title'] = kwargs['title'][:50] if kwargs['title'] else None
+            if "note_id" in kwargs:
+                context["note_id"] = kwargs["note_id"]
+            elif "title" in kwargs:
+                context["title"] = kwargs["title"][:50] if kwargs["title"] else None
 
             with timed_operation(op_name, **context) as op:
                 result = func(*args, **kwargs)
                 # Try to extract useful result info
-                if hasattr(result, '__len__'):
-                    op['result_count'] = len(result)
+                if hasattr(result, "__len__"):
+                    op["result_count"] = len(result)
                 elif result is not None:
-                    op['has_result'] = True
+                    op["has_result"] = True
                 return result
 
         return wrapper  # type: ignore
+
     return decorator

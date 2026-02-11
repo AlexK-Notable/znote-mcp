@@ -1,20 +1,23 @@
 """Data models for the Zettelkasten MCP server."""
+
 import datetime
 import os
+import re
+import threading
+from dataclasses import dataclass
 from datetime import timezone
 from enum import Enum
-from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional, Set, Union
+
 from pydantic import BaseModel, Field, field_validator
-import threading
-import re
 
 # Regex pattern for valid note IDs (alphanumeric, underscores, hyphens, T separator)
 # Matches format: YYYYMMDDTHHMMSSssssssccc or similar safe patterns
-SAFE_ID_PATTERN = re.compile(r'^[a-zA-Z0-9_\-T]+$')
+SAFE_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_\-T]+$")
 
 # Regex pattern for valid project path segments
-SAFE_PROJECT_SEGMENT_PATTERN = re.compile(r'^[a-zA-Z0-9_\-]+$')
+SAFE_PROJECT_SEGMENT_PATTERN = re.compile(r"^[a-zA-Z0-9_\-]+$")
+
 
 def validate_safe_path_component(value: str, field_name: str = "value") -> str:
     """Validate that a value is safe to use as a filesystem path component.
@@ -39,10 +42,10 @@ def validate_safe_path_component(value: str, field_name: str = "value") -> str:
         raise ValueError(f"{field_name} cannot be empty")
 
     # Check for path traversal attempts
-    if '..' in value:
+    if ".." in value:
         raise ValueError(f"{field_name} cannot contain '..' (path traversal)")
 
-    if '/' in value or '\\' in value:
+    if "/" in value or "\\" in value:
         raise ValueError(f"{field_name} cannot contain path separators")
 
     # Validate against safe pattern
@@ -74,19 +77,21 @@ def validate_project_path(value: str) -> str:
         raise ValueError("Project path cannot be empty")
 
     # Check for path traversal attempts
-    if '..' in value:
+    if ".." in value:
         raise ValueError("Project path cannot contain '..' (path traversal)")
 
     # Check for backslashes (Windows path separators not allowed)
-    if '\\' in value:
+    if "\\" in value:
         raise ValueError("Project path cannot contain backslashes")
 
     # Split into segments and validate each
-    segments = value.split('/')
+    segments = value.split("/")
 
     # Check for empty segments (leading/trailing/double slashes)
     if any(not seg for seg in segments):
-        raise ValueError("Project path cannot have empty segments (no leading/trailing/double slashes)")
+        raise ValueError(
+            "Project path cannot have empty segments (no leading/trailing/double slashes)"
+        )
 
     # Validate each segment
     for segment in segments:
@@ -130,7 +135,10 @@ def ensure_timezone_aware(dt_value: datetime.datetime) -> datetime.datetime:
 # Thread-safe counter for uniqueness (seeded from PID for cross-process safety)
 _id_lock = threading.Lock()
 _last_timestamp = 0
-_counter = (os.getpid() * 7) % 1_000_000  # PID-based seed prevents multiprocess collisions
+_counter = (
+    os.getpid() * 7
+) % 1_000_000  # PID-based seed prevents multiprocess collisions
+
 
 def generate_id() -> str:
     """Generate an ISO 8601 compliant timestamp-based ID with guaranteed uniqueness.
@@ -160,75 +168,83 @@ def generate_id() -> str:
             _counter += 1
         else:
             _last_timestamp = current_timestamp
-            _counter = (os.getpid() * 7) % 1_000_000  # Re-seed from PID on new microsecond
+            _counter = (
+                os.getpid() * 7
+            ) % 1_000_000  # Re-seed from PID on new microsecond
 
         # Ensure counter doesn't overflow our 6 digits (supports 1M IDs/microsecond)
         _counter %= 1_000_000
 
         # Format as ISO 8601 basic format with microseconds and counter
-        date_time = now.strftime('%Y%m%dT%H%M%S')
+        date_time = now.strftime("%Y%m%dT%H%M%S")
         microseconds = now.microsecond
 
         return f"{date_time}{microseconds:06d}{_counter:06d}"
 
+
 class LinkType(str, Enum):
     """Types of links between notes."""
-    REFERENCE = "reference"        # Simple reference to another note
-    EXTENDS = "extends"            # Current note extends another note
-    EXTENDED_BY = "extended_by"    # Current note is extended by another note
-    REFINES = "refines"            # Current note refines another note
-    REFINED_BY = "refined_by"      # Current note is refined by another note
-    CONTRADICTS = "contradicts"    # Current note contradicts another note
+
+    REFERENCE = "reference"  # Simple reference to another note
+    EXTENDS = "extends"  # Current note extends another note
+    EXTENDED_BY = "extended_by"  # Current note is extended by another note
+    REFINES = "refines"  # Current note refines another note
+    REFINED_BY = "refined_by"  # Current note is refined by another note
+    CONTRADICTS = "contradicts"  # Current note contradicts another note
     CONTRADICTED_BY = "contradicted_by"  # Current note is contradicted by another note
-    QUESTIONS = "questions"        # Current note questions another note
+    QUESTIONS = "questions"  # Current note questions another note
     QUESTIONED_BY = "questioned_by"  # Current note is questioned by another note
-    SUPPORTS = "supports"          # Current note supports another note
+    SUPPORTS = "supports"  # Current note supports another note
     SUPPORTED_BY = "supported_by"  # Current note is supported by another note
-    RELATED = "related"            # Notes are related in some way
+    RELATED = "related"  # Notes are related in some way
+
 
 class Link(BaseModel):
     """A link between two notes."""
+
     source_id: str = Field(..., description="ID of the source note")
     target_id: str = Field(..., description="ID of the target note")
     link_type: LinkType = Field(default=LinkType.REFERENCE, description="Type of link")
-    description: Optional[str] = Field(default=None, description="Optional description of the link")
-    created_at: datetime.datetime = Field(
-        default_factory=utc_now,
-        description="When the link was created (UTC)"
+    description: Optional[str] = Field(
+        default=None, description="Optional description of the link"
     )
-    
+    created_at: datetime.datetime = Field(
+        default_factory=utc_now, description="When the link was created (UTC)"
+    )
+
     model_config = {
         "validate_assignment": True,
         "extra": "forbid",
-        "frozen": True  # Links are immutable
+        "frozen": True,  # Links are immutable
     }
+
 
 class NoteType(str, Enum):
     """Types of notes in a Zettelkasten."""
-    FLEETING = "fleeting"    # Quick, temporary notes
+
+    FLEETING = "fleeting"  # Quick, temporary notes
     LITERATURE = "literature"  # Notes from reading material
     PERMANENT = "permanent"  # Permanent, well-formulated notes
     STRUCTURE = "structure"  # Structure/index notes that organize other notes
-    HUB = "hub"              # Hub notes that serve as entry points
+    HUB = "hub"  # Hub notes that serve as entry points
 
 
 class NotePurpose(str, Enum):
     """Workflow-oriented purpose of a note (for Obsidian organization)."""
-    RESEARCH = "research"      # Investigation, learning, exploration
-    PLANNING = "planning"      # Plans, designs, architecture decisions
-    BUGFIXING = "bugfixing"    # Debugging sessions, fixes, investigations
-    GENERAL = "general"        # Default for uncategorized notes
+
+    RESEARCH = "research"  # Investigation, learning, exploration
+    PLANNING = "planning"  # Plans, designs, architecture decisions
+    BUGFIXING = "bugfixing"  # Debugging sessions, fixes, investigations
+    GENERAL = "general"  # Default for uncategorized notes
 
 
 class Tag(BaseModel):
     """A tag for categorizing notes."""
+
     name: str = Field(..., description="Tag name")
-    
-    model_config = {
-        "validate_assignment": True,
-        "frozen": True
-    }
-    
+
+    model_config = {"validate_assignment": True, "frozen": True}
+
     def __str__(self) -> str:
         """Return string representation of tag."""
         return self.name
@@ -243,12 +259,15 @@ class VersionInfo:
         timestamp: When the commit was created.
         author: Who created the commit (defaults to "znote-mcp").
     """
+
     commit_hash: str
     timestamp: datetime.datetime
     author: str = "znote-mcp"
 
     @classmethod
-    def from_git_commit(cls, commit_hash: str, timestamp: datetime.datetime) -> "VersionInfo":
+    def from_git_commit(
+        cls, commit_hash: str, timestamp: datetime.datetime
+    ) -> "VersionInfo":
         """Create a VersionInfo from git commit data.
 
         Args:
@@ -275,6 +294,7 @@ class ConflictResult:
         actual_version: The actual current version of the note.
         message: Human-readable description of the conflict.
     """
+
     status: Literal["conflict"]
     note_id: str
     expected_version: str
@@ -307,6 +327,7 @@ class VersionedNote:
         note: The note data.
         version: Git version metadata for this note.
     """
+
     note: "Note"
     version: VersionInfo
 
@@ -328,33 +349,37 @@ class VersionedNote:
 
 class Note(BaseModel):
     """A Zettelkasten note."""
+
     id: str = Field(default_factory=generate_id, description="Unique ID of the note")
     title: str = Field(..., description="Title of the note")
     content: str = Field(..., description="Content of the note")
     note_type: NoteType = Field(default=NoteType.PERMANENT, description="Type of note")
-    note_purpose: NotePurpose = Field(default=NotePurpose.GENERAL, description="Workflow purpose (research, planning, bugfixing)")
-    project: str = Field(default="general", description="Project this note belongs to (use '/' for sub-projects)")
-    plan_id: Optional[str] = Field(default=None, description="Groups related planning notes (auto-generated for planning purpose)")
+    note_purpose: NotePurpose = Field(
+        default=NotePurpose.GENERAL,
+        description="Workflow purpose (research, planning, bugfixing)",
+    )
+    project: str = Field(
+        default="general",
+        description="Project this note belongs to (use '/' for sub-projects)",
+    )
+    plan_id: Optional[str] = Field(
+        default=None,
+        description="Groups related planning notes (auto-generated for planning purpose)",
+    )
     tags: List[Tag] = Field(default_factory=list, description="Tags for categorization")
     links: List[Link] = Field(default_factory=list, description="Links to other notes")
     created_at: datetime.datetime = Field(
-        default_factory=utc_now,
-        description="When the note was created (UTC)"
+        default_factory=utc_now, description="When the note was created (UTC)"
     )
     updated_at: datetime.datetime = Field(
-        default_factory=utc_now,
-        description="When the note was last updated (UTC)"
+        default_factory=utc_now, description="When the note was last updated (UTC)"
     )
     metadata: Dict[str, Any] = Field(
-        default_factory=dict,
-        description="Additional metadata for the note"
+        default_factory=dict, description="Additional metadata for the note"
     )
-    
-    model_config = {
-        "validate_assignment": True,
-        "extra": "forbid"
-    }
-    
+
+    model_config = {"validate_assignment": True, "extra": "forbid"}
+
     @field_validator("id")
     @classmethod
     def validate_id(cls, v: str) -> str:
@@ -387,7 +412,7 @@ class Note(BaseModel):
         if not v.strip():
             raise ValueError("Title cannot be empty")
         return v
-    
+
     def add_tag(self, tag: Union[str, Tag]) -> None:
         """Add a tag to the note."""
         if isinstance(tag, str):
@@ -397,15 +422,19 @@ class Note(BaseModel):
         if tag.name not in tag_names:
             self.tags.append(tag)
             self.updated_at = utc_now()
-    
+
     def remove_tag(self, tag: Union[str, Tag]) -> None:
         """Remove a tag from the note."""
         tag_name = tag.name if isinstance(tag, Tag) else tag
         self.tags = [t for t in self.tags if t.name != tag_name]
         self.updated_at = utc_now()
-    
-    def add_link(self, target_id: str, link_type: LinkType = LinkType.REFERENCE, 
-                description: Optional[str] = None) -> None:
+
+    def add_link(
+        self,
+        target_id: str,
+        link_type: LinkType = LinkType.REFERENCE,
+        description: Optional[str] = None,
+    ) -> None:
         """Add a link to another note."""
         # Check if link already exists
         for link in self.links:
@@ -415,45 +444,49 @@ class Note(BaseModel):
             source_id=self.id,
             target_id=target_id,
             link_type=link_type,
-            description=description
+            description=description,
         )
         self.links.append(link)
         self.updated_at = utc_now()
-    
+
     def remove_link(self, target_id: str, link_type: Optional[LinkType] = None) -> None:
         """Remove a link to another note."""
         if link_type:
             self.links = [
-                link for link in self.links 
+                link
+                for link in self.links
                 if not (link.target_id == target_id and link.link_type == link_type)
             ]
         else:
             self.links = [link for link in self.links if link.target_id != target_id]
         self.updated_at = utc_now()
-    
+
     def get_linked_note_ids(self) -> Set[str]:
         """Get all note IDs that this note links to."""
         return {link.target_id for link in self.links}
-    
+
     def to_markdown(self) -> str:
         """Convert the note to a markdown formatted string."""
         from znote_mcp.config import config
+
         # Format tags
         tags_str = ", ".join([tag.name for tag in self.tags])
         # Format links
         links_str = ""
         if self.links:
-            links_str = "\n".join([
-                f"- [{link.link_type}] [[{link.target_id}]] {link.description or ''}"
-                for link in self.links
-            ])
+            links_str = "\n".join(
+                [
+                    f"- [{link.link_type}] [[{link.target_id}]] {link.description or ''}"
+                    for link in self.links
+                ]
+            )
         # Apply template
         return config.default_note_template.format(
             title=self.title,
             content=self.content,
             created_at=self.created_at.isoformat(),
             tags=tags_str,
-            links=links_str
+            links=links_str,
         )
 
 
@@ -463,24 +496,26 @@ class Project(BaseModel):
     Projects organize notes and can be hierarchical (sub-projects).
     Project IDs use '/' for hierarchy: "monorepo/frontend".
     """
+
     id: str = Field(..., description="Unique project ID (use '/' for sub-projects)")
     name: str = Field(..., description="Human-readable display name")
-    description: Optional[str] = Field(default=None, description="Brief project description for LLM context")
-    parent_id: Optional[str] = Field(default=None, description="Parent project ID for sub-projects")
-    path: Optional[str] = Field(default=None, description="Filesystem path associated with project")
+    description: Optional[str] = Field(
+        default=None, description="Brief project description for LLM context"
+    )
+    parent_id: Optional[str] = Field(
+        default=None, description="Parent project ID for sub-projects"
+    )
+    path: Optional[str] = Field(
+        default=None, description="Filesystem path associated with project"
+    )
     created_at: datetime.datetime = Field(
-        default_factory=utc_now,
-        description="When the project was created (UTC)"
+        default_factory=utc_now, description="When the project was created (UTC)"
     )
     metadata: Dict[str, Any] = Field(
-        default_factory=dict,
-        description="Additional metadata (git remote, etc.)"
+        default_factory=dict, description="Additional metadata (git remote, etc.)"
     )
 
-    model_config = {
-        "validate_assignment": True,
-        "extra": "forbid"
-    }
+    model_config = {"validate_assignment": True, "extra": "forbid"}
 
     @field_validator("id")
     @classmethod

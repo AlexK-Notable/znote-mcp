@@ -3,6 +3,7 @@
 Provides subprocess-based git operations for portability and
 version checking with conflict detection for optimistic concurrency control.
 """
+
 import logging
 import subprocess
 from dataclasses import dataclass
@@ -28,7 +29,7 @@ class GitError(Exception):
         message: str,
         command: Optional[List[str]] = None,
         returncode: Optional[int] = None,
-        stderr: Optional[str] = None
+        stderr: Optional[str] = None,
     ):
         self.message = message
         self.command = command
@@ -60,10 +61,7 @@ class GitConflictError(GitError):
     """
 
     def __init__(
-        self,
-        note_id: str,
-        expected_version: str,
-        actual_version: Optional[str]
+        self, note_id: str, expected_version: str, actual_version: Optional[str]
     ):
         self.note_id = note_id
         self.expected_version = expected_version
@@ -85,6 +83,7 @@ class GitVersion:
         commit_hash: Full SHA-1 hash of the commit
         timestamp: UTC datetime of the commit
     """
+
     commit_hash: str
     timestamp: datetime
 
@@ -123,7 +122,7 @@ class GitWrapper:
         check: bool = True,
         capture_output: bool = True,
         retries: int = 3,
-        retry_delay: float = 0.1
+        retry_delay: float = 0.1,
     ) -> subprocess.CompletedProcess:
         """Run a git command via subprocess with retry for lock contention.
 
@@ -152,7 +151,7 @@ class GitWrapper:
                     check=False,
                     capture_output=capture_output,
                     text=True,
-                    timeout=30  # Prevent hanging
+                    timeout=30,  # Prevent hanging
                 )
 
                 # Check for index.lock contention (can retry)
@@ -169,15 +168,14 @@ class GitWrapper:
                         message=f"Git command failed: {' '.join(args)}",
                         command=cmd,
                         returncode=result.returncode,
-                        stderr=result.stderr.strip() if result.stderr else None
+                        stderr=result.stderr.strip() if result.stderr else None,
                     )
 
                 return result
 
             except subprocess.TimeoutExpired as e:
                 last_error = GitError(
-                    message=f"Git command timed out: {' '.join(args)}",
-                    command=cmd
+                    message=f"Git command timed out: {' '.join(args)}", command=cmd
                 )
                 if attempt < retries:
                     time.sleep(retry_delay * (attempt + 1))
@@ -185,8 +183,7 @@ class GitWrapper:
                 raise last_error from e
             except FileNotFoundError:
                 raise GitError(
-                    message="Git is not installed or not in PATH",
-                    command=cmd
+                    message="Git is not installed or not in PATH", command=cmd
                 )
 
         # Should not reach here, but just in case
@@ -234,8 +231,7 @@ class GitWrapper:
 
         # Get last commit for this file: format is "full_hash unix_timestamp"
         result = self._run_git(
-            ["log", "-1", "--format=%H %ct", "--", str(rel_path)],
-            check=False
+            ["log", "-1", "--format=%H %ct", "--", str(rel_path)], check=False
         )
 
         if result.returncode != 0 or not result.stdout.strip():
@@ -249,10 +245,7 @@ class GitWrapper:
         Returns:
             GitVersion for HEAD, or None if no commits exist
         """
-        result = self._run_git(
-            ["log", "-1", "--format=%H %ct"],
-            check=False
-        )
+        result = self._run_git(["log", "-1", "--format=%H %ct"], check=False)
 
         if result.returncode != 0 or not result.stdout.strip():
             return None
@@ -276,9 +269,7 @@ class GitWrapper:
         return GitVersion(commit_hash=commit_hash, timestamp=timestamp)
 
     def check_version_match(
-        self,
-        file_path: Path,
-        expected_version: str
+        self, file_path: Path, expected_version: str
     ) -> Tuple[bool, Optional[str]]:
         """Compare expected version with current file version.
 
@@ -306,10 +297,7 @@ class GitWrapper:
         return matches, actual_version
 
     def commit_file(
-        self,
-        file_path: Path,
-        message: str,
-        expected_version: Optional[str] = None
+        self, file_path: Path, message: str, expected_version: Optional[str] = None
     ) -> GitVersion:
         """Stage and commit a file with optional version checking.
 
@@ -341,7 +329,7 @@ class GitWrapper:
                 raise GitConflictError(
                     note_id=note_id,
                     expected_version=expected_version,
-                    actual_version=actual
+                    actual_version=actual,
                 )
 
         # Stage the file
@@ -355,12 +343,15 @@ class GitWrapper:
             if current:
                 if expected_version:
                     # Version changed since our check - this is a conflict
-                    if current.commit_hash[:len(expected_version)] != expected_version[:len(expected_version)]:
+                    if (
+                        current.commit_hash[: len(expected_version)]
+                        != expected_version[: len(expected_version)]
+                    ):
                         note_id = file_path.stem
                         raise GitConflictError(
                             note_id=note_id,
                             expected_version=expected_version,
-                            actual_version=current.commit_hash
+                            actual_version=current.commit_hash,
                         )
                 return current
             # File exists but has no commits - create initial commit
@@ -369,7 +360,7 @@ class GitWrapper:
         # Try to commit - may fail if another process commits first
         commit_result = self._run_git(
             ["commit", "-m", message, "--", str(rel_path)],
-            check=False  # Don't raise on error, we'll handle it
+            check=False,  # Don't raise on error, we'll handle it
         )
 
         if commit_result.returncode != 0:
@@ -379,12 +370,15 @@ class GitWrapper:
             if current:
                 if expected_version:
                     # Check if version changed (conflict from another process)
-                    if current.commit_hash[:len(expected_version)] != expected_version[:len(expected_version)]:
+                    if (
+                        current.commit_hash[: len(expected_version)]
+                        != expected_version[: len(expected_version)]
+                    ):
                         note_id = file_path.stem
                         raise GitConflictError(
                             note_id=note_id,
                             expected_version=expected_version,
-                            actual_version=current.commit_hash
+                            actual_version=current.commit_hash,
                         )
                 # Version didn't change or no expected_version - return current
                 return current
@@ -394,7 +388,7 @@ class GitWrapper:
                 message=f"Git commit failed: {commit_result.stderr or 'unknown error'}",
                 command=["commit", "-m", message, "--", str(rel_path)],
                 returncode=commit_result.returncode,
-                stderr=commit_result.stderr
+                stderr=commit_result.stderr,
             )
 
         # Get and return the new version
@@ -406,10 +400,7 @@ class GitWrapper:
         return new_version
 
     def delete_file(
-        self,
-        file_path: Path,
-        message: str,
-        expected_version: Optional[str] = None
+        self, file_path: Path, message: str, expected_version: Optional[str] = None
     ) -> GitVersion:
         """Remove a file and commit the deletion.
 
@@ -439,7 +430,7 @@ class GitWrapper:
                 raise GitConflictError(
                     note_id=note_id,
                     expected_version=expected_version,
-                    actual_version=actual
+                    actual_version=actual,
                 )
 
         # Remove file from git (also deletes from working tree)
@@ -456,11 +447,7 @@ class GitWrapper:
         logger.debug(f"Deleted {rel_path}: {head_version.short_hash}")
         return head_version
 
-    def get_history(
-        self,
-        file_path: Path,
-        limit: int = 10
-    ) -> List[GitVersion]:
+    def get_history(self, file_path: Path, limit: int = 10) -> List[GitVersion]:
         """Get commit history for a file.
 
         Args:
@@ -478,8 +465,7 @@ class GitWrapper:
             return []
 
         result = self._run_git(
-            ["log", f"-{limit}", "--format=%H %ct", "--", str(rel_path)],
-            check=False
+            ["log", f"-{limit}", "--format=%H %ct", "--", str(rel_path)], check=False
         )
 
         if result.returncode != 0 or not result.stdout.strip():

@@ -10,22 +10,23 @@ Debug with persistent data:
     ZETTELKASTEN_TEST_PERSIST=1 uv run pytest tests/test_e2e.py -v
     # Then inspect: tests/fixtures/notes/ and tests/fixtures/database/
 """
+
 import json
-import pytest
 from pathlib import Path
 
-from znote_mcp.models.schema import LinkType, NoteType
+import pytest
 
 # Import fixtures from conftest_e2e
 from tests.conftest_e2e import (
-    isolated_env,
-    e2e_zettel_service,
-    e2e_search_service,
-    e2e_mcp_server,
-    e2e_session_id,
-    get_mcp_tool,
     IsolatedTestEnvironment,
+    e2e_mcp_server,
+    e2e_search_service,
+    e2e_session_id,
+    e2e_zettel_service,
+    get_mcp_tool,
+    isolated_env,
 )
+from znote_mcp.models.schema import LinkType, NoteType
 
 
 class TestE2EIsolation:
@@ -36,13 +37,21 @@ class TestE2EIsolation:
         info = isolated_env.get_info()
 
         # Paths should be within tests/fixtures or temp
-        assert "fixtures" in str(isolated_env.notes_dir) or "/tmp" in str(isolated_env.notes_dir)
-        assert "fixtures" in str(isolated_env.database_path) or "/tmp" in str(isolated_env.database_path)
+        assert "fixtures" in str(isolated_env.notes_dir) or "/tmp" in str(
+            isolated_env.notes_dir
+        )
+        assert "fixtures" in str(isolated_env.database_path) or "/tmp" in str(
+            isolated_env.database_path
+        )
 
         # Should NOT be pointing to common production paths
         assert ".zettelkasten" not in str(isolated_env.notes_dir)
         assert "~/notes" not in str(isolated_env.notes_dir)
-        assert "/home" not in str(isolated_env.notes_dir) or "fixtures" in str(isolated_env.notes_dir) or "/tmp" in str(isolated_env.notes_dir)
+        assert (
+            "/home" not in str(isolated_env.notes_dir)
+            or "fixtures" in str(isolated_env.notes_dir)
+            or "/tmp" in str(isolated_env.notes_dir)
+        )
 
     def test_directories_created(self, isolated_env: IsolatedTestEnvironment):
         """Verify test directories are created."""
@@ -62,7 +71,7 @@ class TestE2ENoteCRUD:
             content="This is an end-to-end test note.",
             note_type=NoteType.PERMANENT,
             project="e2e-testing",
-            tags=["e2e", "test"]
+            tags=["e2e", "test"],
         )
 
         assert note.id is not None
@@ -82,16 +91,12 @@ class TestE2ENoteCRUD:
         """Test note update flow."""
         # Create
         note = e2e_zettel_service.create_note(
-            title="Update Test",
-            content="Original content",
-            note_type=NoteType.FLEETING
+            title="Update Test", content="Original content", note_type=NoteType.FLEETING
         )
 
         # Update
         updated = e2e_zettel_service.update_note(
-            note_id=note.id,
-            title="Updated Title",
-            content="Updated content"
+            note_id=note.id, title="Updated Title", content="Updated content"
         )
 
         assert updated.title == "Updated Title"
@@ -104,8 +109,7 @@ class TestE2ENoteCRUD:
         """Test note deletion flow."""
         # Create
         note = e2e_zettel_service.create_note(
-            title="Delete Test",
-            content="To be deleted"
+            title="Delete Test", content="To be deleted"
         )
         note_id = note.id
 
@@ -129,12 +133,12 @@ class TestE2ELinks:
         source = e2e_zettel_service.create_note(
             title="Source Note",
             content="This note will link to another",
-            note_type=NoteType.PERMANENT
+            note_type=NoteType.PERMANENT,
         )
         target = e2e_zettel_service.create_note(
             title="Target Note",
             content="This note will be linked to",
-            note_type=NoteType.PERMANENT
+            note_type=NoteType.PERMANENT,
         )
 
         # Create bidirectional link
@@ -143,7 +147,7 @@ class TestE2ELinks:
             target_id=target.id,
             link_type=LinkType.EXTENDS,
             description="Source extends Target",
-            bidirectional=True
+            bidirectional=True,
         )
 
         # Verify links exist
@@ -166,7 +170,7 @@ class TestE2EMCPTools:
             content="Created via MCP tool",
             note_type="permanent",
             project="mcp-testing",
-            tags="mcp,tool,test"
+            tags="mcp,tool,test",
         )
 
         assert "Note created successfully" in result
@@ -179,7 +183,7 @@ class TestE2EMCPTools:
             e2e_zettel_service.create_note(
                 title=f"List Test Note {i}",
                 content=f"Note {i} for list testing",
-                project="list-testing"
+                project="list-testing",
             )
 
         list_notes = get_mcp_tool(e2e_mcp_server, "zk_list_notes")
@@ -197,17 +201,13 @@ class TestE2EMCPTools:
         """Test the consolidated zk_find_related MCP tool."""
         # Create linked notes
         source = e2e_zettel_service.create_note(
-            title="Related Source",
-            content="Source for related test"
+            title="Related Source", content="Source for related test"
         )
         target = e2e_zettel_service.create_note(
-            title="Related Target",
-            content="Target for related test"
+            title="Related Target", content="Target for related test"
         )
         e2e_zettel_service.create_link(
-            source_id=source.id,
-            target_id=target.id,
-            link_type=LinkType.REFERENCE
+            source_id=source.id, target_id=target.id, link_type=LinkType.REFERENCE
         )
 
         find_related = get_mcp_tool(e2e_mcp_server, "zk_find_related")
@@ -220,9 +220,7 @@ class TestE2EMCPTools:
         """Test the consolidated zk_status MCP tool."""
         # Create some data
         e2e_zettel_service.create_note(
-            title="Status Test Note",
-            content="For status testing",
-            tags=["status-test"]
+            title="Status Test Note", content="For status testing", tags=["status-test"]
         )
 
         status = get_mcp_tool(e2e_mcp_server, "zk_status")
@@ -242,8 +240,7 @@ class TestE2EMCPTools:
         """Test the consolidated zk_system MCP tool."""
         # Create a note first
         e2e_zettel_service.create_note(
-            title="System Test Note",
-            content="For system testing"
+            title="System Test Note", content="For system testing"
         )
 
         system = get_mcp_tool(e2e_mcp_server, "zk_system")
@@ -262,11 +259,25 @@ class TestE2EMCPTools:
         bulk_create = get_mcp_tool(e2e_mcp_server, "zk_bulk_create_notes")
 
         # Bulk create notes
-        notes_json = json.dumps([
-            {"title": "Bulk Note 1", "content": "First bulk note", "tags": ["bulk"]},
-            {"title": "Bulk Note 2", "content": "Second bulk note", "tags": ["bulk"]},
-            {"title": "Bulk Note 3", "content": "Third bulk note", "tags": ["bulk"]}
-        ])
+        notes_json = json.dumps(
+            [
+                {
+                    "title": "Bulk Note 1",
+                    "content": "First bulk note",
+                    "tags": ["bulk"],
+                },
+                {
+                    "title": "Bulk Note 2",
+                    "content": "Second bulk note",
+                    "tags": ["bulk"],
+                },
+                {
+                    "title": "Bulk Note 3",
+                    "content": "Third bulk note",
+                    "tags": ["bulk"],
+                },
+            ]
+        )
 
         result = bulk_create(notes=notes_json)
         assert "Successfully created 3 notes" in result
@@ -286,12 +297,12 @@ class TestE2EObsidianSync:
         e2e_zettel_service.create_note(
             title="Obsidian Test Note 1",
             content="Note for Obsidian sync",
-            project="project-a"
+            project="project-a",
         )
         e2e_zettel_service.create_note(
             title="Obsidian Test Note 2",
             content="Another note for sync",
-            project="project-b"
+            project="project-b",
         )
 
         system = get_mcp_tool(e2e_mcp_server, "zk_system")
@@ -313,11 +324,11 @@ class TestE2ESearch:
         # Create searchable notes
         e2e_zettel_service.create_note(
             title="Python Programming Guide",
-            content="This note covers Python async await patterns and coroutines."
+            content="This note covers Python async await patterns and coroutines.",
         )
         e2e_zettel_service.create_note(
             title="JavaScript Overview",
-            content="JavaScript is a versatile programming language."
+            content="JavaScript is a versatile programming language.",
         )
 
         fts_search = get_mcp_tool(e2e_mcp_server, "zk_fts_search")
@@ -332,14 +343,10 @@ class TestE2ESearch:
         """Test search with tag and type filters."""
         # Create notes with different tags
         e2e_zettel_service.create_note(
-            title="Tagged Note A",
-            content="Content A",
-            tags=["alpha", "test"]
+            title="Tagged Note A", content="Content A", tags=["alpha", "test"]
         )
         e2e_zettel_service.create_note(
-            title="Tagged Note B",
-            content="Content B",
-            tags=["beta", "test"]
+            title="Tagged Note B", content="Content B", tags=["beta", "test"]
         )
 
         search = get_mcp_tool(e2e_mcp_server, "zk_search_notes")
@@ -359,8 +366,7 @@ class TestE2EDataIntegrity:
         # Create notes
         for i in range(5):
             e2e_zettel_service.create_note(
-                title=f"Rebuild Test {i}",
-                content=f"Content for rebuild test {i}"
+                title=f"Rebuild Test {i}", content=f"Content for rebuild test {i}"
             )
 
         system = get_mcp_tool(e2e_mcp_server, "zk_system")
@@ -377,8 +383,7 @@ class TestE2EDataIntegrity:
         """Test database health check functionality."""
         # Create some data
         e2e_zettel_service.create_note(
-            title="Health Check Note",
-            content="For health check testing"
+            title="Health Check Note", content="For health check testing"
         )
 
         # Check health via service

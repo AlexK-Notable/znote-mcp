@@ -2,12 +2,14 @@
 """Integration tests for the Zettelkasten MCP system."""
 import tempfile
 from pathlib import Path
+
 import pytest
+
 from znote_mcp.config import config
 from znote_mcp.models.schema import LinkType, NoteType
 from znote_mcp.server.mcp_server import ZettelkastenMcpServer
-from znote_mcp.services.zettel_service import ZettelService
 from znote_mcp.services.search_service import SearchService
+from znote_mcp.services.zettel_service import ZettelService
 
 
 def _get_tool(server: ZettelkastenMcpServer, tool_name: str):
@@ -17,84 +19,83 @@ def _get_tool(server: ZettelkastenMcpServer, tool_name: str):
         raise ValueError(f"Tool '{tool_name}' not found")
     return tool.fn
 
+
 class TestIntegration:
     """Integration tests for the entire Zettelkasten MCP system."""
+
     @pytest.fixture(autouse=True)
     def setup_test_environment(self):
         """Set up test environment using temporary directories."""
         # Create temporary directories for test
         self.temp_notes_dir = tempfile.TemporaryDirectory()
         self.temp_db_dir = tempfile.TemporaryDirectory()
-        
+
         # Configure paths
         self.notes_dir = Path(self.temp_notes_dir.name)
         self.database_path = Path(self.temp_db_dir.name) / "test_zettelkasten.db"
-        
+
         # Save original config values
         self.original_notes_dir = config.notes_dir
         self.original_database_path = config.database_path
-        
+
         # Update config for tests
         config.notes_dir = self.notes_dir
         config.database_path = self.database_path
-        
+
         # Create services
         self.zettel_service = ZettelService()
-        self.zettel_service.initialize()
+
         self.search_service = SearchService(self.zettel_service)
-        
+
         # Create server
         self.server = ZettelkastenMcpServer()
-        
+
         yield
-        
+
         # Restore original config
         config.notes_dir = self.original_notes_dir
         config.database_path = self.original_database_path
-        
+
         # Clean up temp directories
         self.temp_notes_dir.cleanup()
         self.temp_db_dir.cleanup()
-    
+
     def test_create_note_flow(self):
         """Test the complete flow of creating and retrieving a note."""
         # Use the zettel_service directly to create a note
         title = "Integration Test Note"
         content = "This is a test of the complete note creation flow."
         tags = ["integration", "test", "flow"]
-        
+
         # Create the note
         note = self.zettel_service.create_note(
-            title=title,
-            content=content,
-            note_type=NoteType.PERMANENT,
-            tags=tags
+            title=title, content=content, note_type=NoteType.PERMANENT, tags=tags
         )
         assert note.id is not None
-        
+
         # Retrieve the note
         retrieved_note = self.zettel_service.get_note(note.id)
         assert retrieved_note is not None
         assert retrieved_note.title == title
-        
+
         # Note content includes the title as a markdown header - account for this
         expected_content = f"# {title}\n\n{content}"
         assert retrieved_note.content.strip() == expected_content.strip()
-        
+
         # Check tags
         for tag in tags:
             assert tag in [t.name for t in retrieved_note.tags]
-        
+
         # Verify the note exists on disk
         note_file = self.notes_dir / f"{note.id}.md"
         assert note_file.exists(), "Note file was not created on disk"
-        
+
         # Verify file content
         with open(note_file, "r") as f:
             file_content = f.read()
             assert title in file_content
             assert content in file_content
-    
+
     def test_knowledge_graph_flow(self):
         """Test creating a small knowledge graph with links and semantic relationships."""
         # Create several notes to form a knowledge graph
@@ -102,30 +103,30 @@ class TestIntegration:
             title="Knowledge Graph Hub",
             content="This is the central hub for our test knowledge graph.",
             note_type=NoteType.HUB,
-            tags=["knowledge-graph", "hub", "integration-test"]
+            tags=["knowledge-graph", "hub", "integration-test"],
         )
-        
+
         concept1 = self.zettel_service.create_note(
             title="Concept One",
             content="This is the first concept in our knowledge graph.",
             note_type=NoteType.PERMANENT,
-            tags=["knowledge-graph", "concept", "integration-test"]
+            tags=["knowledge-graph", "concept", "integration-test"],
         )
-        
+
         concept2 = self.zettel_service.create_note(
             title="Concept Two",
             content="This is the second concept, which extends the first.",
             note_type=NoteType.PERMANENT,
-            tags=["knowledge-graph", "concept", "integration-test"]
+            tags=["knowledge-graph", "concept", "integration-test"],
         )
-        
+
         critique = self.zettel_service.create_note(
             title="Critique of Concepts",
             content="This note critiques and questions the concepts.",
             note_type=NoteType.PERMANENT,
-            tags=["knowledge-graph", "critique", "integration-test"]
+            tags=["knowledge-graph", "critique", "integration-test"],
         )
-        
+
         # Create links with different semantic meanings
         # Use different link types to avoid uniqueness constraint issues
         self.zettel_service.create_link(
@@ -133,49 +134,49 @@ class TestIntegration:
             target_id=concept1.id,
             link_type=LinkType.REFERENCE,
             description="Main concept",
-            bidirectional=True
+            bidirectional=True,
         )
-        
+
         self.zettel_service.create_link(
             source_id=hub_note.id,
             target_id=concept2.id,
             link_type=LinkType.EXTENDS,
             description="Secondary concept",
-            bidirectional=True
+            bidirectional=True,
         )
-        
+
         self.zettel_service.create_link(
             source_id=hub_note.id,
             target_id=critique.id,
             link_type=LinkType.SUPPORTS,
             description="Critical perspective",
-            bidirectional=True
+            bidirectional=True,
         )
-        
+
         self.zettel_service.create_link(
             source_id=concept2.id,
             target_id=concept1.id,
             link_type=LinkType.REFINES,
             description="Builds upon first concept",
-            bidirectional=True
+            bidirectional=True,
         )
-        
+
         self.zettel_service.create_link(
             source_id=critique.id,
             target_id=concept1.id,
             link_type=LinkType.QUESTIONS,
             description="Questions assumptions",
-            bidirectional=True
+            bidirectional=True,
         )
-        
+
         self.zettel_service.create_link(
             source_id=critique.id,
             target_id=concept2.id,
             link_type=LinkType.CONTRADICTS,
             description="Contradicts conclusions",
-            bidirectional=True
+            bidirectional=True,
         )
-        
+
         # Get all notes linked to the hub
         hub_links = self.zettel_service.get_linked_notes(hub_note.id, "outgoing")
         assert len(hub_links) == 3
@@ -183,56 +184,59 @@ class TestIntegration:
         assert concept1.id in hub_links_ids
         assert concept2.id in hub_links_ids
         assert critique.id in hub_links_ids
-        
+
         # Get notes extended by concept2
         concept2_links = self.zettel_service.get_linked_notes(concept2.id, "outgoing")
         assert len(concept2_links) >= 1  # At least one link
-        
+
         # Verify links by tag
         kg_notes = self.zettel_service.get_notes_by_tag("knowledge-graph")
         assert len(kg_notes) == 4  # Should find all 4 notes
-    
+
     def test_rebuild_index_flow(self):
         """Test the rebuild index functionality with direct file modifications."""
         # Create a note through the service
         note1 = self.zettel_service.create_note(
             title="Original Note",
             content="This is the original content.",
-            tags=["rebuild-test"]
+            tags=["rebuild-test"],
         )
-        
+
         # Manually modify the file to simulate external editing
         note_file = self.notes_dir / f"{note1.id}.md"
         assert note_file.exists(), "Note file was not created on disk"
-        
+
         # Read the current file content
         with open(note_file, "r") as f:
             file_content = f.read()
-        
+
         # Modify the file content directly, ensuring we replace the content part only
         # The content in the file will include the title header, so we need to search
         # for the entire content structure
         modified_content = file_content.replace(
             "This is the original content.",
-            "This content was manually edited outside the system."
+            "This content was manually edited outside the system.",
         )
-        
+
         # Write the modified content back
         with open(note_file, "w") as f:
             f.write(modified_content)
-        
+
         # At this point, the file has been modified but the database hasn't been updated
-        
+
         # Verify the database still has old content by reading through the repository
         modified_file_content = self.zettel_service.get_note(note1.id).content
         assert "manually edited" in modified_file_content
-        
+
         # Rebuild the index
         self.zettel_service.rebuild_index()
-        
+
         # Verify the note now has the updated content
         note1_after = self.zettel_service.get_note(note1.id)
-        assert "This content was manually edited outside the system." in note1_after.content
+        assert (
+            "This content was manually edited outside the system."
+            in note1_after.content
+        )
 
     def test_full_crud_lifecycle(self):
         """Test complete Create, Read, Update, Delete lifecycle."""
@@ -241,7 +245,7 @@ class TestIntegration:
             title="CRUD Test Note",
             content="Initial content for CRUD test.",
             note_type=NoteType.PERMANENT,
-            tags=["crud", "test"]
+            tags=["crud", "test"],
         )
         note_id = note.id
         assert note_id is not None
@@ -257,7 +261,7 @@ class TestIntegration:
             note_id=note_id,
             title="Updated CRUD Test Note",
             content="# Updated CRUD Test Note\n\nUpdated content for CRUD test.",
-            tags=["crud", "test", "updated"]
+            tags=["crud", "test", "updated"],
         )
         assert updated.title == "Updated CRUD Test Note"
         assert "updated" in [t.name for t in updated.tags]
@@ -285,28 +289,28 @@ class TestIntegration:
             title="Python Programming Guide",
             content="A comprehensive guide to Python programming.",
             note_type=NoteType.PERMANENT,
-            tags=["programming", "python", "guide"]
+            tags=["programming", "python", "guide"],
         )
 
         note2 = self.zettel_service.create_note(
             title="JavaScript Basics",
             content="Introduction to JavaScript programming language.",
             note_type=NoteType.LITERATURE,
-            tags=["programming", "javascript", "basics"]
+            tags=["programming", "javascript", "basics"],
         )
 
         note3 = self.zettel_service.create_note(
             title="Python Data Science",
             content="Using Python for data science applications.",
             note_type=NoteType.PERMANENT,
-            tags=["programming", "python", "data-science"]
+            tags=["programming", "python", "data-science"],
         )
 
         note4 = self.zettel_service.create_note(
             title="Quick Python Tip",
             content="A fleeting thought about Python.",
             note_type=NoteType.FLEETING,
-            tags=["python", "tip"]
+            tags=["python", "tip"],
         )
 
         # Search by content
@@ -325,9 +329,7 @@ class TestIntegration:
 
         # Combined search with all filters
         combined_results = self.search_service.search_combined(
-            text="Python",
-            tags=["programming"],
-            note_type=NoteType.PERMANENT
+            text="Python", tags=["programming"], note_type=NoteType.PERMANENT
         )
         # Should find notes that match all criteria
         result_ids = [r.note.id for r in combined_results]
@@ -340,15 +342,11 @@ class TestIntegration:
         """Test that bidirectional links are properly created and retrievable."""
         # Create two notes
         note_a = self.zettel_service.create_note(
-            title="Note A",
-            content="This is Note A.",
-            tags=["bidirectional-test"]
+            title="Note A", content="This is Note A.", tags=["bidirectional-test"]
         )
 
         note_b = self.zettel_service.create_note(
-            title="Note B",
-            content="This is Note B.",
-            tags=["bidirectional-test"]
+            title="Note B", content="This is Note B.", tags=["bidirectional-test"]
         )
 
         # Create bidirectional link
@@ -357,7 +355,7 @@ class TestIntegration:
             target_id=note_b.id,
             link_type=LinkType.EXTENDS,
             description="A extends B",
-            bidirectional=True
+            bidirectional=True,
         )
 
         # Verify forward link (A -> B)
@@ -396,7 +394,7 @@ class TestIntegration:
                     content="This note should be mirrored to Obsidian.",
                     note_type=NoteType.PERMANENT,
                     project="test-project",
-                    tags=["obsidian", "mirror"]
+                    tags=["obsidian", "mirror"],
                 )
 
                 # Verify the note was mirrored (filename includes ID suffix for uniqueness)
@@ -405,8 +403,12 @@ class TestIntegration:
                 purpose_dir = obsidian_path / "test-project" / "general"
                 id_suffix = note.id[-8:]
                 # Glob with wildcard for the date prefix (e.g. "2026-02-10_")
-                matching_files = list(purpose_dir.glob(f"*Obsidian-Test-Note_{id_suffix}.md"))
-                assert len(matching_files) == 1, f"Expected 1 mirror file, found {len(matching_files)} in {purpose_dir}"
+                matching_files = list(
+                    purpose_dir.glob(f"*Obsidian-Test-Note_{id_suffix}.md")
+                )
+                assert (
+                    len(matching_files) == 1
+                ), f"Expected 1 mirror file, found {len(matching_files)} in {purpose_dir}"
                 expected_file = matching_files[0]
 
                 # Verify content
@@ -419,13 +421,15 @@ class TestIntegration:
                 note2 = self.zettel_service.create_note(
                     title="Second Obsidian Note",
                     content="Another note for Obsidian.",
-                    project="another-project"
+                    project="another-project",
                 )
 
                 # Verify second note mirrored with ID suffix (in purpose subdir)
                 purpose_dir2 = obsidian_path / "another-project" / "general"
                 id_suffix2 = note2.id[-8:]
-                matching_files2 = list(purpose_dir2.glob(f"*Second-Obsidian-Note_{id_suffix2}.md"))
+                matching_files2 = list(
+                    purpose_dir2.glob(f"*Second-Obsidian-Note_{id_suffix2}.md")
+                )
                 assert len(matching_files2) == 1
 
                 # Test bulk sync
@@ -452,13 +456,13 @@ class TestIntegration:
                 note1 = self.zettel_service.create_note(
                     title="Hello: World",  # Sanitizes to "Hello-World"
                     content="First note with colon in title.",
-                    project="collision-test"
+                    project="collision-test",
                 )
 
                 note2 = self.zettel_service.create_note(
                     title="Hello; World",  # Also sanitizes to "Hello-World"
                     content="Second note with semicolon in title.",
-                    project="collision-test"
+                    project="collision-test",
                 )
 
                 # Both notes should have unique files in the same purpose directory
@@ -472,11 +476,17 @@ class TestIntegration:
                 files1 = list(purpose_dir.glob(f"*_{id_suffix1}.md"))
                 files2 = list(purpose_dir.glob(f"*_{id_suffix2}.md"))
 
-                assert len(files1) == 1, f"Note 1 should have exactly 1 file, found {len(files1)}"
-                assert len(files2) == 1, f"Note 2 should have exactly 1 file, found {len(files2)}"
+                assert (
+                    len(files1) == 1
+                ), f"Note 1 should have exactly 1 file, found {len(files1)}"
+                assert (
+                    len(files2) == 1
+                ), f"Note 2 should have exactly 1 file, found {len(files2)}"
 
                 # Verify they are different files
-                assert files1[0] != files2[0], "Collision! Both notes mapped to same file"
+                assert (
+                    files1[0] != files2[0]
+                ), "Collision! Both notes mapped to same file"
 
                 # Verify content is correct in each file
                 with open(files1[0], "r") as f:
@@ -489,7 +499,9 @@ class TestIntegration:
 
                 # Verify total files (should be exactly 2)
                 all_files = list(purpose_dir.glob("*.md"))
-                assert len(all_files) == 2, f"Expected 2 files, found {len(all_files)}: {all_files}"
+                assert (
+                    len(all_files) == 2
+                ), f"Expected 2 files, found {len(all_files)}: {all_files}"
 
             finally:
                 self.zettel_service.repository.obsidian_vault_path = None
@@ -509,14 +521,14 @@ class TestIntegration:
                 target_note = self.zettel_service.create_note(
                     title="Target: Important Note",
                     content="This is the target of a link.",
-                    project="link-test"
+                    project="link-test",
                 )
 
                 # Create a source note with a link to the target
                 source_note = self.zettel_service.create_note(
                     title="Source Note",
                     content="This note links to another.",
-                    project="link-test"
+                    project="link-test",
                 )
 
                 # Create the link
@@ -524,7 +536,7 @@ class TestIntegration:
                     source_id=source_note.id,
                     target_id=target_note.id,
                     link_type="reference",
-                    description="links to target"
+                    description="links to target",
                 )
 
                 # Re-export to trigger link rewriting
@@ -534,23 +546,29 @@ class TestIntegration:
                 purpose_dir = obsidian_path / "link-test" / "general"
                 source_suffix = source_note.id[-8:]
                 source_files = list(purpose_dir.glob(f"*_{source_suffix}.md"))
-                assert len(source_files) == 1, f"Expected 1 source file, found {len(source_files)}"
+                assert (
+                    len(source_files) == 1
+                ), f"Expected 1 source file, found {len(source_files)}"
 
                 # Read the content and verify the link was rewritten
                 with open(source_files[0], "r") as f:
                     content = f.read()
 
                 # The link should NOT contain the full ID
-                assert target_note.id not in content, \
-                    f"Full ID {target_note.id} should be rewritten"
+                assert (
+                    target_note.id not in content
+                ), f"Full ID {target_note.id} should be rewritten"
 
                 # The link SHOULD contain the target's title-based format
                 # with date prefix from _build_obsidian_filename
                 target_suffix = target_note.id[-8:]
                 date_prefix = target_note.created_at.strftime("%Y-%m-%d") + "_"
-                expected_link = f"[[{date_prefix}Target-Important-Note_{target_suffix}]]"
-                assert expected_link in content, \
-                    f"Expected link {expected_link} not found in content"
+                expected_link = (
+                    f"[[{date_prefix}Target-Important-Note_{target_suffix}]]"
+                )
+                assert (
+                    expected_link in content
+                ), f"Expected link {expected_link} not found in content"
 
             finally:
                 self.zettel_service.repository.obsidian_vault_path = None
@@ -561,17 +579,15 @@ class TestIntegration:
         note1 = self.zettel_service.create_note(
             title="Alpha Note 1",
             content="First note in Alpha project.",
-            project="alpha"
+            project="alpha",
         )
         note2 = self.zettel_service.create_note(
             title="Alpha Note 2",
             content="Second note in Alpha project.",
-            project="alpha"
+            project="alpha",
         )
         note3 = self.zettel_service.create_note(
-            title="Beta Note",
-            content="Note in Beta project.",
-            project="beta"
+            title="Beta Note", content="Note in Beta project.", project="beta"
         )
         note4 = self.zettel_service.create_note(
             title="General Note",
@@ -609,7 +625,7 @@ class TestIntegration:
             note = self.zettel_service.create_note(
                 title=f"Paginated Note {i}",
                 content=f"Content for pagination test note {i}.",
-                project="pagination-test"
+                project="pagination-test",
             )
             notes.append(note)
 
@@ -659,7 +675,7 @@ class TestIntegration:
                 title=f"Searchable Note {i}",
                 content=f"Content for search pagination test note {i}.",
                 tags=["search-test"],
-                project="search-pagination"
+                project="search-pagination",
             )
             notes.append(note)
 
@@ -695,15 +711,13 @@ class TestIntegration:
         """Test finding orphaned notes and central notes."""
         # Create isolated notes (no links)
         orphan1 = self.zettel_service.create_note(
-            title="Orphan One",
-            content="This note has no links.",
-            tags=["orphan-test"]
+            title="Orphan One", content="This note has no links.", tags=["orphan-test"]
         )
 
         orphan2 = self.zettel_service.create_note(
             title="Orphan Two",
             content="This note is also isolated.",
-            tags=["orphan-test"]
+            tags=["orphan-test"],
         )
 
         # Create connected notes
@@ -711,19 +725,17 @@ class TestIntegration:
             title="Central Hub",
             content="This is a highly connected hub.",
             note_type=NoteType.HUB,
-            tags=["central-test"]
+            tags=["central-test"],
         )
 
         connected1 = self.zettel_service.create_note(
-            title="Connected One",
-            content="Connected to hub.",
-            tags=["central-test"]
+            title="Connected One", content="Connected to hub.", tags=["central-test"]
         )
 
         connected2 = self.zettel_service.create_note(
             title="Connected Two",
             content="Also connected to hub.",
-            tags=["central-test"]
+            tags=["central-test"],
         )
 
         # Create links to make hub central
@@ -773,7 +785,7 @@ class TestDatetimeComparisonRegression:
         config.database_path = self.database_path
 
         self.zettel_service = ZettelService()
-        self.zettel_service.initialize()
+
         self.search_service = SearchService(self.zettel_service)
 
         # Wire the server to use the same services as the test
@@ -972,7 +984,7 @@ class TestFtsSearchRegression:
         config.database_path = self.database_path
 
         self.zettel_service = ZettelService()
-        self.zettel_service.initialize()
+
         self.search_service = SearchService(self.zettel_service)
 
         # Wire the server to use the same services as the test

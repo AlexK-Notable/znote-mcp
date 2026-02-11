@@ -4,39 +4,21 @@ Mirrors notes to an Obsidian vault with friendly filenames, rewritten
 wikilinks, and Obsidian-specific frontmatter (aliases, cssclasses).
 Extracted from NoteRepository for cohesion.
 """
+
 import logging
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, List, Optional
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional
 
 import frontmatter
 
 from znote_mcp.models.schema import Note
+from znote_mcp.utils import sanitize_for_terminal
 
 if TYPE_CHECKING:
     import datetime
 
 logger = logging.getLogger(__name__)
-
-
-def _sanitize_for_terminal(text: str) -> str:
-    """Convert text to a terminal-friendly filename component.
-
-    Replaces spaces and special characters with hyphens/underscores.
-    Imported here to avoid circular dependency on note_repository.
-    """
-    if not text:
-        return ""
-    result = text.replace(":", " ").replace(";", " ").replace("/", " ").replace("\\", " ")
-    words = result.split()
-    sanitized_words = []
-    for word in words:
-        sanitized_word = "".join(
-            c if c.isalnum() or c in "-_" else "" for c in word
-        )
-        if sanitized_word:
-            sanitized_words.append(sanitized_word)
-    return "-".join(sanitized_words)
 
 
 class ObsidianMirror:
@@ -68,9 +50,9 @@ class ObsidianMirror:
         if not self.vault_path:
             return
 
-        safe_project = _sanitize_for_terminal(note.project) or "general"
+        safe_project = sanitize_for_terminal(note.project) or "general"
         purpose_value = note.note_purpose.value if note.note_purpose else "general"
-        safe_purpose = _sanitize_for_terminal(purpose_value) or "general"
+        safe_purpose = sanitize_for_terminal(purpose_value) or "general"
         safe_filename = self.build_filename(note.title, note.id, note.created_at)
 
         purpose_dir = self.vault_path / safe_project / safe_purpose
@@ -113,21 +95,40 @@ class ObsidianMirror:
         self,
         notes: List[Note],
         note_to_markdown: Callable[[Note], str],
+        note_map: Optional[Dict[str, Note]] = None,
     ) -> int:
         """Full re-sync: clean old files then mirror all notes.
+
+        Args:
+            notes: All notes to mirror.
+            note_to_markdown: Renderer function.
+            note_map: Optional pre-built {id: Note} map.  When provided,
+                link rewriting uses this map instead of calling the
+                note_resolver callback (avoids per-link disk reads).
 
         Returns:
             Number of notes mirrored.
         """
         self._clean_old_files()
+
+        # When a pre-built map is available, temporarily replace the
+        # resolver with a fast in-memory lookup.
+        original_resolver = self._resolve_note
+        if note_map is not None:
+            self._resolve_note = note_map.get  # type: ignore[assignment]
+
         count = 0
-        for note in notes:
-            try:
-                md = note_to_markdown(note)
-                self.mirror_note(note, md)
-                count += 1
-            except Exception as e:
-                logger.warning(f"Failed to mirror note {note.id}: {e}")
+        try:
+            for note in notes:
+                try:
+                    md = note_to_markdown(note)
+                    self.mirror_note(note, md)
+                    count += 1
+                except Exception as e:
+                    logger.warning(f"Failed to mirror note {note.id}: {e}")
+        finally:
+            self._resolve_note = original_resolver
+
         return count
 
     # ------------------------------------------------------------------
@@ -144,7 +145,7 @@ class ObsidianMirror:
 
         Format: ``YYYY-MM-DD_Sanitized-Title_id_suffix``
         """
-        safe_title = _sanitize_for_terminal(title)
+        safe_title = sanitize_for_terminal(title)
         id_suffix = note_id[-8:] if len(note_id) >= 8 else note_id
 
         date_prefix = ""
@@ -205,9 +206,7 @@ class ObsidianMirror:
 
                 if separator_fragments:
                     sep_cell = "------"
-                    proper_separator = (
-                        "| " + " | ".join([sep_cell] * col_count) + " |"
-                    )
+                    proper_separator = "| " + " | ".join([sep_cell] * col_count) + " |"
                     result.append(proper_separator)
                 elif i < len(lines) and re.match(
                     r"^\s*\|[\s\-:]+(\|[\s\-:]+)+\|\s*$", lines[i]

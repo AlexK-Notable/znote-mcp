@@ -8,6 +8,7 @@ Models:
 - Embedding: Alibaba-NLP/gte-modernbert-base (149M params, 768-dim, Apache-2.0)
 - Reranker: Alibaba-NLP/gte-reranker-modernbert-base (149M params, Apache-2.0)
 """
+
 from __future__ import annotations
 
 import logging
@@ -327,9 +328,7 @@ class OnnxRerankerProvider:
     def is_loaded(self) -> bool:
         return self._session is not None
 
-    def _score_pairs(
-        self, query: str, documents: Sequence[str]
-    ) -> List[float]:
+    def _score_pairs(self, query: str, documents: Sequence[str]) -> List[float]:
         """Score query-document pairs via the cross-encoder model."""
         # Encode each (query, document) pair
         # tokenizers library handles [CLS] query [SEP] document [SEP] automatically

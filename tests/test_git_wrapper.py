@@ -1,4 +1,5 @@
 """Tests for the GitWrapper module."""
+
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -193,10 +194,7 @@ class TestGitVersion:
 
     def test_git_version_short_hash(self):
         """Test short_hash property."""
-        version = GitVersion(
-            commit_hash="abc123456789",
-            timestamp=datetime.now()
-        )
+        version = GitVersion(commit_hash="abc123456789", timestamp=datetime.now())
         assert version.short_hash == "abc1234"
 
 
@@ -206,9 +204,7 @@ class TestGitConflictError:
     def test_conflict_error_message(self):
         """Test conflict error contains version info."""
         error = GitConflictError(
-            "Version mismatch",
-            expected_version="abc1234",
-            actual_version="def5678"
+            "Version mismatch", expected_version="abc1234", actual_version="def5678"
         )
         assert "abc1234" in str(error)
         assert error.expected_version == "abc1234"

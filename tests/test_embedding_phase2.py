@@ -11,6 +11,7 @@ Tests cover:
 These tests use the REAL sqlite-vec extension against in-memory databases.
 No mocking of the database layer — we test actual SQL execution.
 """
+
 import hashlib
 
 import numpy as np
@@ -19,7 +20,6 @@ from sqlalchemy import text
 
 from znote_mcp.models.db_models import init_sqlite_vec
 from znote_mcp.storage.note_repository import NoteRepository
-
 
 # =============================================================================
 # Helpers
@@ -39,6 +39,7 @@ def _make_embedding(seed: str, dim: int = 768) -> np.ndarray:
 def _create_test_note(repo: NoteRepository, note_id: str, title: str = "Test") -> str:
     """Insert a minimal note into the repository and return its ID."""
     from znote_mcp.models.schema import Note, NoteType
+
     note = Note(
         id=note_id,
         title=title,
@@ -61,9 +62,9 @@ def vec_repo(tmp_path):
     notes_dir.mkdir()
     repo = NoteRepository(notes_dir=notes_dir, in_memory_db=True)
     # Verify vec is available in dev environment
-    assert repo._vec_available, (
-        "sqlite-vec not available — install with: pip install sqlite-vec"
-    )
+    assert (
+        repo._vec_available
+    ), "sqlite-vec not available — install with: pip install sqlite-vec"
     yield repo
 
 
@@ -310,9 +311,7 @@ class TestSimilaritySearch:
     def test_exclude_ids(self, vec_repo):
         self._seed_notes(vec_repo, count=5)
         query = _make_embedding("note-0")
-        results = vec_repo.vec_similarity_search(
-            query, limit=5, exclude_ids=["note-0"]
-        )
+        results = vec_repo.vec_similarity_search(query, limit=5, exclude_ids=["note-0"])
         result_ids = [r[0] for r in results]
         assert "note-0" not in result_ids
 

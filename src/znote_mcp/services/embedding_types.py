@@ -7,6 +7,7 @@ subtyping — implementations don't need to inherit from these.
 This module is importable without numpy installed (annotations are
 deferred via __future__). Actual providers require numpy at runtime.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, List, Protocol, Sequence, Tuple, runtime_checkable

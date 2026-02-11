@@ -1,14 +1,17 @@
 """Common test fixtures for the Zettelkasten MCP server."""
-import os
+
 import tempfile
 from pathlib import Path
+
 import pytest
 from sqlalchemy import create_engine
+
+from tests.fakes import FakeEmbeddingProvider, FakeRerankerProvider
 from znote_mcp.config import config
 from znote_mcp.models.db_models import Base
 from znote_mcp.services.zettel_service import ZettelService
 from znote_mcp.storage.note_repository import NoteRepository
-from tests.fakes import FakeEmbeddingProvider, FakeRerankerProvider
+
 
 @pytest.fixture
 def temp_dirs():
@@ -17,21 +20,16 @@ def temp_dirs():
         with tempfile.TemporaryDirectory() as db_dir:
             yield Path(notes_dir), Path(db_dir)
 
+
 @pytest.fixture
-def test_config(temp_dirs):
-    """Configure with test paths."""
+def test_config(temp_dirs, monkeypatch):
+    """Configure with test paths (auto-restored even on crash)."""
     notes_dir, db_dir = temp_dirs
     database_path = db_dir / "test_zettelkasten.db"
-    # Save original config values
-    original_notes_dir = config.notes_dir
-    original_database_path = config.database_path
-    # Update config for tests
-    config.notes_dir = notes_dir
-    config.database_path = database_path
+    monkeypatch.setattr(config, "notes_dir", notes_dir)
+    monkeypatch.setattr(config, "database_path", database_path)
     yield config
-    # Restore original config
-    config.notes_dir = original_notes_dir
-    config.database_path = original_database_path
+
 
 @pytest.fixture
 def note_repository(test_config):
@@ -43,11 +41,10 @@ def note_repository(test_config):
     Base.metadata.create_all(engine)
     engine.dispose()
     # Create repository
-    repository = NoteRepository(
-        notes_dir=test_config.notes_dir
-    )
+    repository = NoteRepository(notes_dir=test_config.notes_dir)
     # Initialize is handled in constructor
     yield repository
+
 
 @pytest.fixture
 def zettel_service(note_repository):
@@ -63,21 +60,15 @@ def zettel_service(note_repository):
 
 
 @pytest.fixture
-def _enable_embeddings():
+def _enable_embeddings(monkeypatch):
     """Temporarily enable embeddings in global config."""
-    original = config.embeddings_enabled
-    config.embeddings_enabled = True
-    yield
-    config.embeddings_enabled = original
+    monkeypatch.setattr(config, "embeddings_enabled", True)
 
 
 @pytest.fixture
-def _disable_embeddings():
+def _disable_embeddings(monkeypatch):
     """Temporarily disable embeddings in global config."""
-    original = config.embeddings_enabled
-    config.embeddings_enabled = False
-    yield
-    config.embeddings_enabled = original
+    monkeypatch.setattr(config, "embeddings_enabled", False)
 
 
 @pytest.fixture

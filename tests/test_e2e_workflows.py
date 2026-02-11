@@ -3,17 +3,13 @@
 These tests verify complete user workflows that span multiple operations
 and test the system's behavior under realistic conditions.
 """
-import tempfile
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+
+from unittest.mock import patch
 
 import pytest
 
-from znote_mcp.exceptions import BulkOperationError, NoteNotFoundError
-from znote_mcp.models.schema import (
-    Note, NoteType, NotePurpose, Tag,
-    ConflictResult, VersionedNote, VersionInfo
-)
+from znote_mcp.exceptions import BulkOperationError
+from znote_mcp.models.schema import ConflictResult, Note, VersionedNote, VersionInfo
 from znote_mcp.services.zettel_service import ZettelService
 from znote_mcp.storage.note_repository import NoteRepository
 
@@ -33,8 +29,7 @@ class TestBulkCreatePartialFailureRecovery:
         service = ZettelService(repository=repo)
 
         notes_data = [
-            {"title": f"Note {i}", "content": f"Content {i}"}
-            for i in range(5)
+            {"title": f"Note {i}", "content": f"Content {i}"} for i in range(5)
         ]
 
         created = service.bulk_create_notes(notes_data)
@@ -54,40 +49,42 @@ class TestBulkCreatePartialFailureRecovery:
             assert retrieved.title == note.title
 
     def test_bulk_create_atomic_rollback_on_file_error(self, temp_dirs):
-        """If file write fails, no notes should be created."""
+        """If file write fails mid-operation, no notes should be created."""
+        import builtins
+
         notes_dir, db_dir = temp_dirs
         repo = NoteRepository(notes_dir=notes_dir)
         service = ZettelService(repository=repo)
 
+        initial_count = len(repo.get_all())
+
         notes_data = [
             {"title": "Note 1", "content": "Content 1"},
             {"title": "Note 2", "content": "Content 2"},
+            {"title": "Note 3", "content": "Content 3"},
         ]
 
-        # Patch the staging directory creation to fail after first note
-        original_mkdir = Path.mkdir
-        call_count = [0]
+        # bulk_create_notes uses open() to write staging files.
+        # Patch builtins.open to fail on the second .md staging write.
+        real_open = builtins.open
+        md_write_count = [0]
 
-        def failing_mkdir(self, *args, **kwargs):
-            call_count[0] += 1
-            # Let staging dir creation succeed, but fail on a later mkdir
-            if ".staging" not in str(self) and call_count[0] > 2:
-                raise IOError("Simulated disk full error")
-            return original_mkdir(self, *args, **kwargs)
+        def failing_open(path, *args, **kwargs):
+            if str(path).endswith(".md") and "w" in str(args[:1]):
+                md_write_count[0] += 1
+                if md_write_count[0] >= 2:
+                    raise IOError("Simulated disk full error")
+            return real_open(path, *args, **kwargs)
 
-        # Note: This test verifies the concept, but the actual implementation
-        # may have different failure points. The key is that failures should
-        # result in a clean state (no partial notes).
+        with patch.object(builtins, "open", failing_open):
+            with pytest.raises((IOError, BulkOperationError, Exception)):
+                service.bulk_create_notes(notes_data)
 
-        # For now, just verify that when bulk_create succeeds, it's atomic
-        created = service.bulk_create_notes(notes_data)
-        assert len(created) == 2
-
-        # If we get here, verify no orphan files
-        md_files = list(notes_dir.glob("*.md"))
-        note_ids = {n.id for n in created}
-        for md_file in md_files:
-            assert md_file.stem in note_ids
+        # After failure, verify no partial notes leaked into the DB
+        final_count = len(repo.get_all())
+        assert (
+            final_count == initial_count
+        ), f"Expected {initial_count} notes after rollback, got {final_count}"
 
     def test_bulk_create_validates_all_notes_before_creating(self, temp_dirs):
         """All notes should be validated before any are created."""
@@ -105,21 +102,24 @@ class TestBulkCreatePartialFailureRecovery:
             {"title": "Valid Note 2", "content": "Content 2"},
         ]
 
-        # The operation may either:
-        # 1. Raise an error and create no notes
-        # 2. Skip invalid notes and create valid ones
-        # Let's verify the actual behavior
+        # Determine actual behavior: either raises or skips
         try:
             created = service.bulk_create_notes(notes_data)
-            # If it succeeds, check that at least valid notes were created
-            # The invalid note with empty title might be handled differently
-            final_count = len(repo.get_all())
-            # Either all-or-nothing or skip-invalid
-            assert final_count >= initial_count
         except Exception:
-            # If it fails, no notes should have been created
+            # All-or-nothing semantics: no notes should have been created
             final_count = len(repo.get_all())
-            assert final_count == initial_count
+            assert (
+                final_count == initial_count
+            ), f"Expected {initial_count} notes after validation failure, got {final_count}"
+            return
+
+        # Skip-invalid semantics: only valid notes are created
+        final_count = len(repo.get_all())
+        valid_count = sum(1 for d in notes_data if d.get("title", "").strip())
+        assert final_count == initial_count + valid_count, (
+            f"Expected {initial_count + valid_count} notes (skip-invalid), "
+            f"got {final_count}"
+        )
 
 
 class TestOptimisticConcurrencyWorkflow:
@@ -134,10 +134,7 @@ class TestOptimisticConcurrencyWorkflow:
         repo = NoteRepository(notes_dir=notes_dir, use_git=True)
 
         # Create versioned note
-        v1 = repo.create_versioned(Note(
-            title="My Document",
-            content="Initial content"
-        ))
+        v1 = repo.create_versioned(Note(title="My Document", content="Initial content"))
 
         assert isinstance(v1, VersionedNote)
         assert v1.version.commit_hash != "0000000"
@@ -148,12 +145,8 @@ class TestOptimisticConcurrencyWorkflow:
 
         # Update with correct version
         v2 = repo.update_versioned(
-            Note(
-                id=v1.note.id,
-                title="My Document",
-                content="Updated content"
-            ),
-            expected_version=current.version.commit_hash
+            Note(id=v1.note.id, title="My Document", content="Updated content"),
+            expected_version=current.version.commit_hash,
         )
 
         assert isinstance(v2, VersionedNote)
@@ -171,10 +164,9 @@ class TestOptimisticConcurrencyWorkflow:
         repo = NoteRepository(notes_dir=notes_dir, use_git=True)
 
         # Create initial note
-        v1 = repo.create_versioned(Note(
-            title="Shared Document",
-            content="Original content"
-        ))
+        v1 = repo.create_versioned(
+            Note(title="Shared Document", content="Original content")
+        )
 
         # Client A reads the note
         client_a_version = v1.version.commit_hash
@@ -184,23 +176,15 @@ class TestOptimisticConcurrencyWorkflow:
 
         # Client A updates successfully
         result_a = repo.update_versioned(
-            Note(
-                id=v1.note.id,
-                title="Shared Document",
-                content="Client A's changes"
-            ),
-            expected_version=client_a_version
+            Note(id=v1.note.id, title="Shared Document", content="Client A's changes"),
+            expected_version=client_a_version,
         )
         assert isinstance(result_a, VersionedNote)
 
         # Client B tries to update with stale version -> CONFLICT
         result_b = repo.update_versioned(
-            Note(
-                id=v1.note.id,
-                title="Shared Document",
-                content="Client B's changes"
-            ),
-            expected_version=client_b_version
+            Note(id=v1.note.id, title="Shared Document", content="Client B's changes"),
+            expected_version=client_b_version,
         )
 
         # Client B should get a conflict
@@ -220,10 +204,7 @@ class TestOptimisticConcurrencyWorkflow:
         repo = NoteRepository(notes_dir=notes_dir, use_git=True)
 
         # Create initial note
-        v1 = repo.create_versioned(Note(
-            title="Document",
-            content="v1"
-        ))
+        v1 = repo.create_versioned(Note(title="Document", content="v1"))
 
         # Client A's version (stale after Client B updates)
         stale_version = v1.version.commit_hash
@@ -231,14 +212,14 @@ class TestOptimisticConcurrencyWorkflow:
         # Client B updates
         v2 = repo.update_versioned(
             Note(id=v1.note.id, title="Document", content="v2 by Client B"),
-            expected_version=stale_version
+            expected_version=stale_version,
         )
         assert isinstance(v2, VersionedNote)
 
         # Client A tries to update with stale version -> conflict
         result = repo.update_versioned(
             Note(id=v1.note.id, title="Document", content="v2 by Client A"),
-            expected_version=stale_version
+            expected_version=stale_version,
         )
         assert isinstance(result, ConflictResult)
 
@@ -250,9 +231,9 @@ class TestOptimisticConcurrencyWorkflow:
             Note(
                 id=v1.note.id,
                 title="Document",
-                content="v3: merged changes from both clients"
+                content="v3: merged changes from both clients",
             ),
-            expected_version=current.version.commit_hash
+            expected_version=current.version.commit_hash,
         )
 
         # Now it should succeed
@@ -265,24 +246,18 @@ class TestOptimisticConcurrencyWorkflow:
         repo = NoteRepository(notes_dir=notes_dir, use_git=True)
 
         # Create note
-        v1 = repo.create_versioned(Note(
-            title="To Delete",
-            content="Content"
-        ))
+        v1 = repo.create_versioned(Note(title="To Delete", content="Content"))
         original_version = v1.version.commit_hash
 
         # Update to create new version
         v2 = repo.update_versioned(
             Note(id=v1.note.id, title="Updated", content="New content"),
-            expected_version=original_version
+            expected_version=original_version,
         )
         assert isinstance(v2, VersionedNote)
 
         # Try to delete with old version -> conflict
-        result = repo.delete_versioned(
-            v1.note.id,
-            expected_version=original_version
-        )
+        result = repo.delete_versioned(v1.note.id, expected_version=original_version)
         assert isinstance(result, ConflictResult)
 
         # Note should still exist
@@ -290,8 +265,7 @@ class TestOptimisticConcurrencyWorkflow:
 
         # Delete with correct version should succeed
         result = repo.delete_versioned(
-            v1.note.id,
-            expected_version=v2.version.commit_hash
+            v1.note.id, expected_version=v2.version.commit_hash
         )
         assert isinstance(result, VersionInfo)
 
@@ -306,18 +280,15 @@ class TestLinkIntegrityWorkflow:
         """Creating notes and linking them maintains integrity."""
         # Create a set of interconnected notes
         concept = zettel_service.create_note(
-            title="Main Concept",
-            content="This is the main concept."
+            title="Main Concept", content="This is the main concept."
         )
 
         detail1 = zettel_service.create_note(
-            title="Detail 1",
-            content="Details about aspect 1."
+            title="Detail 1", content="Details about aspect 1."
         )
 
         detail2 = zettel_service.create_note(
-            title="Detail 2",
-            content="Details about aspect 2."
+            title="Detail 2", content="Details about aspect 2."
         )
 
         # Create links
@@ -326,18 +297,24 @@ class TestLinkIntegrityWorkflow:
         zettel_service.create_link(detail1.id, detail2.id, link_type="reference")
 
         # Verify outgoing links from concept
-        outgoing_notes = zettel_service.get_linked_notes(concept.id, direction="outgoing")
+        outgoing_notes = zettel_service.get_linked_notes(
+            concept.id, direction="outgoing"
+        )
         outgoing_ids = {n.id for n in outgoing_notes}
         assert detail1.id in outgoing_ids
         assert detail2.id in outgoing_ids
 
         # Verify incoming links to detail1
-        incoming_notes = zettel_service.get_linked_notes(detail1.id, direction="incoming")
+        incoming_notes = zettel_service.get_linked_notes(
+            detail1.id, direction="incoming"
+        )
         incoming_ids = {n.id for n in incoming_notes}
         assert concept.id in incoming_ids
 
         # detail1 also has outgoing link to detail2
-        detail1_outgoing = zettel_service.get_linked_notes(detail1.id, direction="outgoing")
+        detail1_outgoing = zettel_service.get_linked_notes(
+            detail1.id, direction="outgoing"
+        )
         assert len(detail1_outgoing) == 1
         assert detail1_outgoing[0].id == detail2.id
 
@@ -345,20 +322,20 @@ class TestLinkIntegrityWorkflow:
         """Deleting a note should clean up all its links."""
         # Create linked notes
         source = zettel_service.create_note(
-            title="Source Note",
-            content="This links to target."
+            title="Source Note", content="This links to target."
         )
 
         target = zettel_service.create_note(
-            title="Target Note",
-            content="This is linked from source."
+            title="Target Note", content="This is linked from source."
         )
 
         # Create link
         zettel_service.create_link(source.id, target.id)
 
         # Verify link exists
-        incoming_before = zettel_service.get_linked_notes(target.id, direction="incoming")
+        incoming_before = zettel_service.get_linked_notes(
+            target.id, direction="incoming"
+        )
         assert len(incoming_before) == 1
         assert incoming_before[0].id == source.id
 
@@ -366,7 +343,9 @@ class TestLinkIntegrityWorkflow:
         zettel_service.delete_note(source.id)
 
         # Verify link is cleaned up
-        incoming_after = zettel_service.get_linked_notes(target.id, direction="incoming")
+        incoming_after = zettel_service.get_linked_notes(
+            target.id, direction="incoming"
+        )
         assert len(incoming_after) == 0
 
     def test_bulk_delete_cleans_up_links(self, zettel_service):
@@ -389,7 +368,9 @@ class TestLinkIntegrityWorkflow:
         zettel_service.bulk_delete_notes([spoke1.id, spoke2.id])
 
         # Hub should only have link to spoke3 now
-        hub_outgoing_after = zettel_service.get_linked_notes(hub.id, direction="outgoing")
+        hub_outgoing_after = zettel_service.get_linked_notes(
+            hub.id, direction="outgoing"
+        )
         outgoing_ids = {n.id for n in hub_outgoing_after}
         assert spoke1.id not in outgoing_ids
         assert spoke2.id not in outgoing_ids
@@ -405,25 +386,25 @@ class TestTagWorkflow:
         zettel_service.create_note(
             title="Python Tutorial",
             content="Learn Python",
-            tags=["python", "tutorial", "programming"]
+            tags=["python", "tutorial", "programming"],
         )
 
         zettel_service.create_note(
             title="JavaScript Guide",
             content="Learn JavaScript",
-            tags=["javascript", "tutorial", "programming"]
+            tags=["javascript", "tutorial", "programming"],
         )
 
         zettel_service.create_note(
             title="Python Advanced",
             content="Advanced Python topics",
-            tags=["python", "advanced", "programming"]
+            tags=["python", "advanced", "programming"],
         )
 
         zettel_service.create_note(
             title="Recipe: Pasta",
             content="How to make pasta",
-            tags=["recipe", "food", "italian"]
+            tags=["recipe", "food", "italian"],
         )
 
         # Search by single tag
@@ -443,8 +424,7 @@ class TestTagWorkflow:
         notes = []
         for i in range(5):
             note = zettel_service.create_note(
-                title=f"Work Note {i}",
-                content=f"Work content {i}"
+                title=f"Work Note {i}", content=f"Work content {i}"
             )
             notes.append(note)
 
