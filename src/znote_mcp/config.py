@@ -15,6 +15,10 @@ from znote_mcp import __version__
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 load_dotenv(_PROJECT_ROOT / ".env")
 
+# User-level config: survives plugin updates, lives alongside notes
+_USER_ENV = Path.home() / ".zettelkasten" / ".env"
+load_dotenv(_USER_ENV)
+
 
 class ZettelkastenConfig(BaseModel):
     """Configuration for the Zettelkasten server."""

@@ -10,7 +10,7 @@ from typing import Any, Optional
 from mcp.server.fastmcp import FastMCP
 
 from znote_mcp.backup import backup_manager
-from znote_mcp.config import config
+from znote_mcp.config import _PROJECT_ROOT, _USER_ENV, config
 from znote_mcp.exceptions import ValidationError, ZettelkastenError
 from znote_mcp.models.schema import (
     ConflictResult,
@@ -1150,6 +1150,7 @@ class ZettelkastenMcpServer:
                     - "health": Database integrity status
                     - "embeddings": Embedding system status
                     - "metrics": Server performance metrics
+                    - "config": Current configuration and env file status
                     - "all": Include all sections (default)
             """
             with timed_operation("zk_status") as op:
@@ -1244,6 +1245,32 @@ class ZettelkastenMcpServer:
                             if total_notes > 0:
                                 pct = emb_count / total_notes * 100
                                 output += f"**Coverage:** {pct:.0f}%\n"
+                        output += "\n"
+
+                    # Config section
+                    if include_all or "config" in requested:
+                        output += "## Configuration\n"
+                        output += f"**Notes Dir:** {config.notes_dir}\n"
+                        output += f"**Database:** {config.database_path}\n"
+                        vault = config.obsidian_vault_path
+                        output += f"**Obsidian Vault:** {vault or 'not configured'}\n"
+                        output += f"**Git Versioning:** {'enabled' if config.git_enabled else 'disabled'}\n"
+                        output += f"**In-Memory DB:** {'enabled' if config.in_memory_db else 'disabled'}\n"
+
+                        # Config sources
+                        sources = []
+                        project_env = _PROJECT_ROOT / ".env"
+                        if project_env.exists():
+                            sources.append(str(project_env))
+                        if _USER_ENV.exists():
+                            sources.append(str(_USER_ENV))
+                            output += f"**User Config:** {_USER_ENV}\n"
+                        else:
+                            output += f"**User Config:** {_USER_ENV} (not found — copy from .env.example to customize)\n"
+                        if sources:
+                            output += f"**Config Sources:** {', '.join(sources)}\n"
+                        else:
+                            output += "**Config Sources:** defaults only (no .env files found)\n"
                         output += "\n"
 
                     # Metrics section
