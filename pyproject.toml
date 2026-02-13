@@ -33,7 +33,7 @@ semantic = [
     "tokenizers>=0.15.0",
     "huggingface-hub>=0.20.0",
     "numpy>=1.24.0",
-    "sqlite-vec>=0.1.6",
+    "sqlite-vec>=0.1.7a2",
 ]
 
 [tool.setuptools]
@@ -90,5 +90,5 @@ dev = [
     "pdoc>=14.0.0",
     "tiktoken>=0.12.0",
     "numpy>=1.24.0",
-    "sqlite-vec>=0.1.6",
+    "sqlite-vec>=0.1.7a2",
 ]

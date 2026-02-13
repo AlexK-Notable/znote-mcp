@@ -10,7 +10,13 @@ from typing import Any, Optional
 from mcp.server.fastmcp import FastMCP
 
 from znote_mcp.backup import backup_manager
-from znote_mcp.config import _PROJECT_ROOT, _USER_ENV, config
+from znote_mcp.config import (
+    _PROJECT_ROOT,
+    _USER_ENV,
+    config,
+    estimate_embedding_peak_memory,
+    get_available_memory_bytes,
+)
 from znote_mcp.exceptions import ValidationError, ZettelkastenError
 from znote_mcp.models.schema import (
     ConflictResult,
@@ -1245,6 +1251,28 @@ class ZettelkastenMcpServer:
                             if total_notes > 0:
                                 pct = emb_count / total_notes * 100
                                 output += f"**Coverage:** {pct:.0f}%\n"
+                            # Show tuning parameters and memory estimate
+                            output += f"**Batch Size:** {config.embedding_batch_size}\n"
+                            output += f"**Max Tokens:** {config.embedding_max_tokens}\n"
+                            peak = estimate_embedding_peak_memory(
+                                config.embedding_batch_size,
+                                config.embedding_max_tokens,
+                            )
+                            peak_gb = peak / (1024**3)
+                            ram = get_available_memory_bytes()
+                            if ram is not None:
+                                ram_gb = ram / (1024**3)
+                                status = (
+                                    "OK"
+                                    if peak < ram * 0.5
+                                    else "WARNING — may exceed available RAM"
+                                )
+                                output += (
+                                    f"**Est. Peak Memory:** ~{peak_gb:.1f}GB "
+                                    f"(system has {ram_gb:.0f}GB) — {status}\n"
+                                )
+                            else:
+                                output += f"**Est. Peak Memory:** ~{peak_gb:.1f}GB per reindex batch\n"
                         output += "\n"
 
                     # Config section
@@ -1303,7 +1331,11 @@ class ZettelkastenMcpServer:
                     return self.format_error_response(e)
 
         @self.mcp.tool(name="zk_system")
-        def zk_system(action: str, backup_label: Optional[str] = None) -> str:
+        def zk_system(
+            action: str,
+            backup_label: Optional[str] = None,
+            force: bool = False,
+        ) -> str:
             """System administration operations.
 
             Args:
@@ -1316,6 +1348,7 @@ class ZettelkastenMcpServer:
                     - "reindex_embeddings": Rebuild all note embeddings from scratch
                       (use after model changes or to fix inconsistencies)
                 backup_label: Optional label for backup (e.g., "pre-migration")
+                force: Skip memory safety check for reindex_embeddings
             """
             with timed_operation("zk_system", action=action) as op:
                 try:
@@ -1380,6 +1413,31 @@ class ZettelkastenMcpServer:
                                 "Set ZETTELKASTEN_EMBEDDINGS_ENABLED=true and install "
                                 "the [semantic] extra to enable."
                             )
+                        # Pre-flight memory safety check
+                        if not force:
+                            peak = estimate_embedding_peak_memory(
+                                config.embedding_batch_size,
+                                config.embedding_max_tokens,
+                            )
+                            ram = get_available_memory_bytes()
+                            if ram is not None and peak > ram * 0.8:
+                                peak_gb = peak / (1024**3)
+                                ram_gb = ram / (1024**3)
+                                total = self.zettel_service.count_notes()
+                                return (
+                                    f"**Warning:** Reindexing {total} notes with current "
+                                    f"settings (batch_size={config.embedding_batch_size}, "
+                                    f"max_tokens={config.embedding_max_tokens}) may require "
+                                    f"~{peak_gb:.1f}GB peak memory. "
+                                    f"Your system has {ram_gb:.0f}GB RAM.\n\n"
+                                    f"Suggestions:\n"
+                                    f"- Reduce ZETTELKASTEN_EMBEDDING_BATCH_SIZE "
+                                    f"(current: {config.embedding_batch_size})\n"
+                                    f"- Reduce ZETTELKASTEN_EMBEDDING_MAX_TOKENS "
+                                    f"(current: {config.embedding_max_tokens})\n\n"
+                                    f"To proceed anyway: "
+                                    f"zk_system(action='reindex_embeddings', force=True)"
+                                )
                         try:
                             stats = self.zettel_service.reindex_embeddings()
                             return (

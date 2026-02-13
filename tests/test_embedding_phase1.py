@@ -428,9 +428,9 @@ class TestEmbeddingConfig:
         assert cfg.embedding_model == "Alibaba-NLP/gte-modernbert-base"
         assert cfg.reranker_model == "Alibaba-NLP/gte-reranker-modernbert-base"
         assert cfg.embedding_dim == 768
-        assert cfg.embedding_max_tokens == 8192
+        assert cfg.embedding_max_tokens == 2048
         assert cfg.reranker_idle_timeout == 600
-        assert cfg.embedding_batch_size == 32
+        assert cfg.embedding_batch_size == 8
         assert cfg.embedding_model_cache_dir is None
 
     def test_custom_values(self):
