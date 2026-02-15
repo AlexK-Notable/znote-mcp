@@ -436,30 +436,44 @@ def init_sqlite_vec(engine, dimension: int = 768) -> bool:
                 raw_conn.enable_load_extension(False)
 
             # vec0 virtual table for vector storage + KNN search
+            # PK is chunk_id: "{note_id}::chunk_{index}" for chunked notes,
+            # or just "{note_id}::chunk_0" for single-vector notes.
             conn.execute(
                 text(
                     f"""
                 CREATE VIRTUAL TABLE IF NOT EXISTS note_embeddings
                 USING vec0(
-                    note_id TEXT PRIMARY KEY,
+                    chunk_id TEXT PRIMARY KEY,
                     embedding float[{dimension}]
                 )
             """
                 )
             )
 
-            # Metadata table for tracking model/hash info per embedding
+            # Metadata table for tracking model/hash info per chunk
             conn.execute(
                 text(
                     """
                 CREATE TABLE IF NOT EXISTS embedding_metadata (
-                    note_id TEXT PRIMARY KEY,
+                    chunk_id TEXT PRIMARY KEY,
+                    note_id TEXT NOT NULL,
+                    chunk_index INTEGER NOT NULL DEFAULT 0,
                     model_name TEXT NOT NULL,
                     content_hash TEXT NOT NULL,
                     dimension INTEGER NOT NULL,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
                 )
+            """
+                )
+            )
+
+            # Index on note_id for grouping chunks by note
+            conn.execute(
+                text(
+                    """
+                CREATE INDEX IF NOT EXISTS idx_embedding_metadata_note_id
+                ON embedding_metadata(note_id)
             """
                 )
             )

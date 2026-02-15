@@ -156,7 +156,8 @@ class ZettelService:
         """Compute a deterministic SHA-256 hash of embeddable content.
 
         Used for change detection: if the hash hasn't changed since the last
-        embedding, we skip re-embedding to save compute.
+        embedding, we skip re-embedding to save compute.  Hash is computed
+        on the whole note (not per-chunk) so any edit triggers re-embedding.
 
         Args:
             title: Note title.
@@ -167,8 +168,20 @@ class ZettelService:
         """
         return hashlib.sha256(f"{title}\n{content}".encode("utf-8")).hexdigest()
 
+    @staticmethod
+    def _prepare_embedding_text(title: str, content: str) -> str:
+        """Combine title and content into the text that gets embedded.
+
+        Both single-vector and chunked paths use this to ensure consistent
+        text preparation.
+        """
+        return f"{title}\n{content}"
+
     def _embed_note(self, note: Note) -> None:
-        """Embed a note and store the vector.  Fire-and-forget.
+        """Embed a note and store the vector(s).  Fire-and-forget.
+
+        Short notes (under embedding_chunk_size tokens) get a single vector.
+        Long notes are split into overlapping chunks, each embedded separately.
 
         Skips embedding if:
         - No embedding service is configured
@@ -191,20 +204,64 @@ class ZettelService:
                 logger.debug(f"Embedding unchanged for note {note.id}, skipping")
                 return
 
-            # Generate and store embedding
-            vector = self._embedding_service.embed(f"{note.title}\n{note.content}")
-            self.repository.store_embedding(
-                note_id=note.id,
-                embedding=vector,
-                model_name=config.embedding_model,
-                content_hash=content_hash,
+            text = self._prepare_embedding_text(note.title, note.content)
+
+            # Decide: single vector or chunked
+            from znote_mcp.services.text_chunker import TextChunker
+
+            chunker = TextChunker(
+                chunk_size=config.embedding_chunk_size,
+                chunk_overlap=config.embedding_chunk_overlap,
             )
-            logger.debug(f"Embedded note {note.id}")
+            chunks = chunker.chunk(text)
+
+            if len(chunks) <= 1:
+                # Single vector path (most notes)
+                vector = self._embedding_service.embed(text)
+                self.repository.store_embedding(
+                    note_id=note.id,
+                    embedding=vector,
+                    model_name=config.embedding_model,
+                    content_hash=content_hash,
+                )
+                logger.debug(f"Embedded note {note.id} (single vector)")
+            else:
+                self._embed_note_chunked(note.id, chunks, content_hash)
         except Exception as e:
             logger.warning(f"Failed to embed note {note.id}: {e}")
 
+    def _embed_note_chunked(
+        self,
+        note_id: str,
+        chunks: list,
+        content_hash: str,
+    ) -> None:
+        """Embed multiple chunks for a single note and store them.
+
+        Args:
+            note_id: The note ID.
+            chunks: List of TextChunk instances from TextChunker.
+            content_hash: SHA-256 digest of the whole note content.
+        """
+        # Embed each chunk
+        chunk_texts = [c.text for c in chunks]
+        vectors = self._embedding_service.embed_batch(
+            chunk_texts, batch_size=config.embedding_batch_size
+        )
+
+        # Build (chunk_index, vector) pairs
+        chunk_data = list(zip([c.index for c in chunks], vectors))
+
+        self.repository.store_chunk_embeddings(
+            note_id=note_id,
+            chunks=chunk_data,
+            model_name=config.embedding_model,
+            content_hash=content_hash,
+        )
+        logger.debug(f"Embedded note {note_id} ({len(chunks)} chunks)")
+
     def _delete_embedding(self, note_id: str) -> None:
-        """Delete a note's embedding.  Fire-and-forget."""
+        """Delete all embedding chunks for a note.  Fire-and-forget."""
         if self._embedding_service is None or not config.embeddings_enabled:
             return
         try:
@@ -221,17 +278,17 @@ class ZettelService:
     def reindex_embeddings(self) -> Dict[str, int]:
         """Rebuild all note embeddings from scratch.
 
-        Clears existing embeddings, then re-embeds every note.  Useful after
-        model changes, dimension changes, or if the embedding index becomes
-        inconsistent.
+        Clears existing embeddings, then re-embeds every note.  Short notes
+        get a single vector; long notes are split into overlapping chunks.
 
         Returns:
-            Dict with keys: total, embedded, skipped, failed.
+            Dict with keys: total, embedded, skipped, failed, chunks.
 
         Raises:
             EmbeddingError: If no embedding service is configured.
         """
         from znote_mcp.exceptions import EmbeddingError
+        from znote_mcp.services.text_chunker import TextChunker
 
         if self._embedding_service is None:
             raise EmbeddingError(
@@ -240,52 +297,79 @@ class ZettelService:
                 operation="reindex_embeddings",
             )
 
-        stats = {"total": 0, "embedded": 0, "skipped": 0, "failed": 0}
+        stats = {"total": 0, "embedded": 0, "skipped": 0, "failed": 0, "chunks": 0}
 
         # Clear existing embeddings
         cleared = self.repository.clear_all_embeddings()
         logger.info(f"Cleared {cleared} existing embeddings")
 
-        # Get all notes (no pagination limit — we need them all)
+        # Get all notes
         all_notes = self.repository.get_all()
         stats["total"] = len(all_notes)
 
         if not all_notes:
             return stats
 
-        # Prepare texts for batch embedding
-        texts = [f"{note.title}\n{note.content}" for note in all_notes]
+        chunker = TextChunker(
+            chunk_size=config.embedding_chunk_size,
+            chunk_overlap=config.embedding_chunk_overlap,
+        )
 
-        # Batch embed (handles internal batching via config.embedding_batch_size)
-        try:
-            vectors = self._embedding_service.embed_batch(
-                texts, batch_size=config.embedding_batch_size
-            )
-        except Exception as e:
-            logger.error(f"Batch embedding failed during reindex: {e}")
-            stats["failed"] = len(all_notes)
-            return stats
+        # Separate notes into short (single-vector) and long (chunked)
+        short_notes = []
+        short_texts = []
+        long_notes = []  # (note, chunks_list)
 
-        # Build batch and store in a single transaction
-        batch = []
-        for note, vector in zip(all_notes, vectors):
+        for note in all_notes:
+            text = self._prepare_embedding_text(note.title, note.content)
+            chunks = chunker.chunk(text)
+            if len(chunks) <= 1:
+                short_notes.append(note)
+                short_texts.append(text)
+            else:
+                long_notes.append((note, chunks))
+
+        # Batch embed short notes
+        if short_texts:
+            try:
+                vectors = self._embedding_service.embed_batch(
+                    short_texts, batch_size=config.embedding_batch_size
+                )
+                batch = []
+                for note, vector in zip(short_notes, vectors):
+                    try:
+                        content_hash = self._content_hash(note.title, note.content)
+                        batch.append(
+                            (note.id, vector, config.embedding_model, content_hash)
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to prepare embedding for note {note.id}: {e}"
+                        )
+                        stats["failed"] += 1
+
+                if batch:
+                    stored = self.repository.store_embeddings_batch(batch)
+                    stats["embedded"] += stored
+                    stats["chunks"] += stored
+            except Exception as e:
+                logger.error(f"Batch embedding failed for short notes: {e}")
+                stats["failed"] += len(short_notes)
+
+        # Embed long notes (chunked)
+        for note, chunks in long_notes:
             try:
                 content_hash = self._content_hash(note.title, note.content)
-                batch.append((note.id, vector, config.embedding_model, content_hash))
+                self._embed_note_chunked(note.id, chunks, content_hash)
+                stats["embedded"] += 1
+                stats["chunks"] += len(chunks)
             except Exception as e:
-                logger.warning(f"Failed to prepare embedding for note {note.id}: {e}")
+                logger.warning(f"Failed to embed chunked note {note.id}: {e}")
                 stats["failed"] += 1
 
-        if batch:
-            try:
-                stored_count = self.repository.store_embeddings_batch(batch)
-                stats["embedded"] = stored_count
-            except Exception as e:
-                logger.error(f"Batch embedding storage failed: {e}")
-                stats["failed"] += len(batch)
-
         logger.info(
-            f"Reindex complete: {stats['embedded']} embedded, "
+            f"Reindex complete: {stats['embedded']} notes embedded "
+            f"({stats['chunks']} chunks), "
             f"{stats['skipped']} skipped, {stats['failed']} failed "
             f"out of {stats['total']} total"
         )

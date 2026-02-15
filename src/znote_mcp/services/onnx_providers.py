@@ -20,6 +20,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 # Lazy imports — these are optional dependencies
+# These are populated by _ensure_imports()
 _ort = None
 _tokenizers = None
 _hf_hub = None
@@ -60,6 +61,53 @@ def _ensure_imports() -> None:
             )
 
 
+def _resolve_providers(preference: str = "auto") -> List[str]:
+    """Resolve ONNX execution providers based on preference string.
+
+    Args:
+        preference: One of:
+            - "auto": detect available providers (CUDA > CPU)
+            - "cpu": force CPUExecutionProvider only
+            - comma-separated list: use as-is (e.g. "CUDAExecutionProvider,CPUExecutionProvider")
+
+    Returns:
+        Ordered list of provider names for ort.InferenceSession.
+    """
+    _ensure_imports()
+
+    pref = preference.strip().lower()
+
+    if pref == "cpu":
+        return ["CPUExecutionProvider"]
+
+    if pref == "auto":
+        available = _ort.get_available_providers()
+        providers = []
+        if "CUDAExecutionProvider" in available:
+            providers.append("CUDAExecutionProvider")
+        # Always include CPU as fallback
+        providers.append("CPUExecutionProvider")
+        return providers
+
+    # Explicit comma-separated list
+    return [p.strip() for p in preference.split(",") if p.strip()]
+
+
+def _cuda_session_options() -> dict:
+    """Return provider_options dict for CUDA with arena strategy and VRAM cap.
+
+    Returns:
+        Dict mapping provider name to options dict, suitable for passing
+        as provider_options to ort.InferenceSession.
+    """
+    return {
+        "CUDAExecutionProvider": {
+            "arena_extend_strategy": "kSameAsRequested",
+            "gpu_mem_limit": str(4 * 1024 * 1024 * 1024),  # 4GB VRAM cap
+        }
+    }
+
+
 def _download_model_files(
     model_id: str,
     filenames: List[str],
@@ -96,6 +144,7 @@ class OnnxEmbeddingProvider:
         onnx_filename: Path to the ONNX model file within the repo.
         max_length: Maximum token length for truncation.
         cache_dir: Optional custom cache directory for model files.
+        providers: Provider preference string ("auto", "cpu", or comma-separated).
     """
 
     def __init__(
@@ -104,11 +153,13 @@ class OnnxEmbeddingProvider:
         onnx_filename: str = "onnx/model.onnx",
         max_length: int = 8192,
         cache_dir: Optional[Path] = None,
+        providers: str = "auto",
     ) -> None:
         self._model_id = model_id
         self._onnx_filename = onnx_filename
         self._max_length = max_length
         self._cache_dir = cache_dir
+        self._providers_pref = providers
         self._session: Optional[object] = None  # ort.InferenceSession
         self._tokenizer: Optional[object] = None  # tokenizers.Tokenizer
         self._dim: int = 768  # Default for gte-modernbert-base
@@ -150,11 +201,17 @@ class OnnxEmbeddingProvider:
         sess_options.graph_optimization_level = (
             _ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         )
-        # Use CPU provider (most portable, avoids GPU dependency)
+
+        providers = _resolve_providers(self._providers_pref)
+        # Build provider_options list matching providers order
+        cuda_opts = _cuda_session_options()
+        provider_options = [cuda_opts.get(p, {}) for p in providers]
+
         self._session = _ort.InferenceSession(
             str(onnx_path),
             sess_options=sess_options,
-            providers=["CPUExecutionProvider"],
+            providers=providers,
+            provider_options=provider_options,
         )
 
         # Detect actual dimension from model output shape
@@ -162,8 +219,10 @@ class OnnxEmbeddingProvider:
         if outputs and len(outputs[0].shape) >= 2:
             self._dim = outputs[0].shape[-1]
 
+        active = self._session.get_providers()
         logger.info(
-            f"Embedding model loaded: dim={self._dim}, max_tokens={self._max_length}"
+            f"Embedding model loaded: dim={self._dim}, "
+            f"max_tokens={self._max_length}, providers={active}"
         )
 
     def unload(self) -> None:
@@ -261,6 +320,7 @@ class OnnxRerankerProvider:
         onnx_filename: Path to the ONNX model file.
         max_length: Maximum token length for query+document pairs.
         cache_dir: Optional custom cache directory.
+        providers: Provider preference string ("auto", "cpu", or comma-separated).
     """
 
     def __init__(
@@ -269,11 +329,13 @@ class OnnxRerankerProvider:
         onnx_filename: str = "onnx/model.onnx",
         max_length: int = 8192,
         cache_dir: Optional[Path] = None,
+        providers: str = "auto",
     ) -> None:
         self._model_id = model_id
         self._onnx_filename = onnx_filename
         self._max_length = max_length
         self._cache_dir = cache_dir
+        self._providers_pref = providers
         self._session: Optional[object] = None
         self._tokenizer: Optional[object] = None
 
@@ -310,13 +372,20 @@ class OnnxRerankerProvider:
         sess_options.graph_optimization_level = (
             _ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         )
+
+        providers = _resolve_providers(self._providers_pref)
+        cuda_opts = _cuda_session_options()
+        provider_options = [cuda_opts.get(p, {}) for p in providers]
+
         self._session = _ort.InferenceSession(
             str(onnx_path),
             sess_options=sess_options,
-            providers=["CPUExecutionProvider"],
+            providers=providers,
+            provider_options=provider_options,
         )
 
-        logger.info(f"Reranker model loaded: {self._model_id}")
+        active = self._session.get_providers()
+        logger.info(f"Reranker model loaded: {self._model_id}, providers={active}")
 
     def unload(self) -> None:
         """Release reranker model from memory."""

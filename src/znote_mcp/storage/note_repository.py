@@ -2660,11 +2660,10 @@ class NoteRepository(Repository[Note]):
         model_name: str,
         content_hash: str,
     ) -> bool:
-        """Store or update an embedding for a note.
+        """Store or update a single embedding for a note (chunk_index=0).
 
-        Uses UPSERT semantics: if an embedding already exists for this note_id,
-        it is replaced.  Writes to both the vec0 virtual table (for KNN search)
-        and the metadata table (for change-detection / provenance).
+        Uses UPSERT semantics: deletes any existing chunks for the note,
+        then inserts a single chunk_0 embedding.
 
         Args:
             note_id: The note ID.
@@ -2680,30 +2679,31 @@ class NoteRepository(Repository[Note]):
 
         import numpy as np
 
+        chunk_id = f"{note_id}::chunk_0"
         blob = embedding.astype(np.float32).tobytes()
 
         with self.engine.connect() as conn:
-            # vec0 UPSERT: delete-then-insert (vec0 doesn't support ON CONFLICT)
-            conn.execute(
-                text("DELETE FROM note_embeddings WHERE note_id = :nid"),
-                {"nid": note_id},
-            )
+            # Delete any existing chunks for this note (handles transition
+            # from multi-chunk to single-chunk when note is shortened)
+            self._delete_chunks_for_note_conn(conn, note_id)
+
             conn.execute(
                 text(
-                    "INSERT INTO note_embeddings(note_id, embedding) "
-                    "VALUES (:nid, :emb)"
+                    "INSERT INTO note_embeddings(chunk_id, embedding) "
+                    "VALUES (:cid, :emb)"
                 ),
-                {"nid": note_id, "emb": blob},
+                {"cid": chunk_id, "emb": blob},
             )
 
-            # Metadata UPSERT via INSERT OR REPLACE
             conn.execute(
                 text(
                     "INSERT OR REPLACE INTO embedding_metadata"
-                    "(note_id, model_name, content_hash, dimension, created_at) "
-                    "VALUES (:nid, :model, :hash, :dim, datetime('now'))"
+                    "(chunk_id, note_id, chunk_index, model_name, "
+                    "content_hash, dimension, created_at) "
+                    "VALUES (:cid, :nid, 0, :model, :hash, :dim, datetime('now'))"
                 ),
                 {
+                    "cid": chunk_id,
                     "nid": note_id,
                     "model": model_name,
                     "hash": content_hash,
@@ -2718,10 +2718,11 @@ class NoteRepository(Repository[Note]):
         self,
         embeddings: "List[Tuple[str, np.ndarray, str, str]]",
     ) -> int:
-        """Store multiple embeddings in a single transaction.
+        """Store multiple single-chunk embeddings in a single transaction.
 
         Same semantics as store_embedding() but batched: one commit for
-        all note embeddings instead of one commit per note.
+        all note embeddings instead of one commit per note.  Each note
+        gets a single chunk_0 entry.
 
         Args:
             embeddings: List of (note_id, embedding, model_name, content_hash).
@@ -2736,25 +2737,25 @@ class NoteRepository(Repository[Note]):
 
         with self.engine.connect() as conn:
             for note_id, embedding, model_name, content_hash in embeddings:
+                chunk_id = f"{note_id}::chunk_0"
                 blob = embedding.astype(np.float32).tobytes()
-                conn.execute(
-                    text("DELETE FROM note_embeddings WHERE note_id = :nid"),
-                    {"nid": note_id},
-                )
+                self._delete_chunks_for_note_conn(conn, note_id)
                 conn.execute(
                     text(
-                        "INSERT INTO note_embeddings(note_id, embedding) "
-                        "VALUES (:nid, :emb)"
+                        "INSERT INTO note_embeddings(chunk_id, embedding) "
+                        "VALUES (:cid, :emb)"
                     ),
-                    {"nid": note_id, "emb": blob},
+                    {"cid": chunk_id, "emb": blob},
                 )
                 conn.execute(
                     text(
                         "INSERT OR REPLACE INTO embedding_metadata"
-                        "(note_id, model_name, content_hash, dimension, created_at) "
-                        "VALUES (:nid, :model, :hash, :dim, datetime('now'))"
+                        "(chunk_id, note_id, chunk_index, model_name, "
+                        "content_hash, dimension, created_at) "
+                        "VALUES (:cid, :nid, 0, :model, :hash, :dim, datetime('now'))"
                     ),
                     {
+                        "cid": chunk_id,
                         "nid": note_id,
                         "model": model_name,
                         "hash": content_hash,
@@ -2766,7 +2767,7 @@ class NoteRepository(Repository[Note]):
         return len(embeddings)
 
     def get_embedding(self, note_id: str) -> "Optional[np.ndarray]":
-        """Retrieve the stored embedding vector for a note.
+        """Retrieve the first (chunk_0) embedding vector for a note.
 
         Args:
             note_id: The note ID.
@@ -2779,10 +2780,11 @@ class NoteRepository(Repository[Note]):
 
         import numpy as np
 
+        chunk_id = f"{note_id}::chunk_0"
         with self.engine.connect() as conn:
             row = conn.execute(
-                text("SELECT embedding FROM note_embeddings " "WHERE note_id = :nid"),
-                {"nid": note_id},
+                text("SELECT embedding FROM note_embeddings WHERE chunk_id = :cid"),
+                {"cid": chunk_id},
             ).fetchone()
 
         if row is None:
@@ -2791,7 +2793,7 @@ class NoteRepository(Repository[Note]):
         return np.frombuffer(row[0], dtype=np.float32).copy()
 
     def get_embedding_metadata(self, note_id: str) -> "Optional[dict]":
-        """Retrieve embedding metadata (model, hash, dimension, timestamp).
+        """Retrieve embedding metadata for a note (from chunk_0 or any first chunk).
 
         Args:
             note_id: The note ID.
@@ -2807,7 +2809,8 @@ class NoteRepository(Repository[Note]):
             row = conn.execute(
                 text(
                     "SELECT model_name, content_hash, dimension, created_at "
-                    "FROM embedding_metadata WHERE note_id = :nid"
+                    "FROM embedding_metadata WHERE note_id = :nid "
+                    "ORDER BY chunk_index LIMIT 1"
                 ),
                 {"nid": note_id},
             ).fetchone()
@@ -2823,26 +2826,19 @@ class NoteRepository(Repository[Note]):
         }
 
     def delete_embedding(self, note_id: str) -> bool:
-        """Delete the embedding (and metadata) for a note.
+        """Delete all embeddings (all chunks and metadata) for a note.
 
         Returns:
-            True if a row was deleted, False if nothing existed or vec unavailable.
+            True if rows were deleted, False if nothing existed or vec unavailable.
         """
         if not self._vec_available:
             return False
 
         with self.engine.connect() as conn:
-            result = conn.execute(
-                text("DELETE FROM note_embeddings WHERE note_id = :nid"),
-                {"nid": note_id},
-            )
-            conn.execute(
-                text("DELETE FROM embedding_metadata WHERE note_id = :nid"),
-                {"nid": note_id},
-            )
+            deleted = self._delete_chunks_for_note_conn(conn, note_id)
             conn.commit()
 
-        return result.rowcount > 0
+        return deleted > 0
 
     def vec_similarity_search(
         self,
@@ -2855,6 +2851,9 @@ class NoteRepository(Repository[Note]):
         sqlite-vec uses L2 distance.  Because our embeddings are L2-normalised,
         the ranking is equivalent to cosine similarity:
             cosine_sim = 1 - (l2_dist² / 2)
+
+        Results are deduplicated by note_id: when a note has multiple chunks,
+        only the best (lowest distance) chunk is kept.
 
         Args:
             query_embedding: 1-D float32 numpy array.
@@ -2872,14 +2871,16 @@ class NoteRepository(Repository[Note]):
 
         blob = query_embedding.astype(np.float32).tobytes()
 
-        # sqlite-vec KNN query.  The `k` parameter is the KNN limit.
-        # We request extra rows to compensate for exclusions, then trim.
-        fetch_limit = limit + (len(exclude_ids) if exclude_ids else 0)
+        # Over-fetch to compensate for chunk dedup and exclusions.
+        # Multiple chunks from the same note may appear in KNN results;
+        # fetching extra ensures enough unique notes after grouping.
+        exclusion_extra = len(exclude_ids) if exclude_ids else 0
+        fetch_limit = limit * 3 + exclusion_extra
 
         with self.engine.connect() as conn:
             rows = conn.execute(
                 text(
-                    "SELECT note_id, distance "
+                    "SELECT chunk_id, distance "
                     "FROM note_embeddings "
                     "WHERE embedding MATCH :qvec "
                     "AND k = :k "
@@ -2888,22 +2889,33 @@ class NoteRepository(Repository[Note]):
                 {"qvec": blob, "k": fetch_limit},
             ).fetchall()
 
-        results: list[tuple[str, float]] = []
+        # Dedup: group by note_id, keep best (first/lowest) distance per note
         exclude_set = set(exclude_ids) if exclude_ids else set()
+        seen_notes: dict[str, float] = {}
         for row in rows:
-            if row[0] in exclude_set:
-                continue
-            results.append((row[0], float(row[1])))
-            if len(results) >= limit:
-                break
+            chunk_id = row[0]
+            distance = float(row[1])
+            # Parse note_id from chunk_id ("{note_id}::chunk_{index}")
+            sep_idx = chunk_id.rfind("::chunk_")
+            if sep_idx == -1:
+                note_id = chunk_id  # Fallback for legacy data
+            else:
+                note_id = chunk_id[:sep_idx]
 
-        return results
+            if note_id in exclude_set:
+                continue
+            if note_id not in seen_notes:
+                seen_notes[note_id] = distance
+
+        # Sort by distance and return top `limit`
+        results = sorted(seen_notes.items(), key=lambda x: x[1])
+        return results[:limit]
 
     def count_embeddings(self) -> int:
-        """Return the number of stored embeddings.
+        """Return the number of stored embedding chunks.
 
         Returns:
-            Count of embeddings, or 0 if vec unavailable.
+            Count of chunk embeddings, or 0 if vec unavailable.
         """
         if not self._vec_available:
             return 0
@@ -2915,11 +2927,27 @@ class NoteRepository(Repository[Note]):
 
         return row[0] if row else 0
 
+    def count_embedded_notes(self) -> int:
+        """Return the number of distinct notes that have embeddings.
+
+        Returns:
+            Count of unique note_ids with embeddings, or 0 if vec unavailable.
+        """
+        if not self._vec_available:
+            return 0
+
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT count(DISTINCT note_id) FROM embedding_metadata")
+            ).fetchone()
+
+        return row[0] if row else 0
+
     def clear_all_embeddings(self) -> int:
         """Delete all embeddings and metadata.  Used for reindexing.
 
         Returns:
-            Number of embeddings deleted, or 0 if vec unavailable.
+            Number of embedding chunks deleted, or 0 if vec unavailable.
         """
         if not self._vec_available:
             return 0
@@ -2935,3 +2963,104 @@ class NoteRepository(Repository[Note]):
             conn.commit()
 
         return count
+
+    def _delete_chunks_for_note_conn(self, conn, note_id: str) -> int:
+        """Delete all chunks for a note within an existing connection.
+
+        Returns the number of vec0 rows deleted.
+        """
+        # Find all chunk_ids for this note from metadata
+        rows = conn.execute(
+            text("SELECT chunk_id FROM embedding_metadata WHERE note_id = :nid"),
+            {"nid": note_id},
+        ).fetchall()
+
+        for row in rows:
+            conn.execute(
+                text("DELETE FROM note_embeddings WHERE chunk_id = :cid"),
+                {"cid": row[0]},
+            )
+
+        result = conn.execute(
+            text("DELETE FROM embedding_metadata WHERE note_id = :nid"),
+            {"nid": note_id},
+        )
+        return result.rowcount
+
+    def delete_chunks_for_note(self, note_id: str) -> bool:
+        """Delete all embedding chunks for a note.
+
+        Returns:
+            True if rows were deleted, False otherwise.
+        """
+        if not self._vec_available:
+            return False
+
+        with self.engine.connect() as conn:
+            deleted = self._delete_chunks_for_note_conn(conn, note_id)
+            conn.commit()
+
+        return deleted > 0
+
+    def store_chunk_embeddings(
+        self,
+        note_id: str,
+        chunks: "List[Tuple[int, np.ndarray]]",
+        model_name: str,
+        content_hash: str,
+    ) -> int:
+        """Store multiple chunk embeddings for a single note.
+
+        Deletes any existing chunks for the note first, then inserts all new chunks
+        in a single transaction.
+
+        Args:
+            note_id: The note ID.
+            chunks: List of (chunk_index, embedding_vector) tuples.
+            model_name: Model that produced the embeddings.
+            content_hash: SHA-256 hex digest of the whole note content.
+
+        Returns:
+            Number of chunks stored, or 0 if sqlite-vec is unavailable.
+        """
+        if not self._vec_available or not chunks:
+            return 0
+
+        import numpy as np
+
+        with self.engine.connect() as conn:
+            # Remove existing chunks for this note
+            self._delete_chunks_for_note_conn(conn, note_id)
+
+            for chunk_index, embedding in chunks:
+                chunk_id = f"{note_id}::chunk_{chunk_index}"
+                blob = embedding.astype(np.float32).tobytes()
+
+                conn.execute(
+                    text(
+                        "INSERT INTO note_embeddings(chunk_id, embedding) "
+                        "VALUES (:cid, :emb)"
+                    ),
+                    {"cid": chunk_id, "emb": blob},
+                )
+                conn.execute(
+                    text(
+                        "INSERT OR REPLACE INTO embedding_metadata"
+                        "(chunk_id, note_id, chunk_index, model_name, "
+                        "content_hash, dimension, created_at) "
+                        "VALUES (:cid, :nid, :idx, :model, :hash, :dim, "
+                        "datetime('now'))"
+                    ),
+                    {
+                        "cid": chunk_id,
+                        "nid": note_id,
+                        "idx": chunk_index,
+                        "model": model_name,
+                        "hash": content_hash,
+                        "dim": embedding.shape[0],
+                    },
+                )
+
+            conn.commit()
+
+        return len(chunks)

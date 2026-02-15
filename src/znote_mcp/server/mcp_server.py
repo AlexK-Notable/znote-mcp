@@ -147,11 +147,13 @@ class ZettelkastenMcpServer:
                 model_id=config.embedding_model,
                 max_length=config.embedding_max_tokens,
                 cache_dir=config.embedding_model_cache_dir,
+                providers=config.onnx_providers,
             )
             reranker = OnnxRerankerProvider(
                 model_id=config.reranker_model,
                 max_length=config.embedding_max_tokens,
                 cache_dir=config.embedding_model_cache_dir,
+                providers=config.onnx_providers,
             )
             service = EmbeddingService(
                 embedder=embedder,
@@ -1243,17 +1245,19 @@ class ZettelkastenMcpServer:
                         if config.embeddings_enabled:
                             output += f"**Model:** {config.embedding_model}\n"
                             output += f"**Dimension:** {config.embedding_dim}\n"
-                            emb_count = (
-                                self.zettel_service.repository.count_embeddings()
-                            )
+                            output += f"**Providers:** {config.onnx_providers}\n"
+                            repo = self.zettel_service.repository
+                            chunk_count = repo.count_embeddings()
+                            note_count = repo.count_embedded_notes()
                             total_notes = self.zettel_service.count_notes()
-                            output += f"**Indexed:** {emb_count}/{total_notes} notes\n"
+                            output += f"**Indexed:** {note_count}/{total_notes} notes ({chunk_count} chunks)\n"
                             if total_notes > 0:
-                                pct = emb_count / total_notes * 100
+                                pct = note_count / total_notes * 100
                                 output += f"**Coverage:** {pct:.0f}%\n"
                             # Show tuning parameters and memory estimate
                             output += f"**Batch Size:** {config.embedding_batch_size}\n"
                             output += f"**Max Tokens:** {config.embedding_max_tokens}\n"
+                            output += f"**Chunk Size:** {config.embedding_chunk_size} tokens (overlap: {config.embedding_chunk_overlap})\n"
                             peak = estimate_embedding_peak_memory(
                                 config.embedding_batch_size,
                                 config.embedding_max_tokens,

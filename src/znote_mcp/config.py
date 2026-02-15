@@ -139,6 +139,22 @@ class ZettelkastenConfig(BaseModel):
             else None
         )
     )
+    # ONNX execution provider preference: "auto" (detect GPU/CPU), or
+    # comma-separated list like "CUDAExecutionProvider,CPUExecutionProvider"
+    onnx_providers: str = Field(
+        default_factory=lambda: os.getenv("ZETTELKASTEN_ONNX_PROVIDERS", "auto")
+    )
+    # Chunking: notes longer than this (in tokens) get split into overlapping chunks
+    embedding_chunk_size: int = Field(
+        default_factory=lambda: int(
+            os.getenv("ZETTELKASTEN_EMBEDDING_CHUNK_SIZE", "4096")
+        )
+    )
+    embedding_chunk_overlap: int = Field(
+        default_factory=lambda: int(
+            os.getenv("ZETTELKASTEN_EMBEDDING_CHUNK_OVERLAP", "256")
+        )
+    )
 
     # Default note template
     default_note_template: str = Field(
