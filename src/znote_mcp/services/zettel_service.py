@@ -142,9 +142,11 @@ class ZettelService:
         if repository is not None:
             self.repository = repository
         elif engine is not None:
-            self.repository = NoteRepository(engine=engine)
+            self.repository = NoteRepository(
+                engine=engine, use_git=config.git_enabled
+            )
         else:
-            self.repository = NoteRepository()
+            self.repository = NoteRepository(use_git=config.git_enabled)
         self._embedding_service = embedding_service
 
     # =========================================================================

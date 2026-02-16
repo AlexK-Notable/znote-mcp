@@ -179,12 +179,7 @@ class TestMCPProtocolCRUD:
 
     @pytest.mark.anyio
     async def test_delete_note_via_protocol(self, mcp_client):
-        """Deleting a note returns a coherent response via the protocol.
-
-        Note: When git versioning is auto-enabled (NoteRepository default)
-        but files are not git-tracked, delete may return an error. This test
-        verifies the protocol round-trip produces a text response in either case.
-        """
+        """Deleting a note succeeds and the note is no longer retrievable."""
         # Create
         create_result = await mcp_client.call_tool(
             "zk_create_note",
@@ -196,23 +191,19 @@ class TestMCPProtocolCRUD:
         )
         note_id = extract_note_id_from_protocol(create_result)
 
-        # Delete — may succeed or return a git-related error depending on
-        # whether NoteRepository.use_git picked up config.git_enabled=False
+        # Delete (config.git_enabled=False in protocol_config, so no git issues)
         delete_result = await mcp_client.call_tool(
             "zk_delete_note", {"note_id": note_id}
         )
         delete_text = get_text(delete_result)
+        assert "deleted" in delete_text.lower() or "successfully" in delete_text.lower()
 
-        if "successfully" in delete_text.lower() or "deleted" in delete_text.lower():
-            # Verify gone
-            get_result = await mcp_client.call_tool(
-                "zk_get_note", {"identifier": note_id}
-            )
-            text = get_text(get_result)
-            assert "not found" in text.lower()
-        else:
-            # Git tracking issue — response should still be a coherent error
-            assert "error" in delete_text.lower()
+        # Verify gone
+        get_result = await mcp_client.call_tool(
+            "zk_get_note", {"identifier": note_id}
+        )
+        text = get_text(get_result)
+        assert "not found" in text.lower()
 
 
 # =============================================================================
@@ -397,15 +388,7 @@ class TestMCPProtocolBatch:
 
     @pytest.mark.anyio
     async def test_bulk_create_notes_via_protocol(self, mcp_client):
-        """zk_bulk_create_notes: protocol pre-parsing converts JSON string to list.
-
-        Known limitation: FastMCP's pre_parse_json converts a JSON-array string
-        to a Python list before Pydantic validates the `notes: str` parameter.
-        This causes a type validation error at the protocol level. The test
-        verifies the server returns a coherent error rather than crashing.
-
-        See: mcp.server.fastmcp.utilities.func_metadata.FuncMetadata.pre_parse_json
-        """
+        """zk_bulk_create_notes works through the protocol with JSON string input."""
         notes_payload = json.dumps(
             [
                 {
@@ -429,10 +412,11 @@ class TestMCPProtocolBatch:
             "zk_bulk_create_notes", {"notes": notes_payload}
         )
         text = get_text(result)
-        # FastMCP pre_parse_json converts the JSON string to a list, which
-        # fails Pydantic str validation. The tool needs to accept list type
-        # to work correctly through the protocol.
-        assert result.isError or "successfully" in text.lower()
+        assert not result.isError, f"bulk_create_notes failed: {text}"
+        assert "successfully" in text.lower()
+        assert "Bulk Note A" in text
+        assert "Bulk Note B" in text
+        assert "Bulk Note C" in text
 
     @pytest.mark.anyio
     async def test_add_and_remove_tag_via_protocol(self, mcp_client):
@@ -582,12 +566,11 @@ class TestMCPProtocolArgumentValidation:
 
     @pytest.mark.anyio
     async def test_bulk_create_json_string_pre_parsing(self, mcp_client):
-        """Verify FastMCP pre_parse_json behavior for JSON-encoded list strings.
+        """FastMCP pre_parse_json converts JSON string to list — tool handles both.
 
         When Claude Desktop sends a JSON array as a string value, FastMCP's
-        pre_parse_json converts it to a Python list. Since zk_bulk_create_notes
-        declares `notes: str`, this causes a Pydantic type error. The test
-        documents the actual protocol behavior.
+        pre_parse_json converts it to a Python list before Pydantic validates.
+        The tool accepts str|list to handle both direct and pre-parsed input.
         """
         notes_json = json.dumps(
             [
@@ -599,9 +582,10 @@ class TestMCPProtocolArgumentValidation:
             "zk_bulk_create_notes", {"notes": notes_json}
         )
         text = get_text(result)
-        # The pre_parse_json converts the JSON string to a list, causing a
-        # validation error. This documents the incompatibility.
-        assert result.isError or "successfully" in text.lower()
+        assert not result.isError, f"bulk_create pre-parsing failed: {text}"
+        assert "successfully" in text.lower()
+        assert "JSON String A" in text
+        assert "JSON String B" in text
 
 
 # =============================================================================

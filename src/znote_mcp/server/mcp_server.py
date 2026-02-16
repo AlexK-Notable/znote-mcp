@@ -831,13 +831,13 @@ class ZettelkastenMcpServer:
         # ========== Batch Create ==========
 
         @self.mcp.tool(name="zk_bulk_create_notes")
-        def zk_bulk_create_notes(notes: str) -> str:
+        def zk_bulk_create_notes(notes: str | list) -> str:
             """Create multiple notes in a single batch operation.
 
             All notes are created atomically - if any fails, all are rolled back.
 
             Args:
-                notes: JSON array of note objects. Each must have:
+                notes: JSON array of note objects (string or pre-parsed list). Each must have:
                     - title (required): Note title
                     - content (required): Note content
                     - note_type (optional): fleeting, literature, permanent, structure, hub
@@ -846,7 +846,12 @@ class ZettelkastenMcpServer:
             """
             with timed_operation("zk_bulk_create_notes") as op:
                 try:
-                    notes_data = json.loads(notes)
+                    # Accept both JSON string and pre-parsed list
+                    # (FastMCP's pre_parse_json converts JSON strings to lists)
+                    if isinstance(notes, list):
+                        notes_data = notes
+                    else:
+                        notes_data = json.loads(notes)
                     if not isinstance(notes_data, list):
                         return "Error: Input must be a JSON array of note objects."
 
