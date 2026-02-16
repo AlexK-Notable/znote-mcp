@@ -21,80 +21,148 @@ This structure invites serendipitous discoveries as you follow trails of thought
 
 ## Features
 
-- Create atomic notes with unique timestamp-based IDs
-- Link notes bidirectionally to build a knowledge graph
-- Tag notes for categorical organization
-- Search notes by content, tags, or links
-- Use markdown format for human readability and editing
-- Integrate with Claude through MCP for AI-assisted knowledge management
-- Dual storage architecture (see below)
-- Synchronous operation model for simplified architecture
+- **Atomic notes** with unique timestamp-based IDs and YAML frontmatter metadata
+- **Semantic linking** with 7 typed link types and automatic inverse links
+- **Tag system** with batch operations and orphan cleanup
+- **Full-text search** via SQLite FTS5 with boolean operators, phrases, and prefix matching
+- **Semantic search** via ONNX-based embeddings with optional GPU acceleration
+- **Token-aware chunking** for embedding long notes into overlapping segments
+- **Reranking** for improved search result quality using cross-encoder models
+- **Project organization** with hierarchical sub-projects and note routing
+- **Bulk operations** for batch note creation, tag management, and project moves
+- **Obsidian vault mirroring** for browsing notes in a rich editor
+- **Dual storage** with markdown files as source of truth and SQLite for indexing
+- **Multi-process concurrency** with per-process in-memory databases and git-based conflict detection
+- **Backup and restore** with labeled snapshots and safety checks
+- **Auto-setup** of semantic dependencies and model pre-download on first startup
 
 ## Examples
 
 - Knowledge creation: [A small Zettelkasten knowledge network about the Zettelkasten method itself](https://github.com/entanglr/znote-mcp/discussions/5)
 
+## Available MCP Tools
+
+All tools are prefixed with `zk_` for organization. The server exposes 22 tools:
+
+### Notes
+
+| Tool | Description |
+|------|-------------|
+| `zk_create_note` | Create a note with title, content, type, project, tags, and optional plan ID |
+| `zk_get_note` | Retrieve a note by ID or title (summary or raw markdown format) |
+| `zk_update_note` | Update a note's content or metadata; supports batch project moves via comma-separated IDs |
+| `zk_delete_note` | Delete one or more notes; supports batch delete via comma-separated IDs |
+| `zk_note_history` | View git commit history for a note (requires git versioning enabled) |
+| `zk_bulk_create_notes` | Create multiple notes atomically from a JSON array (all-or-nothing) |
+
+### Links
+
+| Tool | Description |
+|------|-------------|
+| `zk_create_link` | Create a typed link between two notes (optionally bidirectional) |
+| `zk_remove_link` | Remove a link between two notes (optionally bidirectional) |
+
+### Search & Discovery
+
+| Tool | Description |
+|------|-------------|
+| `zk_search_notes` | Search by text, tags, type, or semantically; auto-selects best strategy |
+| `zk_fts_search` | Full-text search with FTS5 syntax (boolean, phrases, prefix, column filters) |
+| `zk_list_notes` | List notes by date, project, connectivity (central/orphan), with pagination |
+| `zk_find_related` | Find linked, similar, or semantically related notes |
+
+### Tags
+
+| Tool | Description |
+|------|-------------|
+| `zk_add_tag` | Add tags to notes (batch: comma-separated IDs and/or tags) |
+| `zk_remove_tag` | Remove tags from notes (batch: comma-separated IDs and/or tags) |
+| `zk_cleanup_tags` | Delete orphaned tags not associated with any notes |
+
+### Projects
+
+| Tool | Description |
+|------|-------------|
+| `zk_create_project` | Create a project (supports hierarchical sub-projects via `/`) |
+| `zk_list_projects` | List all projects with optional note counts |
+| `zk_get_project` | Get project details including note count and children |
+| `zk_delete_project` | Delete an empty project (must have no notes or sub-projects) |
+
+### System
+
+| Tool | Description |
+|------|-------------|
+| `zk_status` | Dashboard with note counts, tags, health, embeddings, metrics, and config |
+| `zk_system` | Admin operations: rebuild index, sync to Obsidian, backup, reindex embeddings |
+| `zk_restore` | Restore database from a backup (creates safety backup first) |
+
 ## Note Types
 
-The Zettelkasten MCP server supports different types of notes:
-
-|Type|Handle|Description|
-|---|---|---|
-|**Fleeting notes**|`fleeting`|Quick, temporary notes for capturing ideas|
-|**Literature notes**|`literature`|Notes from reading material|
-|**Permanent notes**|`permanent`|Well-formulated, evergreen notes|
-|**Structure notes**|`structure`|Index or outline notes that organize other notes|
-|**Hub notes**|`hub`|Entry points to the Zettelkasten on key topics|
+| Type | Handle | Description |
+|------|--------|-------------|
+| **Fleeting notes** | `fleeting` | Quick, temporary notes for capturing ideas |
+| **Literature notes** | `literature` | Notes from reading material |
+| **Permanent notes** | `permanent` | Well-formulated, evergreen notes |
+| **Structure notes** | `structure` | Index or outline notes that organize other notes |
+| **Hub notes** | `hub` | Entry points to the Zettelkasten on key topics |
 
 ## Link Types
 
-The Zettelkasten MCP server uses a comprehensive semantic linking system that creates meaningful connections between notes. Each link type represents a specific relationship, allowing for a rich, multi-dimensional knowledge graph.
+Each link type has a semantic inverse, creating a rich multi-dimensional knowledge graph:
 
 | Primary Link Type | Inverse Link Type | Relationship Description |
 |-------------------|-------------------|--------------------------|
-| `reference` | `reference` | Simple reference to related information (symmetric relationship) |
+| `reference` | `reference` | Simple reference to related information (symmetric) |
 | `extends` | `extended_by` | One note builds upon or develops concepts from another |
 | `refines` | `refined_by` | One note clarifies or improves upon another |
 | `contradicts` | `contradicted_by` | One note presents opposing views to another |
 | `questions` | `questioned_by` | One note poses questions about another |
 | `supports` | `supported_by` | One note provides evidence for another |
-| `related` | `related` | Generic relationship (symmetric relationship) |
+| `related` | `related` | Generic relationship (symmetric) |
 
-## Prompting
+## Semantic Search
 
-To ensure maximum effectiveness, we recommend using a system prompt ("project instructions"), project knowledge, and an appropriate chat prompt when asking the LLM to process information, or explore or synthesize your Zettelkasten notes. The `docs` directory in this repository contains the necessary files to get you started:
+Semantic search uses ONNX-based embedding models to find conceptually related notes, even without shared keywords. This is an optional feature requiring extra dependencies.
 
-### System prompts
+### Setup
 
-Pick one:
+```bash
+# CPU-only (default)
+pip install znote-mcp[semantic]
 
-- [system-prompt.md](https://github.com/entanglr/znote-mcp/blob/main/docs/prompts/system/system-prompt.md)
-- [system-prompt-with-protocol.md](https://github.com/entanglr/znote-mcp/blob/main/docs/prompts/system/system-prompt-with-protocol.md)
+# GPU acceleration (NVIDIA CUDA 12.x, x86_64 Linux/Windows only)
+pip install znote-mcp[semantic-gpu]
+```
 
-### Project knowledge
+> **Note**: `onnxruntime` and `onnxruntime-gpu` are mutually exclusive packages. Do not install both `[semantic]` and `[semantic-gpu]`.
 
-For end users:
+When semantic dependencies are installed, embeddings auto-enable on startup. The server auto-downloads models on first run.
 
-- [zettelkasten-methodology-technical.md](https://github.com/entanglr/znote-mcp/blob/main/docs/project-knowledge/user/zettelkasten-methodology-technical.md)
-- [link-types-in-znote-mcp-server.md](https://github.com/entanglr/znote-mcp/blob/main/docs/project-knowledge/user/link-types-in-znote-mcp-server.md)
-- (more info relevant to your project)
+### How It Works
 
-### Chat Prompts
+1. **Embedding**: Notes are embedded using [Alibaba-NLP/gte-modernbert-base](https://huggingface.co/Alibaba-NLP/gte-modernbert-base) (768-dim, Apache-2.0)
+2. **Chunking**: Notes longer than `ZETTELKASTEN_EMBEDDING_CHUNK_SIZE` tokens are split into overlapping chunks, each embedded separately
+3. **Vector search**: Queries are embedded and matched against note vectors using sqlite-vec (L2 distance on L2-normalized vectors = cosine similarity)
+4. **Reranking**: Optional cross-encoder reranker ([Alibaba-NLP/gte-reranker-modernbert-base](https://huggingface.co/Alibaba-NLP/gte-reranker-modernbert-base)) improves result quality
+5. **Deduplication**: Multi-chunk notes are deduplicated in results, keeping the best-matching chunk
 
-- [chat-prompt-knowledge-creation.md](https://github.com/entanglr/znote-mcp/blob/main/docs/prompts/chat/chat-prompt-knowledge-creation.md)
-- [chat-prompt-knowledge-creation-batch.md](https://github.com/entanglr/znote-mcp/blob/main/docs/prompts/chat/chat-prompt-knowledge-creation-batch.md)
-- [chat-prompt-knowledge-exploration.md](https://github.com/entanglr/znote-mcp/blob/main/docs/prompts/chat/chat-prompt-knowledge-exploration.md)
-- [chat-prompt-knowledge-synthesis.md](https://github.com/entanglr/znote-mcp/blob/main/docs/prompts/chat/chat-prompt-knowledge-synthesis.md)
+### Configuration
 
-### Project knowledge (dev)
+All embedding settings are in `.env.example`. Key variables:
 
-For developers and contributors:
-
-- [Example - A simple MCP server.md](https://github.com/entanglr/znote-mcp/blob/main/docs/project-knowledge/dev/Example%20-%20A%20simple%20MCP%20server%20that%20exposes%20a%20website%20fetching%20tool.md)
-- [MCP Python SDK-README.md](https://github.com/entanglr/znote-mcp/blob/main/docs/project-knowledge/dev/MCP%20Python%20SDK-README.md)
-- [llms-full.txt](https://github.com/entanglr/znote-mcp/blob/main/docs/project-knowledge/dev/llms-full.txt)
-
-NB: Optionally include the source code with a tool like [repomix](https://github.com/yamadashy/repomix).
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ZETTELKASTEN_EMBEDDINGS_ENABLED` | `false` | Auto-enables when deps are installed; set `false` to force off |
+| `ZETTELKASTEN_EMBEDDING_MODEL` | `Alibaba-NLP/gte-modernbert-base` | HuggingFace model ID |
+| `ZETTELKASTEN_EMBEDDING_DIM` | `768` | Must match model output dimension |
+| `ZETTELKASTEN_EMBEDDING_MAX_TOKENS` | `2048` | Max tokens per embedding input |
+| `ZETTELKASTEN_EMBEDDING_BATCH_SIZE` | `8` | Batch size for reindex operations |
+| `ZETTELKASTEN_EMBEDDING_CHUNK_SIZE` | `4096` | Tokens per chunk for long notes |
+| `ZETTELKASTEN_EMBEDDING_CHUNK_OVERLAP` | `256` | Overlap tokens between chunks |
+| `ZETTELKASTEN_ONNX_PROVIDERS` | `auto` | `auto`, `cpu`, or explicit provider list |
+| `ZETTELKASTEN_EMBEDDING_CACHE_DIR` | HF default | Custom model cache directory |
+| `ZETTELKASTEN_RERANKER_MODEL` | `Alibaba-NLP/gte-reranker-modernbert-base` | Reranker model ID |
+| `ZETTELKASTEN_RERANKER_IDLE_TIMEOUT` | `600` | Seconds before idle reranker is unloaded |
 
 ## Storage Architecture
 
@@ -107,12 +175,12 @@ This system uses a dual storage approach:
    - Shared or transferred like any other text files
 
 2. **SQLite Database**: Functions as an indexing layer that:
-   - Facilitates efficient querying and search operations
+   - Facilitates efficient querying and search operations via FTS5
    - Enables Claude to quickly traverse the knowledge graph
-   - Maintains relationship information for faster link traversal
+   - Stores embedding vectors for semantic search (via sqlite-vec)
    - Is automatically rebuilt from Markdown files when needed
 
-If you edit Markdown files directly outside the system, you'll need to run the `zk_rebuild_index` tool to update the database. The database itself can be deleted at any time - it will be regenerated from your Markdown files.
+If you edit Markdown files directly outside the system, run `zk_system(action="rebuild")` to update the database index. The database can be deleted at any time — it will be regenerated from your Markdown files.
 
 ## Concurrency Model
 
@@ -147,8 +215,6 @@ zk_update_note(
 
 ### Configuration
 
-Control the concurrency features via environment variables:
-
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ZETTELKASTEN_GIT_ENABLED` | `true` | Enable git versioning for conflict detection |
@@ -160,7 +226,7 @@ See `.env.example` for full documentation.
 
 ```bash
 # Clone the repository
-git clone https://github.com/entanglr/znote-mcp.git
+git clone https://github.com/AlexK-Notable/znote-mcp.git
 cd znote-mcp
 
 # Create a virtual environment with uv
@@ -168,21 +234,41 @@ uv venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
 # Install dependencies
-uv add "mcp[cli]"
+uv sync
+
+# (Optional) Install semantic search dependencies
+uv pip install -e ".[semantic]"
+
+# (Optional) Install with GPU support instead
+uv pip install -e ".[semantic-gpu]"
 
 # Install dev dependencies
-uv sync --all-extras
+uv sync --dev
 ```
 
 ## Configuration
 
-Create a `.env` file in the project root by copying the example:
+Create a `.env` file by copying the example:
 
 ```bash
 cp .env.example .env
 ```
 
-Then edit the file to configure your connection parameters.
+The configuration file can be placed at:
+- `~/.zettelkasten/.env` (recommended — survives updates)
+- `<project-root>/.env` (development use)
+
+Priority: process env (`.mcp.json`) > project `.env` > `~/.zettelkasten/.env` > defaults.
+
+Core settings:
+
+```bash
+ZETTELKASTEN_NOTES_DIR=~/.zettelkasten/notes
+ZETTELKASTEN_DATABASE_PATH=~/.zettelkasten/db/zettelkasten.db
+ZETTELKASTEN_LOG_LEVEL=INFO
+```
+
+See `.env.example` for all available settings including semantic search, GPU, and Obsidian vault mirroring.
 
 ## Usage
 
@@ -221,26 +307,41 @@ Add the following configuration to your Claude Desktop:
 }
 ```
 
-## Available MCP Tools
+## Prompting
 
-All tools have been prefixed with `zk_` for better organization:
+To ensure maximum effectiveness, we recommend using a system prompt ("project instructions"), project knowledge, and an appropriate chat prompt when asking the LLM to process information, or explore or synthesize your Zettelkasten notes. The `docs` directory in this repository contains the necessary files to get you started:
 
-| Tool | Description |
-|---|---|
-| `zk_create_note` | Create a new note with a title, content, and optional tags |
-| `zk_get_note` | Retrieve a specific note by ID or title |
-| `zk_update_note` | Update an existing note's content or metadata |
-| `zk_delete_note` | Delete a note |
-| `zk_create_link` | Create links between notes |
-| `zk_remove_link` | Remove links between notes |
-| `zk_search_notes` | Search for notes by content, tags, or links |
-| `zk_get_linked_notes` | Find notes linked to a specific note |
-| `zk_get_all_tags` | List all tags in the system |
-| `zk_find_similar_notes` | Find notes similar to a given note |
-| `zk_find_central_notes` | Find notes with the most connections |
-| `zk_find_orphaned_notes` | Find notes with no connections |
-| `zk_list_notes_by_date` | List notes by creation/update date |
-| `zk_rebuild_index` | Rebuild the database index from Markdown files |
+### System prompts
+
+Pick one:
+
+- [system-prompt.md](docs/prompts/system/system-prompt.md)
+- [system-prompt-with-protocol.md](docs/prompts/system/system-prompt-with-protocol.md)
+
+### Project knowledge
+
+For end users:
+
+- [zettelkasten-methodology-technical.md](docs/project-knowledge/user/zettelkasten-methodology-technical.md)
+- [link-types-in-zettelkasten-mcp-server.md](docs/project-knowledge/user/link-types-in-zettelkasten-mcp-server.md)
+- (more info relevant to your project)
+
+### Chat Prompts
+
+- [chat-prompt-knowledge-creation.md](docs/prompts/chat/chat-prompt-knowledge-creation.md)
+- [chat-prompt-knowledge-creation-batch.md](docs/prompts/chat/chat-prompt-knowledge-creation-batch.md)
+- [chat-prompt-knowledge-exploration.md](docs/prompts/chat/chat-prompt-knowledge-exploration.md)
+- [chat-prompt-knowledge-synthesis.md](docs/prompts/chat/chat-prompt-knowledge-synthesis.md)
+
+### Project knowledge (dev)
+
+For developers and contributors:
+
+- [Example - A simple MCP server.md](docs/project-knowledge/dev/Example%20-%20A%20simple%20MCP%20server%20that%20exposes%20a%20website%20fetching%20tool.md)
+- [MCP Python SDK-README.md](docs/project-knowledge/dev/MCP%20Python%20SDK-README.md)
+- [llms-full.txt](docs/project-knowledge/dev/llms-full.txt)
+
+NB: Optionally include the source code with a tool like [repomix](https://github.com/yamadashy/repomix).
 
 ## Project Structure
 
@@ -248,76 +349,78 @@ All tools have been prefixed with `zk_` for better organization:
 znote-mcp/
 ├── src/
 │   └── znote_mcp/
-│       ├── models/       # Data models
-│       ├── storage/      # Storage layer
-│       ├── services/     # Business logic
-│       └── server/       # MCP server implementation
-├── data/
-│   ├── notes/            # Note storage (Markdown files)
-│   └── db/               # Database for indexing
-├── tests/                # Test suite
-├── .env.example          # Environment variable template
+│       ├── models/              # Pydantic schemas and SQLAlchemy ORM models
+│       ├── storage/             # Repository layer
+│       │   ├── note_repository.py   # Dual storage (markdown + SQLite + embeddings)
+│       │   ├── tag_repository.py    # Tag CRUD and batch operations
+│       │   ├── link_repository.py   # Semantic link management
+│       │   ├── project_repository.py # Hierarchical project registry
+│       │   ├── fts_index.py         # FTS5 full-text search index
+│       │   ├── git_wrapper.py       # Git versioning for concurrency
+│       │   ├── obsidian_mirror.py   # Obsidian vault sync
+│       │   └── markdown_parser.py   # Frontmatter parsing
+│       ├── services/            # Business logic
+│       │   ├── zettel_service.py    # Core CRUD, links, tags, bulk ops
+│       │   ├── search_service.py    # Text, FTS5, and semantic search
+│       │   ├── embedding_service.py # Embedding lifecycle and reindexing
+│       │   ├── embedding_types.py   # Provider interfaces
+│       │   ├── onnx_providers.py    # ONNX Runtime embedding + reranker
+│       │   └── text_chunker.py      # Token-aware note chunking
+│       ├── server/              # MCP server with 22 tools
+│       ├── config.py            # Pydantic config with env var support
+│       ├── setup_manager.py     # Auto-install semantic deps + model warmup
+│       ├── backup.py            # Backup and restore operations
+│       ├── observability.py     # Structured logging and metrics
+│       ├── exceptions.py        # Error hierarchy with codes
+│       └── main.py              # Entry point
+├── tests/                       # 34 test files, 700+ tests
+├── alembic/                     # Database migrations
+├── docs/                        # Prompts, project knowledge, design docs
+├── scripts/                     # Utility scripts
+├── .env.example                 # Full configuration reference
+├── CLAUDE.md                    # Claude Code project context
 └── README.md
 ```
 
 ## Tests
 
-Comprehensive test suite for Zettelkasten MCP covering all layers of the application from models to the MCP server implementation.
+Comprehensive test suite with 700+ tests covering all layers from models to MCP server integration.
 
-### How to Run the Tests
+### Running Tests
 
-From the project root directory, run:
-
-#### Using pytest directly
 ```bash
-python -m pytest -v tests/
-```
-
-#### Using UV
-```bash
+# Run all tests
 uv run pytest -v tests/
-```
 
-#### With coverage report
-```bash
+# With coverage report
 uv run pytest --cov=znote_mcp --cov-report=term-missing tests/
-```
 
-#### Running a specific test file
-```bash
+# Run a specific test file
 uv run pytest -v tests/test_models.py
+
+# Run E2E tests (isolated environment)
+uv run pytest tests/test_e2e.py -v
+
+# Debug E2E with persistent data
+ZETTELKASTEN_TEST_PERSIST=1 uv run pytest tests/test_e2e.py -v
 ```
 
-#### Running a specific test class
-```bash
-uv run pytest -v tests/test_models.py::TestNoteModel
-```
+### Test Categories
 
-#### Running a specific test function
-```bash
-uv run pytest -v tests/test_models.py::TestNoteModel::test_note_validation
-```
-
-### Tests Directory Structure
-
-```
-tests/
-├── conftest.py - Common fixtures for all tests
-├── conftest_e2e.py - E2E test fixtures with isolated environments
-├── test_e2e.py - End-to-end tests with real services
-├── test_error_injection.py - Error handling and failure scenarios
-├── test_integration.py - Integration tests for the entire system
-├── test_mcp_integration.py - MCP server tool integration tests
-├── test_models.py - Tests for data models
-├── test_note_repository.py - Tests for note repository
-├── test_search_service.py - Tests for search service
-├── test_semantic_links.py - Tests for semantic linking
-└── test_zettel_service.py - Tests for zettel service
-```
+| Category | Files | Description |
+|----------|-------|-------------|
+| Unit | `test_models.py`, `test_note_repository.py`, `test_search_service.py`, `test_zettel_service.py`, `test_git_wrapper.py`, `test_config_cleanup.py` | Individual component tests |
+| Integration | `test_integration.py`, `test_mcp_integration.py`, `test_mcp_tools_integration.py` | Cross-layer integration |
+| E2E | `test_e2e.py`, `test_e2e_workflows.py` | Full system workflows with isolated environments |
+| Embeddings | `test_embedding_phase1.py` through `test_embedding_phase5.py`, `test_chunked_embedding_integration.py` | Semantic search pipeline (chunking, storage, search, reindex) |
+| Resilience | `test_error_injection.py`, `test_failure_recovery.py`, `test_database_hardening.py` | Error handling and recovery |
+| Concurrency | `test_concurrency.py`, `test_multiprocess_concurrency.py`, `test_versioned_operations.py` | Multi-process safety |
+| Features | `test_semantic_links.py`, `test_bulk_operations.py`, `test_project_repository.py`, `test_obsidian_enhancements.py`, `test_unicode_edge_cases.py` | Feature-specific tests |
+| Operations | `test_backup_workflows.py`, `test_migration_and_versioning.py`, `test_setup_manager.py`, `test_performance_baselines.py`, `test_observability.py`, `test_bug_fixes.py` | Operational concerns |
 
 ## Important Notice
 
-**⚠️ USE AT YOUR OWN RISK**: This software is experimental and provided as-is without warranty of any kind. While efforts have been made to ensure data integrity, it may contain bugs that could potentially lead to data loss or corruption. Always back up your notes regularly and use caution when testing with important information.
+This software is experimental and provided as-is without warranty of any kind. While efforts have been made to ensure data integrity, it may contain bugs that could potentially lead to data loss or corruption. Always back up your notes regularly and use caution when testing with important information.
 
 ## Acknowledgments
 
