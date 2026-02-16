@@ -24,6 +24,7 @@ load_dotenv(_USER_ENV)
 logger = logging.getLogger(__name__)
 
 # gte-modernbert-base: 12 layers, 12 heads, 768 hidden_dim
+_MODEL_HIDDEN_DIM = 768
 _MODEL_NUM_HEADS = 12
 _BYTES_PER_ELEMENT = 4  # float32
 
@@ -34,12 +35,12 @@ _MEMORY_WARN_BYTES = 4 * 1024**3  # 4 GB
 def estimate_embedding_peak_memory(batch_size: int, max_tokens: int) -> float:
     """Estimate peak memory (bytes) for one embedding batch.
 
-    The attention mechanism allocates memory proportional to
-    batch_size × max_tokens² × num_heads × bytes_per_element per layer.
-    ONNX runtime doesn't materialize all layers simultaneously, so we
-    use a 3x multiplier (empirical upper-bound) on the single-layer cost.
+    Per-layer cost is proportional to batch_size × seq_len × hidden_dim ×
+    bytes_per_element. ONNX runtime doesn't materialize all layers
+    simultaneously, so we use a 3x multiplier (empirical upper-bound)
+    on the single-layer cost.
     """
-    per_layer = batch_size * (max_tokens**2) * _MODEL_NUM_HEADS * _BYTES_PER_ELEMENT
+    per_layer = batch_size * max_tokens * _MODEL_HIDDEN_DIM * _BYTES_PER_ELEMENT
     return per_layer * 3.0
 
 
