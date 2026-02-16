@@ -1698,6 +1698,7 @@ semantic-gpu = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "anyio" },
     { name = "black" },
     { name = "isort" },
     { name = "mypy" },
@@ -1734,6 +1735,7 @@ provides-extras = ["semantic", "semantic-gpu"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "anyio", specifier = ">=4.5" },
     { name = "black", specifier = ">=23.0.0" },
     { name = "isort", specifier = ">=5.12.0" },
     { name = "mypy", specifier = ">=1.0.0" },
