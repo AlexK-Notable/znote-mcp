@@ -18,11 +18,11 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 SEMANTIC_PACKAGES = [
-    "onnxruntime>=1.17.0",
+    "onnxruntime>=1.17.1",
     "tokenizers>=0.15.0",
     "huggingface-hub>=0.20.0",
     "numpy>=1.24.0",
-    "sqlite-vec>=0.1.6",
+    "sqlite-vec>=0.1.7a2",
 ]
 
 SEMANTIC_IMPORT_NAMES = [

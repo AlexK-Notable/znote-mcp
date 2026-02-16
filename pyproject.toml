@@ -35,6 +35,13 @@ semantic = [
     "numpy>=1.24.0",
     "sqlite-vec>=0.1.7a2",
 ]
+semantic-gpu = [
+    "onnxruntime-gpu>=1.17.1",
+    "tokenizers>=0.15.0",
+    "huggingface-hub>=0.20.0",
+    "numpy>=1.24.0",
+    "sqlite-vec>=0.1.7a2",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
