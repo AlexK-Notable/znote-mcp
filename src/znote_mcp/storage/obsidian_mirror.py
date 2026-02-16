@@ -45,20 +45,28 @@ class ObsidianMirror:
     def mirror_note(self, note: Note, markdown: str) -> None:
         """Mirror a single note to the Obsidian vault.
 
-        Creates ``vault/project/purpose/YYYY-MM-DD_Title_id.md``.
+        If ``note.obsidian_path`` is set, writes to
+        ``vault/{obsidian_path}/YYYY-MM-DD_Title_id.md``.
+        Otherwise falls back to ``vault/project/purpose/YYYY-MM-DD_Title_id.md``.
         """
         if not self.vault_path:
             return
 
-        safe_project = sanitize_for_terminal(note.project) or "general"
-        purpose_value = note.note_purpose.value if note.note_purpose else "general"
-        safe_purpose = sanitize_for_terminal(purpose_value) or "general"
         safe_filename = self.build_filename(note.title, note.id, note.created_at)
 
-        purpose_dir = self.vault_path / safe_project / safe_purpose
-        purpose_dir.mkdir(parents=True, exist_ok=True)
+        if note.obsidian_path:
+            # Use custom obsidian_path (already validated as safe path segments)
+            target_dir = self.vault_path / note.obsidian_path
+        else:
+            # Default: project/purpose/
+            safe_project = sanitize_for_terminal(note.project) or "general"
+            purpose_value = note.note_purpose.value if note.note_purpose else "general"
+            safe_purpose = sanitize_for_terminal(purpose_value) or "general"
+            target_dir = self.vault_path / safe_project / safe_purpose
 
-        obsidian_file_path = purpose_dir / f"{safe_filename}.md"
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        obsidian_file_path = target_dir / f"{safe_filename}.md"
 
         obsidian_markdown = self.rewrite_links(markdown)
         obsidian_markdown = self.normalize_markdown(obsidian_markdown)

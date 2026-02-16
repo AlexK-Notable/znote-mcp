@@ -366,6 +366,10 @@ class Note(BaseModel):
         default=None,
         description="Groups related planning notes (auto-generated for planning purpose)",
     )
+    obsidian_path: Optional[str] = Field(
+        default=None,
+        description="Custom Obsidian vault subdirectory (e.g. 'project/domain/workflow/topic'). When set, overrides default project/purpose/ organization.",
+    )
     tags: List[Tag] = Field(default_factory=list, description="Tags for categorization")
     links: List[Link] = Field(default_factory=list, description="Links to other notes")
     created_at: datetime.datetime = Field(
@@ -404,6 +408,16 @@ class Note(BaseModel):
         if not v.strip():
             return None
         return validate_safe_path_component(v, "Plan ID")
+
+    @field_validator("obsidian_path")
+    @classmethod
+    def validate_obsidian_path(cls, v: Optional[str]) -> Optional[str]:
+        """Validate obsidian_path uses safe directory segments."""
+        if v is None:
+            return None
+        if not v.strip():
+            return None
+        return validate_project_path(v)
 
     @field_validator("title")
     @classmethod
@@ -481,13 +495,20 @@ class Note(BaseModel):
                 ]
             )
         # Apply template
-        return config.default_note_template.format(
+        result = config.default_note_template.format(
             title=self.title,
             content=self.content,
             created_at=self.created_at.isoformat(),
             tags=tags_str,
             links=links_str,
         )
+        # Insert obsidian_path into Metadata section when set
+        if self.obsidian_path:
+            result = result.replace(
+                f"- Tags: {tags_str}\n",
+                f"- Tags: {tags_str}\n- Obsidian Path: {self.obsidian_path}\n",
+            )
+        return result
 
 
 class Project(BaseModel):

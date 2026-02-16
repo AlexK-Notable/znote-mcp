@@ -88,6 +88,9 @@ class MarkdownParser:
         # Extract plan_id
         plan_id = metadata.get("plan_id")
 
+        # Extract obsidian_path
+        obsidian_path = metadata.get("obsidian_path")
+
         # Extract tags
         tags_str = metadata.get("tags", "")
         if isinstance(tags_str, str):
@@ -123,6 +126,7 @@ class MarkdownParser:
             note_purpose=note_purpose,
             project=project,
             plan_id=plan_id,
+            obsidian_path=obsidian_path,
             tags=tags,
             links=links,
             created_at=created_at,
@@ -138,6 +142,7 @@ class MarkdownParser:
                     "purpose",
                     "project",
                     "plan_id",
+                    "obsidian_path",
                     "tags",
                     "created",
                     "updated",
@@ -170,6 +175,8 @@ class MarkdownParser:
         }
         if note.plan_id:
             metadata["plan_id"] = note.plan_id
+        if note.obsidian_path:
+            metadata["obsidian_path"] = note.obsidian_path
         metadata.update(note.metadata)
 
         # Ensure content starts with title heading

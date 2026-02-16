@@ -713,6 +713,7 @@ class NoteRepository(Repository[Note]):
                 note.note_purpose.value if note.note_purpose else "general"
             )
             db_note.plan_id = note.plan_id
+            db_note.obsidian_path = note.obsidian_path
             db_note.updated_at = note.updated_at
             db_note.project = note.project
         else:
@@ -725,6 +726,7 @@ class NoteRepository(Repository[Note]):
                     note.note_purpose.value if note.note_purpose else "general"
                 ),
                 plan_id=note.plan_id,
+                obsidian_path=note.obsidian_path,
                 created_at=note.created_at,
                 updated_at=note.updated_at,
                 project=note.project,
@@ -845,6 +847,7 @@ class NoteRepository(Repository[Note]):
             ),
             project=db_note.project or "general",
             plan_id=db_note.plan_id,
+            obsidian_path=db_note.obsidian_path,
             tags=tags,
             links=links,
             created_at=(
@@ -928,6 +931,7 @@ class NoteRepository(Repository[Note]):
         title: Optional[str] = None,
         project: Optional[str] = None,
         note_purpose: Optional["NotePurpose"] = None,
+        obsidian_path: Optional[str] = None,
     ) -> None:
         """Delete a note's mirror from the Obsidian vault if configured.
 
@@ -939,6 +943,7 @@ class NoteRepository(Repository[Note]):
             title: The note's title (not currently used but available for future).
             project: The project name for targeted directory search.
             note_purpose: The note's purpose for targeted directory search.
+            obsidian_path: Custom Obsidian path override (searched first).
         """
         if not self.obsidian_vault_path:
             return
@@ -948,7 +953,14 @@ class NoteRepository(Repository[Note]):
 
         # Determine which directories to search
         search_dirs: List[Path] = []
-        if project:
+
+        # Check obsidian_path first (custom override)
+        if obsidian_path:
+            custom_dir = self.obsidian_vault_path / obsidian_path
+            if custom_dir.exists():
+                search_dirs.append(custom_dir)
+
+        if not search_dirs and project:
             safe_project = sanitize_for_terminal(project) or "general"
             project_dir = self.obsidian_vault_path / safe_project
 
@@ -1292,17 +1304,19 @@ class NoteRepository(Repository[Note]):
             if not existing_note:
                 raise NoteNotFoundError(note.id)
 
-            # If title, project, or purpose changed, delete old Obsidian mirror (will be recreated)
+            # If title, project, purpose, or obsidian_path changed, delete old Obsidian mirror (will be recreated)
             if (
                 existing_note.title != note.title
                 or existing_note.project != note.project
                 or existing_note.note_purpose != note.note_purpose
+                or existing_note.obsidian_path != note.obsidian_path
             ):
                 self._delete_from_obsidian(
                     note.id,
                     existing_note.title,
                     existing_note.project,
                     existing_note.note_purpose,
+                    existing_note.obsidian_path,
                 )
 
             # Update timestamp
@@ -2160,6 +2174,7 @@ class NoteRepository(Repository[Note]):
                             ),
                             project=note.project,
                             plan_id=note.plan_id,
+                            obsidian_path=note.obsidian_path,
                             created_at=note.created_at,
                             updated_at=note.updated_at,
                         )

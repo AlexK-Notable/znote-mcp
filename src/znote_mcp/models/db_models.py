@@ -52,6 +52,7 @@ class DBNote(Base):
     updated_at = Column(DateTime, default=utc_now, nullable=False)
     project = Column(String(255), default="general", nullable=False, index=True)
     plan_id = Column(String(255), nullable=True, index=True)
+    obsidian_path = Column(String(500), nullable=True)
 
     # Relationships
     tags = relationship("DBTag", secondary=note_tags, back_populates="notes")
@@ -221,6 +222,7 @@ def init_db(in_memory: bool = False) -> None:
     if not in_memory:
         _migrate_add_project_column(engine)
         _migrate_add_note_purpose_columns(engine)
+        _migrate_add_obsidian_path_column(engine)
 
     # Create FTS5 virtual table for full-text search
     # (works for both in-memory and persistent)
@@ -281,6 +283,25 @@ def _migrate_add_note_purpose_columns(engine) -> None:
             conn.execute(text("ALTER TABLE notes ADD COLUMN plan_id VARCHAR(255)"))
 
         conn.commit()
+
+
+def _migrate_add_obsidian_path_column(engine) -> None:
+    """Migration: Add obsidian_path column to existing databases.
+
+    When set, ObsidianMirror uses this path instead of the default
+    project/purpose/ directory structure.
+    """
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    columns = [col["name"] for col in inspector.get_columns("notes")]
+
+    if "obsidian_path" not in columns:
+        with engine.connect() as conn:
+            conn.execute(
+                text("ALTER TABLE notes ADD COLUMN obsidian_path VARCHAR(500)")
+            )
+            conn.commit()
 
 
 def init_fts5(engine) -> None:

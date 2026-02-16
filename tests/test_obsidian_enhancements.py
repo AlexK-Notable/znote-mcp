@@ -512,3 +512,77 @@ class TestObsidianFrontmatter:
         # Source should NOT contain aliases or cssclasses
         assert "aliases" not in source_content
         assert "cssclasses" not in source_content
+
+
+# =============================================================================
+# Obsidian Path Override Tests
+# =============================================================================
+
+
+class TestObsidianPathOverride:
+    """Tests for obsidian_path custom directory override."""
+
+    def _make_mirror(self, vault_path):
+        """Create an ObsidianMirror with a no-op resolver."""
+        return ObsidianMirror(vault_path, note_resolver=lambda _: None)
+
+    def test_mirror_uses_obsidian_path_when_set(self, tmp_path):
+        """When obsidian_path is set, mirror writes to vault/{obsidian_path}/."""
+        mirror = self._make_mirror(tmp_path)
+
+        note = Note(
+            title="Custom Path Note",
+            content="Some content.",
+            project="myproject",
+            note_purpose=NotePurpose.RESEARCH,
+            obsidian_path="myproject/agents/research/topic-a",
+        )
+        markdown = f"---\ntitle: {note.title}\n---\n{note.content}"
+        mirror.mirror_note(note, markdown)
+
+        # File should be under the custom obsidian_path, NOT project/purpose
+        custom_dir = tmp_path / "myproject" / "agents" / "research" / "topic-a"
+        assert custom_dir.exists()
+        md_files = list(custom_dir.glob("*.md"))
+        assert len(md_files) == 1
+
+        # Default path should NOT exist
+        default_dir = tmp_path / "myproject" / "research"
+        assert not default_dir.exists()
+
+    def test_mirror_falls_back_without_obsidian_path(self, tmp_path):
+        """When obsidian_path is not set, mirror uses project/purpose/."""
+        mirror = self._make_mirror(tmp_path)
+
+        note = Note(
+            title="Default Path Note",
+            content="Some content.",
+            project="myproject",
+            note_purpose=NotePurpose.PLANNING,
+        )
+        markdown = f"---\ntitle: {note.title}\n---\n{note.content}"
+        mirror.mirror_note(note, markdown)
+
+        # File should be under project/purpose/
+        default_dir = tmp_path / "myproject" / "planning"
+        assert default_dir.exists()
+        md_files = list(default_dir.glob("*.md"))
+        assert len(md_files) == 1
+
+    def test_mirror_handles_nested_obsidian_path(self, tmp_path):
+        """obsidian_path with deep nesting creates all intermediate dirs."""
+        mirror = self._make_mirror(tmp_path)
+
+        note = Note(
+            title="Deep Path Note",
+            content="Content.",
+            project="proj",
+            obsidian_path="proj/sub/deep/nest",
+        )
+        markdown = f"---\ntitle: {note.title}\n---\n{note.content}"
+        mirror.mirror_note(note, markdown)
+
+        deep_dir = tmp_path / "proj" / "sub" / "deep" / "nest"
+        assert deep_dir.exists()
+        md_files = list(deep_dir.glob("*.md"))
+        assert len(md_files) == 1

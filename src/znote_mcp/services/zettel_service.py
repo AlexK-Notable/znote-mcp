@@ -386,6 +386,7 @@ class ZettelService:
         note_purpose: NotePurpose = NotePurpose.GENERAL,
         tags: Optional[List[str]] = None,
         plan_id: Optional[str] = None,
+        obsidian_path: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Note:
         """Create a new note.
@@ -398,6 +399,7 @@ class ZettelService:
             note_purpose: Workflow purpose (research, planning, bugfixing, general).
             tags: List of tag names.
             plan_id: Optional ID of associated plan/task.
+            obsidian_path: Custom Obsidian vault subdirectory override.
             metadata: Additional metadata dict.
 
         Returns:
@@ -432,6 +434,7 @@ class ZettelService:
             note_purpose=note_purpose,
             tags=[Tag(name=tag) for tag in (tags or [])],
             plan_id=plan_id,
+            obsidian_path=obsidian_path,
             metadata=metadata or {},
         )
 
@@ -1192,6 +1195,7 @@ class ZettelService:
         note_purpose: Optional[NotePurpose] = None,
         tags: Optional[List[str]] = None,
         plan_id: Optional[str] = None,
+        obsidian_path: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         expected_version: Optional[str] = None,
     ) -> Union[VersionedNote, ConflictResult]:
@@ -1209,6 +1213,7 @@ class ZettelService:
             note_purpose: New purpose (optional).
             tags: New tags list (optional).
             plan_id: New plan ID (optional, empty string clears).
+            obsidian_path: Custom Obsidian vault subdirectory (optional, empty string clears).
             metadata: New metadata (optional).
             expected_version: Expected version hash for conflict detection.
 
@@ -1237,6 +1242,8 @@ class ZettelService:
             note.tags = [Tag(name=tag) for tag in tags]
         if plan_id is not None:
             note.plan_id = plan_id if plan_id else None  # Empty string clears
+        if obsidian_path is not None:
+            note.obsidian_path = obsidian_path if obsidian_path else None  # Empty string clears
         if metadata is not None:
             note.metadata = metadata
 

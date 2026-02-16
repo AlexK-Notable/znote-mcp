@@ -188,6 +188,7 @@ class ZettelkastenMcpServer:
             note_purpose: str = "general",
             tags: Optional[str] = None,
             plan_id: Optional[str] = None,
+            obsidian_path: Optional[str] = None,
         ) -> str:
             """Create a new Zettelkasten note.
             Args:
@@ -198,6 +199,7 @@ class ZettelkastenMcpServer:
                 note_purpose: Workflow category (research, planning, bugfixing, general). Auto-inferred from content if left as 'general' - set explicitly only when the auto-inference would be wrong
                 tags: Comma-separated list of tags (optional)
                 plan_id: Optional ID to group related planning notes
+                obsidian_path: Custom Obsidian vault subdirectory (e.g. 'project/domain/workflow/topic'). When set, overrides default project/purpose/ organization.
             """
             with timed_operation("zk_create_note", title=title[:30]) as op:
                 try:
@@ -228,6 +230,7 @@ class ZettelkastenMcpServer:
                         note_purpose=purpose_enum,
                         tags=tag_list,
                         plan_id=plan_id,
+                        obsidian_path=obsidian_path,
                     )
                     op["note_id"] = note.id
                     return f"Note created successfully with ID: {note.id} (project: {note.project})"
@@ -277,6 +280,8 @@ class ZettelkastenMcpServer:
                     result += f"Type: {note.note_type.value}\n"
                     result += f"Project: {note.project}\n"
                     result += f"Purpose: {note.note_purpose.value if note.note_purpose else 'general'}\n"
+                    if note.obsidian_path:
+                        result += f"Obsidian Path: {note.obsidian_path}\n"
                     if note.plan_id:
                         result += f"Plan ID: {note.plan_id}\n"
                     result += f"Created: {note.created_at.isoformat()}\n"
@@ -330,6 +335,7 @@ class ZettelkastenMcpServer:
             note_purpose: Optional[str] = None,
             tags: Optional[str] = None,
             plan_id: Optional[str] = None,
+            obsidian_path: Optional[str] = None,
             expected_version: Optional[str] = None,
         ) -> str:
             """Update an existing note, or batch-move multiple notes to a project.
@@ -347,6 +353,7 @@ class ZettelkastenMcpServer:
                 note_purpose: New workflow category (research, planning, bugfixing, general) - optional, single-note only
                 tags: New comma-separated list of tags (optional, single-note only)
                 plan_id: New plan ID (optional, use empty string to clear, single-note only)
+                obsidian_path: Custom Obsidian vault subdirectory (optional, single-note only). Use empty string to clear.
                 expected_version: Version hash from zk_get_note for conflict detection (single-note only).
                     If provided and doesn't match current version, returns CONFLICT error
                     instead of overwriting (recommended for multi-process safety).
@@ -369,6 +376,7 @@ class ZettelkastenMcpServer:
                             note_purpose,
                             tags,
                             plan_id,
+                            obsidian_path,
                             expected_version,
                         ]
                     )
@@ -420,6 +428,7 @@ class ZettelkastenMcpServer:
                     note_purpose=purpose_enum,
                     tags=tag_list,
                     plan_id=plan_id,
+                    obsidian_path=obsidian_path,
                     expected_version=expected_version,
                 )
 

@@ -786,3 +786,112 @@ class TestMCPProtocolSemantic:
         text = get_text(result)
         # Auto mode with embeddings available should work without error
         assert "error" not in text.lower() or "Auto Mode Test" in text
+
+
+# =============================================================================
+# 10. Obsidian Path Override
+# =============================================================================
+
+
+class TestObsidianPathProtocol:
+    """Verify obsidian_path field through the MCP protocol."""
+
+    @pytest.mark.anyio
+    async def test_create_note_with_obsidian_path(self, mcp_client):
+        """Create a note with obsidian_path and verify it persists."""
+        result = await mcp_client.call_tool(
+            "zk_create_note",
+            {
+                "title": "Obsidian Path Test",
+                "content": "Testing custom obsidian path.",
+                "obsidian_path": "komi-zone/agents/research/test-topic",
+            },
+        )
+        text = get_text(result)
+        assert "created successfully" in text
+        note_id = extract_note_id_from_protocol(result)
+
+        # Read back and verify obsidian_path is in the output
+        get_result = await mcp_client.call_tool(
+            "zk_get_note", {"identifier": note_id, "format": "markdown"}
+        )
+        get_text_content = get_text(get_result)
+        assert "Obsidian Path" in get_text_content
+        assert "komi-zone/agents/research/test-topic" in get_text_content
+
+    @pytest.mark.anyio
+    async def test_create_note_without_obsidian_path(self, mcp_client):
+        """Create a note without obsidian_path — field should not appear in markdown."""
+        result = await mcp_client.call_tool(
+            "zk_create_note",
+            {
+                "title": "No Obsidian Path",
+                "content": "No custom path set.",
+            },
+        )
+        note_id = extract_note_id_from_protocol(result)
+
+        get_result = await mcp_client.call_tool(
+            "zk_get_note", {"identifier": note_id, "format": "markdown"}
+        )
+        get_text_content = get_text(get_result)
+        assert "obsidian_path" not in get_text_content
+
+    @pytest.mark.anyio
+    async def test_update_note_obsidian_path(self, mcp_client):
+        """Update a note to add obsidian_path, then verify."""
+        result = await mcp_client.call_tool(
+            "zk_create_note",
+            {
+                "title": "Update Path Test",
+                "content": "Will get a path later.",
+            },
+        )
+        note_id = extract_note_id_from_protocol(result)
+
+        # Update with obsidian_path
+        update_result = await mcp_client.call_tool(
+            "zk_update_note",
+            {
+                "note_id": note_id,
+                "obsidian_path": "myproject/docs/planning/feature-x",
+            },
+        )
+        update_text = get_text(update_result)
+        assert "updated" in update_text.lower() or "success" in update_text.lower()
+
+        # Verify it persists
+        get_result = await mcp_client.call_tool(
+            "zk_get_note", {"identifier": note_id, "format": "markdown"}
+        )
+        get_text_content = get_text(get_result)
+        assert "myproject/docs/planning/feature-x" in get_text_content
+
+    @pytest.mark.anyio
+    async def test_clear_obsidian_path(self, mcp_client):
+        """Setting obsidian_path to empty string should clear it."""
+        result = await mcp_client.call_tool(
+            "zk_create_note",
+            {
+                "title": "Clear Path Test",
+                "content": "Has a path initially.",
+                "obsidian_path": "some/custom/path",
+            },
+        )
+        note_id = extract_note_id_from_protocol(result)
+
+        # Clear it
+        await mcp_client.call_tool(
+            "zk_update_note",
+            {
+                "note_id": note_id,
+                "obsidian_path": "",
+            },
+        )
+
+        # Verify it's gone
+        get_result = await mcp_client.call_tool(
+            "zk_get_note", {"identifier": note_id, "format": "markdown"}
+        )
+        get_text_content = get_text(get_result)
+        assert "obsidian_path" not in get_text_content
