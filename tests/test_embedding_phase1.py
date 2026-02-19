@@ -420,7 +420,12 @@ class TestRerankerIdleTimeout:
 class TestEmbeddingConfig:
     """Test embedding-related config fields."""
 
-    def test_defaults(self):
+    def test_defaults(self, monkeypatch):
+        # Clear env vars that override defaults (user's .env is loaded at import)
+        monkeypatch.delenv("ZETTELKASTEN_EMBEDDINGS_ENABLED", raising=False)
+        monkeypatch.delenv("ZETTELKASTEN_EMBEDDING_MAX_TOKENS", raising=False)
+        monkeypatch.delenv("ZETTELKASTEN_EMBEDDING_BATCH_SIZE", raising=False)
+        monkeypatch.delenv("ZETTELKASTEN_RERANKER_IDLE_TIMEOUT", raising=False)
         cfg = ZettelkastenConfig()
         # Default is False (safe for users without semantic deps);
         # main.py auto-enables when ensure_semantic_deps() succeeds.

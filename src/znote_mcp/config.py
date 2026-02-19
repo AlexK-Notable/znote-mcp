@@ -35,13 +35,17 @@ _MEMORY_WARN_BYTES = 4 * 1024**3  # 4 GB
 def estimate_embedding_peak_memory(batch_size: int, max_tokens: int) -> float:
     """Estimate peak memory (bytes) for one embedding batch.
 
-    Per-layer cost is proportional to batch_size × seq_len × hidden_dim ×
-    bytes_per_element. ONNX runtime doesn't materialize all layers
-    simultaneously, so we use a 3x multiplier (empirical upper-bound)
-    on the single-layer cost.
+    The dominant cost is the self-attention matrix: for each attention head,
+    ONNX Runtime (without Flash Attention) materializes a full
+    (seq_len × seq_len) score matrix per batch item.
+
+    Formula: batch_size × num_heads × seq_len² × bytes_per_element
+    This is an O(seq²) cost — doubling max_tokens quadruples memory.
     """
-    per_layer = batch_size * max_tokens * _MODEL_HIDDEN_DIM * _BYTES_PER_ELEMENT
-    return per_layer * 3.0
+    attention_bytes = (
+        batch_size * _MODEL_NUM_HEADS * max_tokens * max_tokens * _BYTES_PER_ELEMENT
+    )
+    return attention_bytes
 
 
 def get_available_memory_bytes() -> Optional[float]:
@@ -144,6 +148,15 @@ class ZettelkastenConfig(BaseModel):
     # comma-separated list like "CUDAExecutionProvider,CPUExecutionProvider"
     onnx_providers: str = Field(
         default_factory=lambda: os.getenv("ZETTELKASTEN_ONNX_PROVIDERS", "auto")
+    )
+    # Use INT8 quantized ONNX models (model_quantized.onnx) for ~4x smaller
+    # model size and faster inference at ~97% quality retention.
+    # Requires quantized models to exist in the model cache directory.
+    onnx_quantized: bool = Field(
+        default_factory=lambda: os.getenv(
+            "ZETTELKASTEN_ONNX_QUANTIZED", "false"
+        ).lower()
+        in ("true", "1", "yes")
     )
     # Chunking: notes longer than this (in tokens) get split into overlapping chunks
     embedding_chunk_size: int = Field(

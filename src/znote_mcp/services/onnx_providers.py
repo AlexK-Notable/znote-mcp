@@ -12,12 +12,62 @@ Models:
 from __future__ import annotations
 
 import logging
+import os
+import resource
+import time as _time
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+def _get_rss_mb() -> float:
+    """Return current RSS (Resident Set Size) in MB via /proc on Linux,
+    falling back to resource.getrusage elsewhere."""
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) / 1024  # kB → MB
+    except (OSError, ValueError):
+        pass
+    # Fallback: ru_maxrss is in KB on Linux
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+
+
+def _get_peak_rss_mb() -> float:
+    """Return peak RSS (VmHWM) in MB."""
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmHWM:"):
+                    return int(line.split()[1]) / 1024  # kB → MB
+    except (OSError, ValueError):
+        pass
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+
+
+def _get_cpu_percent(interval_cpu_time: float, interval_wall_time: float) -> float:
+    """Compute CPU utilization % over an interval.
+
+    Args:
+        interval_cpu_time: CPU time consumed during interval (seconds).
+        interval_wall_time: Wall clock time during interval (seconds).
+
+    Returns:
+        CPU usage percentage (0-100 * num_cores).
+    """
+    if interval_wall_time <= 0:
+        return 0.0
+    return (interval_cpu_time / interval_wall_time) * 100
+
+
+def _cpu_time() -> float:
+    """Return total process CPU time (user + system) in seconds."""
+    t = os.times()
+    return t.user + t.system
 
 # Lazy imports — these are optional dependencies
 # These are populated by _ensure_imports()
@@ -174,7 +224,12 @@ class OnnxEmbeddingProvider:
             return  # Already loaded
 
         _ensure_imports()
-        logger.info(f"Loading embedding model: {self._model_id}")
+        rss_before = _get_rss_mb()
+        logger.info(
+            f"Loading embedding model: {self._model_id} "
+            f"[{self._onnx_filename}] "
+            f"(RSS before load: {rss_before:.0f}MB)"
+        )
 
         # Download model files
         model_dir = _download_model_files(
@@ -189,13 +244,23 @@ class OnnxEmbeddingProvider:
         self._tokenizer.enable_truncation(max_length=self._max_length)
         self._tokenizer.enable_padding(length=None)  # Dynamic padding per batch
 
-        # Load ONNX model
+        # Load ONNX model (fall back to FP32 if quantized not found)
         onnx_path = model_dir / self._onnx_filename
         if not onnx_path.exists():
-            raise FileNotFoundError(
-                f"ONNX model not found at {onnx_path}. "
-                f"Check that {self._model_id} has an ONNX model at {self._onnx_filename}"
-            )
+            fallback = "onnx/model.onnx"
+            fallback_path = model_dir / fallback
+            if self._onnx_filename != fallback and fallback_path.exists():
+                logger.warning(
+                    f"Quantized model not found at {onnx_path}, "
+                    f"falling back to {fallback}"
+                )
+                onnx_path = fallback_path
+                self._onnx_filename = fallback
+            else:
+                raise FileNotFoundError(
+                    f"ONNX model not found at {onnx_path}. "
+                    f"Check that {self._model_id} has an ONNX model at {self._onnx_filename}"
+                )
 
         sess_options = _ort.SessionOptions()
         sess_options.graph_optimization_level = (
@@ -203,6 +268,14 @@ class OnnxEmbeddingProvider:
         )
 
         providers = _resolve_providers(self._providers_pref)
+
+        # Disable CPU memory arena — ONNX Runtime's arena allocator never
+        # returns memory between batches (onnxruntime#23339), causing RSS
+        # to grow monotonically during reindex.
+        if providers == ["CPUExecutionProvider"]:
+            sess_options.enable_cpu_mem_arena = False
+            logger.info("CPU memory arena disabled (prevents memory hoarding)")
+
         # Build provider_options list matching providers order
         cuda_opts = _cuda_session_options()
         provider_options = [cuda_opts.get(p, {}) for p in providers]
@@ -220,16 +293,23 @@ class OnnxEmbeddingProvider:
             self._dim = outputs[0].shape[-1]
 
         active = self._session.get_providers()
+        rss_after = _get_rss_mb()
         logger.info(
             f"Embedding model loaded: dim={self._dim}, "
-            f"max_tokens={self._max_length}, providers={active}"
+            f"max_tokens={self._max_length}, providers={active}, "
+            f"RSS: {rss_after:.0f}MB (+{rss_after - rss_before:.0f}MB)"
         )
 
     def unload(self) -> None:
         """Release model from memory."""
+        rss_before = _get_rss_mb()
         self._session = None
         self._tokenizer = None
-        logger.info(f"Embedding model unloaded: {self._model_id}")
+        rss_after = _get_rss_mb()
+        logger.info(
+            f"Embedding model unloaded: {self._model_id}, "
+            f"RSS: {rss_after:.0f}MB (freed ~{rss_before - rss_after:.0f}MB)"
+        )
 
     @property
     def is_loaded(self) -> bool:
@@ -291,18 +371,183 @@ class OnnxEmbeddingProvider:
     def embed_batch(
         self, texts: Sequence[str], batch_size: int = 32
     ) -> List[np.ndarray]:
-        """Embed multiple texts, processing in batches."""
+        """Embed multiple texts, processing in fixed-size batches."""
         if not self.is_loaded:
             self.load()
 
+        total_batches = (len(texts) + batch_size - 1) // batch_size
+        rss_start = _get_rss_mb()
+        cpu_start = _cpu_time()
+        logger.info(
+            f"embed_batch: {len(texts)} texts in {total_batches} batches "
+            f"(batch_size={batch_size}, max_tokens={self._max_length}), "
+            f"RSS: {rss_start:.0f}MB"
+        )
+
         results: List[np.ndarray] = []
+        t0_total = _time.perf_counter()
+
         for i in range(0, len(texts), batch_size):
+            batch_num = i // batch_size + 1
             batch = texts[i : i + batch_size]
+
+            t0 = _time.perf_counter()
+            cpu_t0 = _cpu_time()
             inputs = self._tokenize(batch)
+            max_seq_len = inputs["input_ids"].shape[1]
             embeddings = self._forward(inputs)
+            elapsed = _time.perf_counter() - t0
+            cpu_elapsed = _cpu_time() - cpu_t0
+
             results.extend(embeddings[j] for j in range(len(batch)))
+            rss_now = _get_rss_mb()
+            cpu_pct = _get_cpu_percent(cpu_elapsed, elapsed)
+            logger.info(
+                f"  batch {batch_num}/{total_batches}: "
+                f"{len(batch)} texts, seq_len={max_seq_len}, "
+                f"{elapsed:.2f}s, "
+                f"CPU: {cpu_pct:.0f}%, RSS: {rss_now:.0f}MB"
+            )
+
+        total_elapsed = _time.perf_counter() - t0_total
+        total_cpu = _cpu_time() - cpu_start
+        rss_end = _get_rss_mb()
+        peak_rss = _get_peak_rss_mb()
+        logger.info(
+            f"embed_batch complete: {len(texts)} texts in {total_elapsed:.1f}s "
+            f"({len(texts) / max(total_elapsed, 0.001):.1f} texts/sec), "
+            f"CPU: {_get_cpu_percent(total_cpu, total_elapsed):.0f}% avg, "
+            f"RSS: {rss_end:.0f}MB (delta {rss_end - rss_start:+.0f}MB), "
+            f"peak RSS: {peak_rss:.0f}MB"
+        )
 
         return results
+
+    def embed_batch_adaptive(
+        self,
+        texts: Sequence[str],
+        memory_budget_gb: float = 4.0,
+    ) -> List[np.ndarray]:
+        """Embed texts with dynamic batch sizes based on text length.
+
+        Groups texts by token count into size buckets. Each bucket gets
+        the largest safe batch size for its token range, computed from a
+        memory budget (attention matrix: batch * heads * seq² * 4 bytes).
+
+        This gives full-coverage embeddings (no truncation) while staying
+        within the memory budget.  Short notes are processed in large
+        batches (fast), long notes in small batches (safe).
+
+        Args:
+            texts: Texts to embed.
+            memory_budget_gb: Max attention memory in GB (default 4.0).
+
+        Returns:
+            List of embedding vectors in the same order as input texts.
+        """
+        if not self.is_loaded:
+            self.load()
+
+        if not texts:
+            return []
+
+        _ensure_imports()
+        t0_total = _time.perf_counter()
+        cpu_start = _cpu_time()
+        rss_start = _get_rss_mb()
+
+        # Define token buckets and memory constants
+        _NUM_HEADS = 12
+        budget_bytes = memory_budget_gb * 1024**3
+        bucket_limits = [512, 1024, 2048, 4096, 8192, 16384]
+
+        # Pre-tokenize to get actual token counts (fast, no ONNX inference).
+        # Disable padding and raise truncation so we see true lengths.
+        max_bucket = max(bucket_limits)
+        self._tokenizer.no_padding()
+        self._tokenizer.enable_truncation(max_length=max_bucket)
+        try:
+            encodings = self._tokenizer.encode_batch(list(texts))
+            lengths = [len(e.ids) for e in encodings]
+        finally:
+            self._tokenizer.enable_padding(length=None)  # Restore dynamic padding
+            self._tokenizer.enable_truncation(max_length=self._max_length)
+
+        # Sort by length, keeping original indices
+        indexed = sorted(enumerate(lengths), key=lambda x: x[1])
+
+        results: List[Optional[np.ndarray]] = [None] * len(texts)
+
+        cursor = 0
+        total_processed = 0
+        for limit in bucket_limits:
+            # Collect texts that fall into this bucket
+            bucket_start = cursor
+            while cursor < len(indexed) and indexed[cursor][1] <= limit:
+                cursor += 1
+
+            count = cursor - bucket_start
+            if count == 0:
+                continue
+
+            # Safe batch size for this token range
+            per_item = _NUM_HEADS * limit * limit * 4
+            batch_size = max(1, min(64, int(budget_bytes / per_item)))
+
+            bucket_indices = [indexed[i][0] for i in range(bucket_start, cursor)]
+            bucket_texts = [texts[idx] for idx in bucket_indices]
+
+            # Temporarily raise tokenizer truncation to this bucket's limit
+            self._tokenizer.enable_truncation(max_length=limit)
+
+            mem_per_batch = batch_size * per_item / 1024**3
+            logger.info(
+                f"adaptive bucket ≤{limit}: {count} texts, "
+                f"batch_size={batch_size}, mem≈{mem_per_batch:.2f}GB/batch"
+            )
+
+            try:
+                vectors = self.embed_batch(bucket_texts, batch_size=batch_size)
+                for idx, vec in zip(bucket_indices, vectors):
+                    results[idx] = vec
+                total_processed += count
+            finally:
+                # Restore original truncation
+                self._tokenizer.enable_truncation(max_length=self._max_length)
+
+        # Handle any texts beyond the largest bucket (batch=1)
+        if cursor < len(indexed):
+            remaining = len(indexed) - cursor
+            max_token = indexed[-1][1]
+            logger.info(
+                f"adaptive bucket >{bucket_limits[-1]}: {remaining} texts "
+                f"(max {max_token} tokens), batch_size=1"
+            )
+
+            self._tokenizer.enable_truncation(max_length=max_token + 64)
+            try:
+                for i in range(cursor, len(indexed)):
+                    orig_idx, _ = indexed[i]
+                    vec = self.embed(texts[orig_idx])
+                    results[orig_idx] = vec
+                    total_processed += 1
+            finally:
+                self._tokenizer.enable_truncation(max_length=self._max_length)
+
+        total_elapsed = _time.perf_counter() - t0_total
+        total_cpu = _cpu_time() - cpu_start
+        rss_end = _get_rss_mb()
+        peak_rss = _get_peak_rss_mb()
+        logger.info(
+            f"embed_batch_adaptive complete: {total_processed} texts "
+            f"in {total_elapsed:.1f}s "
+            f"({total_processed / max(total_elapsed, 0.001):.1f} texts/sec), "
+            f"CPU: {_get_cpu_percent(total_cpu, total_elapsed):.0f}% avg, "
+            f"RSS: {rss_end:.0f}MB (delta {rss_end - rss_start:+.0f}MB), "
+            f"peak RSS: {peak_rss:.0f}MB"
+        )
+
+        return results  # type: ignore[return-value]
 
 
 class OnnxRerankerProvider:
@@ -345,7 +590,11 @@ class OnnxRerankerProvider:
             return
 
         _ensure_imports()
-        logger.info(f"Loading reranker model: {self._model_id}")
+        rss_before = _get_rss_mb()
+        logger.info(
+            f"Loading reranker model: {self._model_id} "
+            f"(RSS before load: {rss_before:.0f}MB)"
+        )
 
         model_dir = _download_model_files(
             self._model_id,
@@ -374,6 +623,11 @@ class OnnxRerankerProvider:
         )
 
         providers = _resolve_providers(self._providers_pref)
+
+        # Disable CPU memory arena (same rationale as embedder)
+        if providers == ["CPUExecutionProvider"]:
+            sess_options.enable_cpu_mem_arena = False
+
         cuda_opts = _cuda_session_options()
         provider_options = [cuda_opts.get(p, {}) for p in providers]
 
@@ -385,13 +639,22 @@ class OnnxRerankerProvider:
         )
 
         active = self._session.get_providers()
-        logger.info(f"Reranker model loaded: {self._model_id}, providers={active}")
+        rss_after = _get_rss_mb()
+        logger.info(
+            f"Reranker model loaded: {self._model_id}, providers={active}, "
+            f"RSS: {rss_after:.0f}MB (+{rss_after - rss_before:.0f}MB)"
+        )
 
     def unload(self) -> None:
         """Release reranker model from memory."""
+        rss_before = _get_rss_mb()
         self._session = None
         self._tokenizer = None
-        logger.info(f"Reranker model unloaded: {self._model_id}")
+        rss_after = _get_rss_mb()
+        logger.info(
+            f"Reranker model unloaded: {self._model_id}, "
+            f"RSS: {rss_after:.0f}MB (freed ~{rss_before - rss_after:.0f}MB)"
+        )
 
     @property
     def is_loaded(self) -> bool:

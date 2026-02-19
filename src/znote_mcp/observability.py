@@ -111,6 +111,12 @@ def configure_logging(
     root_logger = logging.getLogger("zettelkasten")
     root_logger.setLevel(level)
 
+    # Also configure the znote_mcp logger hierarchy so all service loggers
+    # (znote_mcp.services.onnx_providers, znote_mcp.services.zettel_service, etc.)
+    # write to the same log file
+    znote_logger = logging.getLogger("znote_mcp")
+    znote_logger.setLevel(level)
+
     # Also configure the module logger
     module_logger = logging.getLogger(__name__)
     module_logger.setLevel(level)
@@ -129,6 +135,7 @@ def configure_logging(
     file_handler.setLevel(level)
     file_handler.setFormatter(formatter)
     root_logger.addHandler(file_handler)
+    znote_logger.addHandler(file_handler)
 
     # Optionally add console handler
     if console and not any(

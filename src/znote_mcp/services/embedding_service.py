@@ -208,6 +208,41 @@ class EmbeddingService:
                 original_error=e,
             )
 
+    def embed_batch_adaptive(
+        self, texts: Sequence[str], memory_budget_gb: float = 4.0
+    ) -> List["np.ndarray"]:
+        """Embed texts with dynamic batch sizes based on text length.
+
+        Groups texts by token count and uses larger batches for shorter
+        texts.  Gives full-coverage embeddings (no truncation) while
+        staying within the memory budget.
+
+        Args:
+            texts: Sequence of input texts.
+            memory_budget_gb: Max attention memory in GB (default 4.0).
+
+        Returns:
+            List of 1-D numpy arrays, each of shape (dimension,).
+
+        Raises:
+            EmbeddingError: If model loading or inference fails.
+        """
+        self._ensure_embedder()
+        if not hasattr(self._embedder, "embed_batch_adaptive"):
+            # Fallback to fixed batching if provider doesn't support adaptive
+            return self.embed_batch(texts, batch_size=8)
+        try:
+            return self._embedder.embed_batch_adaptive(texts, memory_budget_gb)
+        except EmbeddingError:
+            raise
+        except Exception as e:
+            raise EmbeddingError(
+                f"Adaptive batch embedding failed: {e}",
+                code=ErrorCode.EMBEDDING_INFERENCE_FAILED,
+                operation="embed_batch_adaptive",
+                original_error=e,
+            )
+
     def rerank(
         self, query: str, documents: Sequence[str], top_k: int = 5
     ) -> List[Tuple[int, float]]:

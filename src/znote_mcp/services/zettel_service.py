@@ -3,6 +3,7 @@
 import datetime
 import hashlib
 import logging
+import time as _time
 from datetime import timezone
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -299,11 +300,17 @@ class ZettelService:
                 operation="reindex_embeddings",
             )
 
+        from znote_mcp.services.onnx_providers import _get_peak_rss_mb, _get_rss_mb
+
         stats = {"total": 0, "embedded": 0, "skipped": 0, "failed": 0, "chunks": 0}
+        t0_reindex = _time.perf_counter()
 
         # Clear existing embeddings
         cleared = self.repository.clear_all_embeddings()
-        logger.info(f"Cleared {cleared} existing embeddings")
+        rss_now = _get_rss_mb()
+        logger.info(
+            f"Cleared {cleared} existing embeddings, RSS: {rss_now:.0f}MB"
+        )
 
         # Get all notes
         all_notes = self.repository.get_all()
@@ -331,12 +338,40 @@ class ZettelService:
             else:
                 long_notes.append((note, chunks))
 
-        # Batch embed short notes
+        total_chunks_expected = len(short_notes) + sum(
+            len(ch) for _, ch in long_notes
+        )
+        logger.info(
+            f"Reindex: {stats['total']} notes total — "
+            f"{len(short_notes)} short (single vector), "
+            f"{len(long_notes)} long (chunked), "
+            f"~{total_chunks_expected} chunks expected"
+        )
+
+        # Batch embed short notes — use adaptive batching if available
         if short_texts:
             try:
-                vectors = self._embedding_service.embed_batch(
-                    short_texts, batch_size=config.embedding_batch_size
+                use_adaptive = hasattr(
+                    self._embedding_service, "embed_batch_adaptive"
                 )
+                if use_adaptive:
+                    logger.info(
+                        f"Phase 1/{2 if long_notes else 1}: "
+                        f"Embedding {len(short_texts)} short notes "
+                        f"(adaptive batching, 4GB budget)..."
+                    )
+                    vectors = self._embedding_service.embed_batch_adaptive(
+                        short_texts, memory_budget_gb=4.0
+                    )
+                else:
+                    logger.info(
+                        f"Phase 1/{2 if long_notes else 1}: "
+                        f"Embedding {len(short_texts)} short notes "
+                        f"(batch_size={config.embedding_batch_size})..."
+                    )
+                    vectors = self._embedding_service.embed_batch(
+                        short_texts, batch_size=config.embedding_batch_size
+                    )
                 batch = []
                 for note, vector in zip(short_notes, vectors):
                     try:
@@ -354,26 +389,64 @@ class ZettelService:
                     stored = self.repository.store_embeddings_batch(batch)
                     stats["embedded"] += stored
                     stats["chunks"] += stored
+                    elapsed = _time.perf_counter() - t0_reindex
+                    logger.info(
+                        f"Stored {stored} short note embeddings "
+                        f"({elapsed:.0f}s elapsed, "
+                        f"{stats['total'] - stats['embedded'] - stats['failed']} "
+                        f"notes remaining)"
+                    )
             except Exception as e:
                 logger.error(f"Batch embedding failed for short notes: {e}")
                 stats["failed"] += len(short_notes)
 
         # Embed long notes (chunked)
-        for note, chunks in long_notes:
+        if long_notes:
+            elapsed = _time.perf_counter() - t0_reindex
+            logger.info(
+                f"Phase 2/2: Embedding {len(long_notes)} long notes (chunked), "
+                f"{elapsed:.0f}s elapsed so far..."
+            )
+            t0_chunked = _time.perf_counter()
+
+        for i, (note, chunks) in enumerate(long_notes, 1):
             try:
                 content_hash = self._content_hash(note.title, note.content)
                 self._embed_note_chunked(note.id, chunks, content_hash)
                 stats["embedded"] += 1
                 stats["chunks"] += len(chunks)
+
+                # Progress with ETA every 10 notes or on first/last
+                if i == 1 or i % 10 == 0 or i == len(long_notes):
+                    elapsed_chunked = _time.perf_counter() - t0_chunked
+                    rate = i / max(elapsed_chunked, 0.001)
+                    remaining = len(long_notes) - i
+                    eta = remaining / rate if rate > 0 else 0
+                    rss_now = _get_rss_mb()
+                    total_remaining = (
+                        stats["total"] - stats["embedded"] - stats["failed"]
+                    )
+                    logger.info(
+                        f"  chunked {i}/{len(long_notes)}: "
+                        f"{note.id} ({len(chunks)} chunks), "
+                        f"{rate:.1f} notes/sec, "
+                        f"ETA: {eta:.0f}s, "
+                        f"RSS: {rss_now:.0f}MB, "
+                        f"{total_remaining} notes remaining"
+                    )
             except Exception as e:
                 logger.warning(f"Failed to embed chunked note {note.id}: {e}")
                 stats["failed"] += 1
 
+        total_elapsed = _time.perf_counter() - t0_reindex
+        peak_rss = _get_peak_rss_mb()
+        rss_final = _get_rss_mb()
         logger.info(
-            f"Reindex complete: {stats['embedded']} notes embedded "
+            f"Reindex complete in {total_elapsed:.0f}s: "
+            f"{stats['embedded']}/{stats['total']} notes embedded "
             f"({stats['chunks']} chunks), "
-            f"{stats['skipped']} skipped, {stats['failed']} failed "
-            f"out of {stats['total']} total"
+            f"{stats['failed']} failed, "
+            f"RSS: {rss_final:.0f}MB, peak RSS: {peak_rss:.0f}MB"
         )
         return stats
 

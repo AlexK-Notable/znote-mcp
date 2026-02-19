@@ -123,7 +123,7 @@ class TestRunInstall:
             cmd = mock_run.call_args[0][0]
             assert cmd[0] == "/usr/bin/uv"
             assert cmd[1:3] == ["pip", "install"]
-            assert "onnxruntime>=1.17.0" in cmd
+            assert "onnxruntime>=1.17.1" in cmd
 
     def test_subprocess_failure_returns_false(self) -> None:
         with (

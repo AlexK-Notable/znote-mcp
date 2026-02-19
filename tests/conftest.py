@@ -13,6 +13,12 @@ from znote_mcp.services.zettel_service import ZettelService
 from znote_mcp.storage.note_repository import NoteRepository
 
 
+@pytest.fixture(params=["asyncio"])
+def anyio_backend(request):
+    """Restrict anyio tests to asyncio only (trio is not installed)."""
+    return request.param
+
+
 @pytest.fixture
 def temp_dirs():
     """Create temporary directories for notes and database."""

@@ -143,8 +143,14 @@ class ZettelkastenMcpServer:
                 OnnxRerankerProvider,
             )
 
+            onnx_file = (
+                "onnx/model_quantized.onnx"
+                if config.onnx_quantized
+                else "onnx/model.onnx"
+            )
             embedder = OnnxEmbeddingProvider(
                 model_id=config.embedding_model,
+                onnx_filename=onnx_file,
                 max_length=config.embedding_max_tokens,
                 cache_dir=config.embedding_model_cache_dir,
                 providers=config.onnx_providers,

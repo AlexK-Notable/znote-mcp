@@ -67,7 +67,7 @@ python_files = "test_*.py"
 python_functions = "test_*"
 # Note: --cov-fail-under=80 is enforced in CI, not locally by default
 addopts = "-v"
-anyio_backend = "asyncio"
+# anyio backend restricted to asyncio via conftest.py fixture (trio not installed)
 
 [tool.coverage.run]
 source = ["src/znote_mcp"]
