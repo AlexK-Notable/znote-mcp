@@ -58,34 +58,38 @@ BENCHMARKS_DIR = PROJECT_ROOT / "benchmarks" / "results"
 SUMMARY_CSV = PROJECT_ROOT / "benchmarks" / "summary.csv"
 
 # ---------------------------------------------------------------------------
-# Bucket-stats log collector
+# Adaptive batching log collector
 # ---------------------------------------------------------------------------
-_BUCKET_RE = re.compile(
-    r"adaptive bucket ([≤>]\d+): (\d+) texts, "
-    r"batch_size=(\d+), mem≈([\d.]+)GB/batch"
+_ADAPTIVE_RE = re.compile(
+    r"adaptive batching: (\d+) texts in (\d+) batches "
+    r"\((\d+)-(\d+) items/batch, avg ([\d.]+)\), "
+    r"seq_len (\d+)-(\d+)"
 )
 _PHASE2_RE = re.compile(
     r"Phase 2 complete: (\d+) notes, (\d+) chunks in (\d+)s"
 )
 
 
-class BucketStatsHandler(logging.Handler):
-    """Captures per-bucket stats from adaptive batching log lines."""
+class BatchStatsHandler(logging.Handler):
+    """Captures adaptive batching summary stats from log lines."""
 
     def __init__(self):
         super().__init__()
-        self.buckets = []
+        self.adaptive_runs = []
         self.phase2_summary = None
 
     def emit(self, record):
         msg = record.getMessage()
-        m = _BUCKET_RE.search(msg)
+        m = _ADAPTIVE_RE.search(msg)
         if m:
-            self.buckets.append({
-                "bucket": m.group(1),
-                "count": int(m.group(2)),
-                "batch_size": int(m.group(3)),
-                "mem_gb_per_batch": float(m.group(4)),
+            self.adaptive_runs.append({
+                "texts": int(m.group(1)),
+                "batches": int(m.group(2)),
+                "min_batch_size": int(m.group(3)),
+                "max_batch_size": int(m.group(4)),
+                "avg_batch_size": float(m.group(5)),
+                "min_seq_len": int(m.group(6)),
+                "max_seq_len": int(m.group(7)),
             })
         m2 = _PHASE2_RE.search(msg)
         if m2:
@@ -175,11 +179,11 @@ def main():
     logger = logging.getLogger("znote_mcp.reindex_benchmark")
     logger.setLevel(logging.DEBUG)
 
-    # Attach bucket stats collector to the onnx_providers logger
-    bucket_handler = BucketStatsHandler()
-    bucket_handler.setLevel(logging.INFO)
-    logging.getLogger("znote_mcp.services.onnx_providers").addHandler(bucket_handler)
-    logging.getLogger("znote_mcp.services.zettel_service").addHandler(bucket_handler)
+    # Attach batch stats collector to the onnx_providers logger
+    batch_handler = BatchStatsHandler()
+    batch_handler.setLevel(logging.INFO)
+    logging.getLogger("znote_mcp.services.onnx_providers").addHandler(batch_handler)
+    logging.getLogger("znote_mcp.services.zettel_service").addHandler(batch_handler)
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     logger.info("=" * 60)
@@ -290,8 +294,8 @@ def main():
                 if elapsed > 0
                 else 0,
             },
-            "buckets": bucket_handler.buckets,
-            "phase2": bucket_handler.phase2_summary,
+            "adaptive_runs": batch_handler.adaptive_runs,
+            "phase2": batch_handler.phase2_summary,
             "log_dir": str(log_dir) if log_dir else None,
         }
 
@@ -347,12 +351,13 @@ def main():
         print(f"Time: {elapsed:.1f}s  |  Peak RSS: {peak_rss:.0f}MB")
         print(f"Throughput: {stats['embedded']/elapsed:.1f} notes/s, "
               f"{stats['chunks']/elapsed:.1f} chunks/s")
-        if bucket_handler.buckets:
-            print(f"\nPer-bucket breakdown:")
-            for b in bucket_handler.buckets:
-                print(f"  {b['bucket']:>6}: {b['count']:>4} texts, "
-                      f"batch={b['batch_size']:>2}, "
-                      f"mem≈{b['mem_gb_per_batch']:.2f}GB")
+        if batch_handler.adaptive_runs:
+            print(f"\nAdaptive batching runs:")
+            for r in batch_handler.adaptive_runs:
+                print(f"  {r['texts']:>4} texts in {r['batches']} batches "
+                      f"({r['min_batch_size']}-{r['max_batch_size']} items, "
+                      f"avg {r['avg_batch_size']:.1f}), "
+                      f"seq_len {r['min_seq_len']}-{r['max_seq_len']}")
         print(f"\nJSON: {json_path}")
         print(f"CSV:  {SUMMARY_CSV}")
         print(f"{'='*60}")

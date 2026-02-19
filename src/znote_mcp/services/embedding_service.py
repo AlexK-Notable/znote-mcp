@@ -211,11 +211,12 @@ class EmbeddingService:
     def embed_batch_adaptive(
         self, texts: Sequence[str], memory_budget_gb: float = 6.0
     ) -> List["np.ndarray"]:
-        """Embed texts with dynamic batch sizes based on text length.
+        """Embed texts with optimal batching based on actual token lengths.
 
-        Groups texts by token count and uses larger batches for shorter
-        texts.  Gives full-coverage embeddings (no truncation) while
-        staying within the memory budget.
+        Sorts texts by token count and greedily forms maximally-large
+        batches where batch_size × per_item_cost(max_len) ≤ budget.
+        Pads only to the actual longest text in each batch, eliminating
+        wasted memory from fixed bucket boundaries.
 
         Args:
             texts: Sequence of input texts.

@@ -428,15 +428,21 @@ class OnnxEmbeddingProvider:
         texts: Sequence[str],
         memory_budget_gb: float = 6.0,
     ) -> List[np.ndarray]:
-        """Embed texts with dynamic batch sizes based on text length.
+        """Embed texts with optimal batching based on actual token lengths.
 
-        Groups texts by token count into size buckets. Each bucket gets
-        the largest safe batch size for its token range, computed from a
-        memory budget (attention matrix: batch * heads * seq² * 4 bytes).
+        Instead of forcing texts into fixed-size buckets (which wastes
+        memory on padding), this method:
 
-        This gives full-coverage embeddings (no truncation) while staying
-        within the memory budget.  Short notes are processed in large
-        batches (fast), long notes in small batches (safe).
+        1. Pre-tokenizes all texts to get exact token counts
+        2. Sorts by length
+        3. Greedily forms maximally-large batches where
+           batch_size × per_item_cost(max_len_in_batch) ≤ budget
+        4. Pads only to the actual longest text in each batch
+
+        Because attention cost is O(seq²), even small reductions in
+        padding yield significant batch size improvements.  A group of
+        texts at [500, 510, 520, 530] tokens gets batched at max_len=530
+        instead of being padded to the next bucket boundary (e.g. 768).
 
         Args:
             texts: Texts to embed.
@@ -456,29 +462,30 @@ class OnnxEmbeddingProvider:
         cpu_start = _cpu_time()
         rss_start = _get_rss_mb()
 
-        # Define token buckets and memory constants for gte-modernbert-base.
+        # Model constants for gte-modernbert-base memory estimation.
         # ONNX Runtime keeps ~3 transformer layers of activations resident
-        # simultaneously during inference. Per-item memory per layer includes:
-        #   - Attention scores: heads * seq^2 * 4 bytes
-        #   - Q/K/V projections: 3 * seq * hidden * 4 bytes
-        #   - FFN intermediate: seq * ff_dim * 4 bytes
-        #   - Output buffer: seq * hidden * 4 bytes
+        # simultaneously during inference. Per-item memory per layer:
+        #   - Attention scores: heads × seq² × 4 bytes
+        #   - Q/K/V projections: 3 × seq × hidden × 4 bytes
+        #   - FFN intermediate: seq × ff_dim × 4 bytes
+        #   - Output buffer: seq × hidden × 4 bytes
         _NUM_HEADS = 12
         _HIDDEN = 768
         _FF_DIM = 1152
         _EFF_LAYERS = 3  # conservative; observed ~2.5 from benchmarks
+        _MAX_BATCH = 64  # cap per batch to avoid diminishing returns
+        _MAX_SEQ = 8192  # pre-tokenization truncation cap
         budget_bytes = memory_budget_gb * 1024**3
-        # Finer-grained buckets give tighter memory estimates and larger
-        # batch sizes for texts that fall between powers-of-two boundaries.
-        # At 6GB: ≤768→batch 53 (vs 31 in ≤1024), ≤1536→14 (vs 8 in ≤2048),
-        # ≤3072→4 (vs 2 in ≤4096).
-        bucket_limits = [256, 512, 768, 1024, 1536, 2048, 3072, 4096, 8192]
+
+        def _per_item_cost(seq_len: int) -> float:
+            """Memory cost (bytes) for one item at the given sequence length."""
+            attn = _NUM_HEADS * seq_len * seq_len * 4
+            linear = seq_len * (3 * _HIDDEN + _FF_DIM + _HIDDEN) * 4
+            return (attn + linear) * _EFF_LAYERS
 
         # Pre-tokenize to get actual token counts (fast, no ONNX inference).
-        # Disable padding and raise truncation so we see true lengths.
-        max_bucket = max(bucket_limits)
         self._tokenizer.no_padding()
-        self._tokenizer.enable_truncation(max_length=max_bucket)
+        self._tokenizer.enable_truncation(max_length=_MAX_SEQ)
         try:
             encodings = self._tokenizer.encode_batch(list(texts))
             lengths = [len(e.ids) for e in encodings]
@@ -486,81 +493,102 @@ class OnnxEmbeddingProvider:
             self._tokenizer.enable_padding(length=None)  # Restore dynamic padding
             self._tokenizer.enable_truncation(max_length=self._max_length)
 
-        # Sort by length, keeping original indices
+        # Sort by token count, keeping original indices for reordering
         indexed = sorted(enumerate(lengths), key=lambda x: x[1])
+        n = len(indexed)
+        results: List[Optional[np.ndarray]] = [None] * n
 
-        results: List[Optional[np.ndarray]] = [None] * len(texts)
+        # Greedy optimal batching with length-ratio constraint.
+        #
+        # Two constraints per batch (texts are sorted by token count):
+        #   1. Memory: batch_size × per_item_cost(max_len) ≤ budget
+        #   2. Padding: max_len ≤ min_len × _PAD_RATIO  (limits wasted compute)
+        #
+        # Constraint #2 is critical because attention is O(seq²). Without it,
+        # a batch of [100, 200, ..., 2000] pads the 100-token text to 2000,
+        # costing 2000²=4M ops instead of 100²=10K — a 400x waste.
+        # With ratio=2, the batch splits at length boundaries so the shortest
+        # item is never padded beyond 2× its actual length (≤4× compute waste).
+        _PAD_RATIO = 1.1
 
-        cursor = 0
+        i = 0
+        num_batches = 0
         total_processed = 0
-        for limit in bucket_limits:
-            # Collect texts that fall into this bucket
-            bucket_start = cursor
-            while cursor < len(indexed) and indexed[cursor][1] <= limit:
-                cursor += 1
+        batch_sizes: list = []
 
-            count = cursor - bucket_start
-            if count == 0:
-                continue
+        while i < n:
+            min_len = indexed[i][1]
 
-            # Safe batch size: attention + linear activations across layers
-            attn_per_item = _NUM_HEADS * limit * limit * 4
-            linear_per_item = limit * (3 * _HIDDEN + _FF_DIM + _HIDDEN) * 4
-            per_item = (attn_per_item + linear_per_item) * _EFF_LAYERS
-            batch_size = max(1, min(64, int(budget_bytes / per_item)))
+            # Upper bound on j from length-ratio constraint:
+            # find largest j where indexed[j][1] ≤ min_len × _PAD_RATIO
+            max_allowed = max(int(min_len * _PAD_RATIO), min_len + 1)
+            ratio_limit = i
+            while (
+                ratio_limit + 1 < n
+                and indexed[ratio_limit + 1][1] <= max_allowed
+            ):
+                ratio_limit += 1
 
-            bucket_indices = [indexed[i][0] for i in range(bucket_start, cursor)]
-            bucket_texts = [texts[idx] for idx in bucket_indices]
+            # Binary search within [i, min(ratio_limit, i+MAX_BATCH-1)]
+            # for largest j where memory constraint holds
+            hi_bound = min(ratio_limit, i + _MAX_BATCH - 1, n - 1)
+            lo, hi = i, hi_bound
+            while lo < hi:
+                mid = lo + (hi - lo + 1) // 2  # upper-mid bias
+                candidate_size = mid - i + 1
+                max_len = indexed[mid][1]
+                if candidate_size * _per_item_cost(max_len) <= budget_bytes:
+                    lo = mid  # feasible → try larger
+                else:
+                    hi = mid - 1  # too large → shrink
+            j = lo  # largest feasible end (at minimum j == i → batch of 1)
 
-            # Temporarily raise tokenizer truncation to this bucket's limit
-            self._tokenizer.enable_truncation(max_length=limit)
+            batch_size = j - i + 1
+            max_len = indexed[j][1]
+            num_batches += 1
 
-            mem_per_batch = batch_size * per_item / 1024**3
-            logger.info(
-                f"adaptive bucket ≤{limit}: {count} texts, "
-                f"batch_size={batch_size}, mem≈{mem_per_batch:.2f}GB/batch"
+            # Set truncation to actual max of this batch — no excess padding
+            self._tokenizer.enable_truncation(max_length=max_len)
+
+            batch_indices = [indexed[k][0] for k in range(i, j + 1)]
+            batch_texts = [texts[idx] for idx in batch_indices]
+
+            logger.debug(
+                f"  batch {num_batches}: {batch_size} texts, "
+                f"seq_len={indexed[i][1]}-{max_len}, "
+                f"mem≈{batch_size * _per_item_cost(max_len) / 1024**3:.2f}GB"
             )
 
             try:
-                vectors = self.embed_batch(bucket_texts, batch_size=batch_size)
-                for idx, vec in zip(bucket_indices, vectors):
-                    results[idx] = vec
-                total_processed += count
-            finally:
-                # Restore original truncation
-                self._tokenizer.enable_truncation(max_length=self._max_length)
-
-        # Handle any texts beyond the largest bucket (batch=1)
-        if cursor < len(indexed):
-            remaining = len(indexed) - cursor
-            max_token = indexed[-1][1]
-            logger.info(
-                f"adaptive bucket >{bucket_limits[-1]}: {remaining} texts "
-                f"(max {max_token} tokens), batch_size=1"
-            )
-
-            self._tokenizer.enable_truncation(max_length=max_token + 64)
-            try:
-                for i in range(cursor, len(indexed)):
-                    orig_idx, _ = indexed[i]
-                    vec = self.embed(texts[orig_idx])
-                    results[orig_idx] = vec
-                    total_processed += 1
+                inputs = self._tokenize(batch_texts)
+                embeddings = self._forward(inputs)
+                for k, idx in enumerate(batch_indices):
+                    results[idx] = embeddings[k]
+                total_processed += batch_size
+                batch_sizes.append(batch_size)
             finally:
                 self._tokenizer.enable_truncation(max_length=self._max_length)
+
+            i = j + 1
 
         total_elapsed = _time.perf_counter() - t0_total
         total_cpu = _cpu_time() - cpu_start
         rss_end = _get_rss_mb()
         peak_rss = _get_peak_rss_mb()
-        logger.info(
-            f"embed_batch_adaptive complete: {total_processed} texts "
-            f"in {total_elapsed:.1f}s "
-            f"({total_processed / max(total_elapsed, 0.001):.1f} texts/sec), "
-            f"CPU: {_get_cpu_percent(total_cpu, total_elapsed):.0f}% avg, "
-            f"RSS: {rss_end:.0f}MB (delta {rss_end - rss_start:+.0f}MB), "
-            f"peak RSS: {peak_rss:.0f}MB"
-        )
+
+        if batch_sizes:
+            logger.info(
+                f"adaptive batching: {total_processed} texts in "
+                f"{num_batches} batches "
+                f"({min(batch_sizes)}-{max(batch_sizes)} items/batch, "
+                f"avg {sum(batch_sizes) / len(batch_sizes):.1f}), "
+                f"seq_len {indexed[0][1]}-{indexed[-1][1]}, "
+                f"{total_elapsed:.1f}s "
+                f"({total_processed / max(total_elapsed, 0.001):.1f} texts/sec), "
+                f"CPU: {_get_cpu_percent(total_cpu, total_elapsed):.0f}% avg, "
+                f"RSS: {rss_end:.0f}MB (delta {rss_end - rss_start:+.0f}MB), "
+                f"peak RSS: {peak_rss:.0f}MB"
+            )
 
         return results  # type: ignore[return-value]
 

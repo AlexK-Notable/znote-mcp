@@ -1,3 +1,9 @@
 timestamp,label,git_commit,quantized,memory_budget_gb,total_notes,chunks,failed,reindex_s,notes_per_sec,chunks_per_sec,peak_rss_mb
 20260219T051933Z,6GB budget + fine buckets + adaptive phase2,69cca85,True,6.0,927,1218,0,1775.9,0.52,0.69,6414.0
 20260219T055621Z,chunk2048 sample200,69cca85,True,6.0,200,416,0,271.4,0.74,1.53,5664.0
+20260219T061435Z,optimal batching (no buckets),eb16a7a,True,6.0,200,416,0,290.7,0.69,1.43,6297.0
+20260219T062336Z,optimal + pad ratio 2x,eb16a7a,True,6.0,200,416,0,291.6,0.69,1.43,6295.0
+20260219T063053Z,optimal + ratio 2x (no floor),eb16a7a,True,6.0,200,416,0,284.5,0.7,1.46,5931.0
+20260219T063610Z,optimal + ratio 1.5x,eb16a7a,True,6.0,200,416,0,283.4,0.71,1.47,5955.0
+20260219T064111Z,optimal + ratio 1.2x,eb16a7a,True,6.0,200,416,0,276.7,0.72,1.5,5769.0
+20260219T064606Z,optimal + ratio 1.1x,eb16a7a,True,6.0,200,416,0,271.0,0.74,1.53,5825.0
