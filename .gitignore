@@ -71,6 +71,9 @@ data/notes/*.md
 in-memoria.db
 in-memoria-vectors.db/
 
+# Benchmark results (machine-specific JSON; summary.csv is tracked)
+benchmarks/results/
+
 # Generated API documentation
 docs/api/
 

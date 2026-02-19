@@ -158,10 +158,17 @@ class ZettelkastenConfig(BaseModel):
         ).lower()
         in ("true", "1", "yes")
     )
+    # Memory budget for adaptive batching (GB).  Higher values allow larger
+    # batch sizes for medium-length texts, improving reindex throughput.
+    embedding_memory_budget_gb: float = Field(
+        default_factory=lambda: float(
+            os.getenv("ZETTELKASTEN_EMBEDDING_MEMORY_BUDGET_GB", "6.0")
+        )
+    )
     # Chunking: notes longer than this (in tokens) get split into overlapping chunks
     embedding_chunk_size: int = Field(
         default_factory=lambda: int(
-            os.getenv("ZETTELKASTEN_EMBEDDING_CHUNK_SIZE", "4096")
+            os.getenv("ZETTELKASTEN_EMBEDDING_CHUNK_SIZE", "2048")
         )
     )
     embedding_chunk_overlap: int = Field(
@@ -191,6 +198,8 @@ class ZettelkastenConfig(BaseModel):
             raise ValueError("embedding_batch_size must be >= 1")
         if self.embedding_max_tokens < 128:
             raise ValueError("embedding_max_tokens must be >= 128")
+        if self.embedding_memory_budget_gb <= 0:
+            raise ValueError("embedding_memory_budget_gb must be > 0")
 
         if self.embeddings_enabled:
             peak = estimate_embedding_peak_memory(

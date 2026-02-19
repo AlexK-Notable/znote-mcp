@@ -426,7 +426,7 @@ class OnnxEmbeddingProvider:
     def embed_batch_adaptive(
         self,
         texts: Sequence[str],
-        memory_budget_gb: float = 4.0,
+        memory_budget_gb: float = 6.0,
     ) -> List[np.ndarray]:
         """Embed texts with dynamic batch sizes based on text length.
 
@@ -440,7 +440,7 @@ class OnnxEmbeddingProvider:
 
         Args:
             texts: Texts to embed.
-            memory_budget_gb: Max attention memory in GB (default 4.0).
+            memory_budget_gb: Max attention memory in GB (default 6.0).
 
         Returns:
             List of embedding vectors in the same order as input texts.
@@ -456,10 +456,23 @@ class OnnxEmbeddingProvider:
         cpu_start = _cpu_time()
         rss_start = _get_rss_mb()
 
-        # Define token buckets and memory constants
+        # Define token buckets and memory constants for gte-modernbert-base.
+        # ONNX Runtime keeps ~3 transformer layers of activations resident
+        # simultaneously during inference. Per-item memory per layer includes:
+        #   - Attention scores: heads * seq^2 * 4 bytes
+        #   - Q/K/V projections: 3 * seq * hidden * 4 bytes
+        #   - FFN intermediate: seq * ff_dim * 4 bytes
+        #   - Output buffer: seq * hidden * 4 bytes
         _NUM_HEADS = 12
+        _HIDDEN = 768
+        _FF_DIM = 1152
+        _EFF_LAYERS = 3  # conservative; observed ~2.5 from benchmarks
         budget_bytes = memory_budget_gb * 1024**3
-        bucket_limits = [512, 1024, 2048, 4096, 8192, 16384]
+        # Finer-grained buckets give tighter memory estimates and larger
+        # batch sizes for texts that fall between powers-of-two boundaries.
+        # At 6GB: ≤768→batch 53 (vs 31 in ≤1024), ≤1536→14 (vs 8 in ≤2048),
+        # ≤3072→4 (vs 2 in ≤4096).
+        bucket_limits = [256, 512, 768, 1024, 1536, 2048, 3072, 4096, 8192]
 
         # Pre-tokenize to get actual token counts (fast, no ONNX inference).
         # Disable padding and raise truncation so we see true lengths.
@@ -490,8 +503,10 @@ class OnnxEmbeddingProvider:
             if count == 0:
                 continue
 
-            # Safe batch size for this token range
-            per_item = _NUM_HEADS * limit * limit * 4
+            # Safe batch size: attention + linear activations across layers
+            attn_per_item = _NUM_HEADS * limit * limit * 4
+            linear_per_item = limit * (3 * _HIDDEN + _FF_DIM + _HIDDEN) * 4
+            per_item = (attn_per_item + linear_per_item) * _EFF_LAYERS
             batch_size = max(1, min(64, int(budget_bytes / per_item)))
 
             bucket_indices = [indexed[i][0] for i in range(bucket_start, cursor)]

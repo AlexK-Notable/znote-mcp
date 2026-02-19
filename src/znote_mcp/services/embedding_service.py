@@ -209,7 +209,7 @@ class EmbeddingService:
             )
 
     def embed_batch_adaptive(
-        self, texts: Sequence[str], memory_budget_gb: float = 4.0
+        self, texts: Sequence[str], memory_budget_gb: float = 6.0
     ) -> List["np.ndarray"]:
         """Embed texts with dynamic batch sizes based on text length.
 
@@ -219,7 +219,7 @@ class EmbeddingService:
 
         Args:
             texts: Sequence of input texts.
-            memory_budget_gb: Max attention memory in GB (default 4.0).
+            memory_budget_gb: Max attention memory in GB (default 6.0).
 
         Returns:
             List of 1-D numpy arrays, each of shape (dimension,).
