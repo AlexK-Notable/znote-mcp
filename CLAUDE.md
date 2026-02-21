@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-znote-mcp is an MCP (Model Context Protocol) server implementing Zettelkasten knowledge management. It provides 22 tools for creating, linking, searching, and synthesizing atomic notes through Claude and other MCP-compatible clients. Version 1.4.0 adds optional semantic search via ONNX-based embeddings with sqlite-vec vector storage.
+znote-mcp is an MCP (Model Context Protocol) server implementing Zettelkasten knowledge management. It provides 22 tools for creating, linking, searching, and synthesizing atomic notes through Claude and other MCP-compatible clients. Version 1.5.0 adds hardware-aware auto-configuration, adaptive batching, INT8 quantization support, and benchmarked model selection alongside the semantic search system introduced in 1.4.0.
 
 ## Common Commands
 
