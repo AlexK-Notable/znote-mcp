@@ -4,8 +4,9 @@ Each configuration specifies everything needed to instantiate an
 OnnxRerankerProvider for benchmarking: model repo, ONNX filename,
 max token length, and any extra files needed for external weights.
 
-7 reranker configurations spanning lightweight cross-encoders (MiniLM)
-through large rerankers (bge-reranker-large, bge-reranker-v2-m3).
+10 reranker configurations spanning lightweight cross-encoders (MiniLM)
+through large rerankers (bge-reranker-large, bge-reranker-v2-m3), plus
+STS-trained models for semantic similarity (stsb-roberta, stsb-distilroberta).
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ RerankerConfig = Dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
-# Reranker configurations (7 models)
+# Reranker configurations (10 models)
 # ---------------------------------------------------------------------------
 
 RERANKERS: Dict[str, RerankerConfig] = {
@@ -96,6 +97,43 @@ RERANKERS: Dict[str, RerankerConfig] = {
         "model_id": "jinaai/jina-reranker-v2-base-multilingual",
         "onnx_filename": "onnx/model.onnx",
         "max_tokens": 1024,
+    },
+
+    # ===================================================================
+    # STS-trained models (Semantic Textual Similarity)
+    # These predict similarity score 0-1 between two texts.
+    # Different training objective from MS MARCO passage ranking —
+    # may be better suited for note-note similarity in zettelkasten.
+    # ===================================================================
+
+    # -------------------------------------------------------------------
+    # cross-encoder/stsb-distilroberta-base  (~82M params, 512 tokens)
+    # Lightweight STS model. Trained on STS Benchmark dataset.
+    # -------------------------------------------------------------------
+    "stsb-distilroberta": {
+        "model_id": "cross-encoder/stsb-distilroberta-base",
+        "onnx_filename": "onnx/model.onnx",
+        "max_tokens": 512,
+    },
+
+    # -------------------------------------------------------------------
+    # cross-encoder/stsb-roberta-base  (~100M params, 512 tokens)
+    # Mid-range STS model. Trained on STS Benchmark dataset.
+    # -------------------------------------------------------------------
+    "stsb-roberta-base": {
+        "model_id": "cross-encoder/stsb-roberta-base",
+        "onnx_filename": "onnx/model.onnx",
+        "max_tokens": 512,
+    },
+
+    # -------------------------------------------------------------------
+    # cross-encoder/stsb-roberta-large  (~355M params, 512 tokens)
+    # Large STS model. Best STS benchmark scores but 512 token limit.
+    # -------------------------------------------------------------------
+    "stsb-roberta-large": {
+        "model_id": "cross-encoder/stsb-roberta-large",
+        "onnx_filename": "onnx/model.onnx",
+        "max_tokens": 512,
     },
 }
 
