@@ -34,6 +34,7 @@ This structure invites serendipitous discoveries as you follow trails of thought
 - **Dual storage** with markdown files as source of truth and SQLite for indexing
 - **Multi-process concurrency** with per-process in-memory databases and git-based conflict detection
 - **Backup and restore** with labeled snapshots and safety checks
+- **Hardware-aware auto-configuration** that detects GPU/RAM and tunes batch size, max tokens, and memory budget (env var overrides always win)
 - **Auto-setup** of semantic dependencies and model pre-download on first startup
 
 ## Examples
@@ -157,12 +158,41 @@ All embedding settings are in `.env.example`. Key variables:
 | `ZETTELKASTEN_EMBEDDING_DIM` | `768` | Must match model output dimension |
 | `ZETTELKASTEN_EMBEDDING_MAX_TOKENS` | `2048` | Max tokens per embedding input |
 | `ZETTELKASTEN_EMBEDDING_BATCH_SIZE` | `8` | Batch size for reindex operations |
-| `ZETTELKASTEN_EMBEDDING_CHUNK_SIZE` | `4096` | Tokens per chunk for long notes |
+| `ZETTELKASTEN_EMBEDDING_CHUNK_SIZE` | `2048` | Tokens per chunk for long notes |
 | `ZETTELKASTEN_EMBEDDING_CHUNK_OVERLAP` | `256` | Overlap tokens between chunks |
 | `ZETTELKASTEN_ONNX_PROVIDERS` | `auto` | `auto`, `cpu`, or explicit provider list |
+| `ZETTELKASTEN_ONNX_QUANTIZED` | `false` | Use INT8 quantized ONNX models (~4x smaller, ~97% quality) |
+| `ZETTELKASTEN_EMBEDDING_MEMORY_BUDGET_GB` | `6.0` | Memory budget in GB for adaptive batching (auto-tuned) |
 | `ZETTELKASTEN_EMBEDDING_CACHE_DIR` | HF default | Custom model cache directory |
 | `ZETTELKASTEN_RERANKER_MODEL` | `Alibaba-NLP/gte-reranker-modernbert-base` | Reranker model ID |
+| `ZETTELKASTEN_RERANKER_MAX_TOKENS` | `2048` | Max input tokens for reranker model (auto-tuned) |
 | `ZETTELKASTEN_RERANKER_IDLE_TIMEOUT` | `600` | Seconds before idle reranker is unloaded |
+
+### Hardware Auto-Tuning
+
+On startup, the server detects your GPU (via `nvidia-smi`) and system RAM, then selects optimal defaults for batch size, max tokens, and memory budget. Explicit environment variable overrides always take priority over auto-detected values.
+
+| Tier | Batch Size | Embed Max Tokens | Rerank Max Tokens | Memory Budget |
+|------|-----------|------------------|-------------------|---------------|
+| gpu-16gb+ | 64 | 8192 | 8192 | 10 GB |
+| gpu-8gb+ | 32 | 4096 | 4096 | 6 GB |
+| gpu-small | 16 | 2048 | 2048 | 3 GB |
+| cpu-32gb+ | 16 | 8192 | 4096 | 8 GB |
+| cpu-16gb+ | 8 | 4096 | 2048 | 4 GB |
+| cpu-8gb+ | 4 | 2048 | 1024 | 2 GB |
+| cpu-small | 2 | 512 | 512 | 1 GB |
+
+The detected tier is logged at startup (e.g., `device_label: gpu-8gb+ (NVIDIA RTX 4070)`). To override any auto-tuned value, set the corresponding environment variable.
+
+### Model Selection
+
+The default embedding and reranker models were selected through benchmarking on a real 961-note Zettelkasten knowledge base.
+
+**Embedding model**: [Alibaba-NLP/gte-modernbert-base](https://huggingface.co/Alibaba-NLP/gte-modernbert-base) was chosen after evaluating 9 models across 12 configurations (FP32 and INT8, varying chunk sizes). Models benchmarked: all-MiniLM-L6-v2, bge-small-en-v1.5, bge-base-en-v1.5, gte-modernbert-base, nomic-embed-text-v1.5, snowflake-arctic-embed-m-v2.0, snowflake-arctic-embed-l-v2.0, mxbai-embed-large-v1, and embeddinggemma-300m. Quality was measured by link prediction MRR (mean reciprocal rank) and tag coherence; performance was measured by throughput (chunks/s), peak memory, and GPU vs CPU scaling. gte-modernbert-base offers the best quality-to-performance tradeoff with native long-context support (8192 tokens).
+
+**Reranker model**: [Alibaba-NLP/gte-reranker-modernbert-base](https://huggingface.co/Alibaba-NLP/gte-reranker-modernbert-base) was chosen after evaluating 10 reranker models: ms-marco-MiniLM-L-6-v2, ms-marco-MiniLM-L-12-v2, bge-reranker-base, bge-reranker-large, gte-reranker-modernbert-base, bge-reranker-v2-m3, jina-reranker-v2-base-multilingual, stsb-distilroberta-base, stsb-roberta-base, and stsb-roberta-large. The gte-reranker is the only model that consistently improves retrieval quality across all semantic challenge categories while supporting long contexts (8192 tokens).
+
+Full benchmark data is available in the `benchmarks/` directory. Benchmark scripts are in `scripts/` (`benchmark_embed.py`, `benchmark_quality.py`, `benchmark_rerank.py`).
 
 ## Storage Architecture
 
@@ -351,6 +381,7 @@ znote-mcp/
 │   └── znote_mcp/
 │       ├── models/              # Pydantic schemas and SQLAlchemy ORM models
 │       ├── storage/             # Repository layer
+│       │   ├── base.py              # Abstract repository interface
 │       │   ├── note_repository.py   # Dual storage (markdown + SQLite + embeddings)
 │       │   ├── tag_repository.py    # Tag CRUD and batch operations
 │       │   ├── link_repository.py   # Semantic link management
@@ -368,12 +399,13 @@ znote-mcp/
 │       │   └── text_chunker.py      # Token-aware note chunking
 │       ├── server/              # MCP server with 22 tools
 │       ├── config.py            # Pydantic config with env var support
+│       ├── hardware.py          # Hardware detection and auto-tuning
 │       ├── setup_manager.py     # Auto-install semantic deps + model warmup
 │       ├── backup.py            # Backup and restore operations
 │       ├── observability.py     # Structured logging and metrics
 │       ├── exceptions.py        # Error hierarchy with codes
 │       └── main.py              # Entry point
-├── tests/                       # 34 test files, 700+ tests
+├── tests/                       # 36 test files, 700+ tests
 ├── alembic/                     # Database migrations
 ├── docs/                        # Prompts, project knowledge, design docs
 ├── scripts/                     # Utility scripts
@@ -384,7 +416,7 @@ znote-mcp/
 
 ## Tests
 
-Comprehensive test suite with 700+ tests covering all layers from models to MCP server integration.
+Comprehensive test suite with 780+ tests covering all layers from models to MCP server integration.
 
 ### Running Tests
 
@@ -409,8 +441,8 @@ ZETTELKASTEN_TEST_PERSIST=1 uv run pytest tests/test_e2e.py -v
 
 | Category | Files | Description |
 |----------|-------|-------------|
-| Unit | `test_models.py`, `test_note_repository.py`, `test_search_service.py`, `test_zettel_service.py`, `test_git_wrapper.py`, `test_config_cleanup.py` | Individual component tests |
-| Integration | `test_integration.py`, `test_mcp_integration.py`, `test_mcp_tools_integration.py` | Cross-layer integration |
+| Unit | `test_models.py`, `test_note_repository.py`, `test_search_service.py`, `test_zettel_service.py`, `test_git_wrapper.py`, `test_config_cleanup.py`, `test_hardware.py` | Individual component tests |
+| Integration | `test_integration.py`, `test_mcp_integration.py`, `test_mcp_tools_integration.py`, `test_mcp_protocol.py` | Cross-layer integration |
 | E2E | `test_e2e.py`, `test_e2e_workflows.py` | Full system workflows with isolated environments |
 | Embeddings | `test_embedding_phase1.py` through `test_embedding_phase5.py`, `test_chunked_embedding_integration.py` | Semantic search pipeline (chunking, storage, search, reindex) |
 | Resilience | `test_error_injection.py`, `test_failure_recovery.py`, `test_database_hardening.py` | Error handling and recovery |

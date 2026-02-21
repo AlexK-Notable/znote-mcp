@@ -69,6 +69,10 @@ The system uses markdown files as source of truth with SQLite as an indexing lay
 ### Layer Structure
 
 ```
+Config (config.py)
+    ↓
+Hardware Detection (hardware.py) ── detect → compute → apply tuning
+    ↓
 MCP Tools (server/mcp_server.py)
     ↓
 Services (services/zettel_service.py, search_service.py)
@@ -88,18 +92,19 @@ Models                      Vector Storage
 When `[semantic]` deps are installed, embeddings auto-enable on startup:
 
 1. **Setup** (`setup_manager.py`): Auto-installs semantic deps into venv, pre-downloads ONNX models in background thread
-2. **Providers** (`onnx_providers.py`): Direct ONNX Runtime embedding (gte-modernbert-base, 768-dim) and reranking (gte-reranker-modernbert-base) with lazy loading
-3. **Types** (`embedding_types.py`): Protocol interfaces for `EmbeddingProvider` and `RerankerProvider` (structural subtyping, no inheritance required)
-4. **Chunking** (`text_chunker.py`): Splits long notes into overlapping token-aware chunks respecting sentence boundaries
-5. **Service** (`embedding_service.py`): Thread-safe orchestrator with idle timeout for reranker, warm-loaded embedder
-6. **Storage**: sqlite-vec `vec0` virtual table for KNN vector search; chunked embeddings stored with note-level and chunk-level granularity
-7. **Integration**: `zettel_service.py` embeds on create/update, `search_service.py` uses vector KNN + optional reranking for `mode="semantic"`
+2. **Auto-Tuning** (`hardware.py`): `detect_hardware()` probes GPU/RAM, `compute_tuning()` selects tier, `apply_tuning()` sets config defaults (env var overrides always win)
+3. **Providers** (`onnx_providers.py`): Direct ONNX Runtime embedding (gte-modernbert-base, 768-dim) and reranking (gte-reranker-modernbert-base) with lazy loading
+4. **Types** (`embedding_types.py`): Protocol interfaces for `EmbeddingProvider` and `RerankerProvider` (structural subtyping, no inheritance required)
+5. **Chunking** (`text_chunker.py`): Splits long notes into overlapping token-aware chunks respecting sentence boundaries
+6. **Service** (`embedding_service.py`): Thread-safe orchestrator with idle timeout for reranker, warm-loaded embedder; adaptive greedy batching based on memory budget
+7. **Storage**: sqlite-vec `vec0` virtual table for KNN vector search; chunked embeddings stored with note-level and chunk-level granularity
+8. **Integration**: `zettel_service.py` embeds on create/update, `search_service.py` uses vector KNN + optional reranking for `mode="semantic"`
 
 ### Key Files
 
 | File | Purpose |
 |------|---------|
-| `src/znote_mcp/main.py` | Entry point - parses CLI args, initializes DB, auto-enables embeddings, starts server |
+| `src/znote_mcp/main.py` | Entry point - parses CLI args, initializes DB, auto-enables embeddings, auto-tunes config via hardware detection, starts server |
 | `src/znote_mcp/config.py` | Pydantic configuration with env var support (including all embedding config) |
 | `src/znote_mcp/server/mcp_server.py` | MCP server with 22 tools registered via decorators |
 | `src/znote_mcp/services/zettel_service.py` | Business logic for CRUD, links, tags, bulk ops; embeds notes on create/update |
@@ -108,11 +113,12 @@ When `[semantic]` deps are installed, embeddings auto-enable on startup:
 | `src/znote_mcp/services/embedding_types.py` | Protocol interfaces for EmbeddingProvider and RerankerProvider |
 | `src/znote_mcp/services/onnx_providers.py` | ONNX Runtime implementations for embedding and reranking models |
 | `src/znote_mcp/services/text_chunker.py` | Token-aware text chunking with sentence-boundary-respecting overlap |
+| `src/znote_mcp/hardware.py` | Hardware detection and auto-tuning for GPU/RAM-based config optimization |
 | `src/znote_mcp/setup_manager.py` | Auto-installs semantic deps, pre-downloads ONNX models in background |
 | `src/znote_mcp/storage/note_repository.py` | Dual storage implementation (markdown files + SQLite + sqlite-vec vectors) |
 | `src/znote_mcp/exceptions.py` | Custom exception hierarchy with error codes |
 | `tests/conftest_protocol.py` | Protocol test fixtures using `mcp.shared.memory` transport + FakeEmbeddingProvider |
-| `tests/test_mcp_protocol.py` | 30 protocol integration tests (CRUD, search, links, batch, semantic, validation) |
+| `tests/test_mcp_protocol.py` | 34 protocol integration tests (CRUD, search, links, batch, semantic, validation) |
 
 ### Domain Model
 
@@ -140,22 +146,54 @@ ZETTELKASTEN_RERANKER_MODEL=Alibaba-NLP/gte-reranker-modernbert-base
 ZETTELKASTEN_EMBEDDING_DIM=768                 # Must match model output dimension
 ZETTELKASTEN_EMBEDDING_MAX_TOKENS=2048         # Max tokens per embedding input
 ZETTELKASTEN_EMBEDDING_BATCH_SIZE=8            # Higher = faster reindex, more memory
-ZETTELKASTEN_EMBEDDING_CHUNK_SIZE=4096         # Notes longer than this get split
+ZETTELKASTEN_EMBEDDING_CHUNK_SIZE=2048         # Notes longer than this (tokens) get split
 ZETTELKASTEN_EMBEDDING_CHUNK_OVERLAP=256       # Token overlap between chunks
 ZETTELKASTEN_EMBEDDING_CACHE_DIR=              # Custom model cache dir (default: HF cache)
 ZETTELKASTEN_ONNX_PROVIDERS=auto               # "auto", "cpu", or explicit provider list
+ZETTELKASTEN_ONNX_QUANTIZED=false              # Use INT8 quantized ONNX models (~4x smaller, ~97% quality)
+ZETTELKASTEN_RERANKER_MAX_TOKENS=2048          # Max input tokens for reranker model
 ZETTELKASTEN_RERANKER_IDLE_TIMEOUT=600         # Seconds before idle reranker unloads (0 = never)
+ZETTELKASTEN_EMBEDDING_MEMORY_BUDGET_GB=6.0    # Memory budget for adaptive batching
 ```
 
 See `.env.example` for full documentation including memory usage guidance per batch_size/max_tokens combination.
 
+### Hardware Auto-Tuning Tiers
+
+On startup (when embeddings enabled), `hardware.py` detects GPU/RAM and selects a tier. Env var overrides always win.
+
+| Tier | Trigger | batch_size | embed_tokens | rerank_tokens | mem_budget_gb |
+|------|---------|-----------|-------------|--------------|--------------|
+| gpu-16gb+ | VRAM >= 14 GB | 64 | 8192 | 8192 | 10.0 |
+| gpu-8gb+ | VRAM >= 7 GB | 32 | 4096 | 4096 | 6.0 |
+| gpu-small | VRAM > 0 | 16 | 2048 | 2048 | 3.0 |
+| cpu-32gb+ | RAM >= 28 GB | 16 | 8192 | 4096 | 8.0 |
+| cpu-16gb+ | RAM >= 14 GB | 8 | 4096 | 2048 | 4.0 |
+| cpu-8gb+ | RAM >= 7 GB | 4 | 2048 | 1024 | 2.0 |
+| cpu-small | fallback | 2 | 512 | 512 | 1.0 |
+
+### Benchmarking
+
+Model selection is data-driven via benchmark scripts in `scripts/`:
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/benchmark_embed.py` | Embedding benchmark across 9 models (12 configs with chunk variants) |
+| `scripts/benchmark_quality.py` | Retrieval quality evaluation (MRR, recall@k) |
+| `scripts/benchmark_rerank.py` | Reranker benchmark across 10 models with 4 query strategies |
+| `scripts/model_configs.py` | Embedding model registry (9 models: MiniLM, BGE, GTE, Nomic, Arctic, mxbai, embeddinggemma) |
+| `scripts/reranker_configs.py` | Reranker model registry (10 models: MiniLM, BGE, GTE, STS cross-encoders) |
+| `scripts/smoke_test_rerankers.py` | Quick validation with 12 semantic challenge cases |
+
+Benchmark results stored in `benchmarks/` (CPU, GPU, GPU-smoke matrices). Production models chosen from these results: gte-modernbert-base (embeddings), gte-reranker-modernbert-base (reranking).
+
 ## Testing
 
-36 test files covering unit, integration, E2E, protocol, and semantic search.
+36 test files covering unit, integration, E2E, protocol, semantic search, and hardware auto-tuning.
 
 - **Unit tests**: `tests/conftest.py` provides fixtures with temp directories
 - **E2E tests**: `tests/conftest_e2e.py` provides `IsolatedTestEnvironment` class ensuring complete isolation from production data
-- **Protocol tests**: `tests/conftest_protocol.py` + `tests/test_mcp_protocol.py` — 30 tests exercising all 22 tools through the full MCP JSON-RPC pipeline using `mcp.shared.memory.create_connected_server_and_client_session` (no mocking). Includes semantic search tests with `FakeEmbeddingProvider`/`FakeRerankerProvider`.
+- **Protocol tests**: `tests/conftest_protocol.py` + `tests/test_mcp_protocol.py` — 34 tests exercising all 22 tools through the full MCP JSON-RPC pipeline using `mcp.shared.memory.create_connected_server_and_client_session` (no mocking). Includes semantic search tests with `FakeEmbeddingProvider`/`FakeRerankerProvider`.
 - **Embedding tests**: 5 phased test files (`test_embedding_phase1.py` through `test_embedding_phase5.py`) covering providers, service, chunking, search integration, and reranker
 - **Chunked embedding tests**: `test_chunked_embedding_integration.py` for long-note splitting and multi-chunk vector storage
 - **Concurrency tests**: `test_concurrency.py` and `test_multiprocess_concurrency.py` for thread and process safety
