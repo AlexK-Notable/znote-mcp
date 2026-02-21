@@ -52,326 +52,372 @@ logger = logging.getLogger("smoke_test_rerankers")
 
 
 # ---------------------------------------------------------------------------
-# Smoke test cases — diverse topics with clear relevance ordering
+# Smoke test cases — derived from actual zettelkasten content
+#
+# These cases reflect real note content and query patterns from a ~962-note
+# engineering-focused zettelkasten spanning: anamnesis (code intelligence),
+# znote-mcp (this project), in-memoria (Rust/Node FFI), komi-zone (plugin
+# system), hyprtasking (Hyprland WM), VCV Rack, 3D printing (K1C/Klipper),
+# and keyboards.  Documents are condensed from actual notes; queries mimic
+# real search patterns.
 # ---------------------------------------------------------------------------
 
 SMOKE_CASES = [
     # -----------------------------------------------------------------
-    # 1. BASIC RELEVANCE — obvious topic match vs total mismatch
+    # 1. CROSS-PROJECT ARCHITECTURE — embedding system internals
+    # Query targets znote-mcp embedding architecture; distractors are
+    # from a different project (anamnesis) and a hobby topic.
     # -----------------------------------------------------------------
     {
-        "tag": "basic-relevance",
-        "query": "How to configure GPU passthrough in a virtual machine",
+        "tag": "embedding-architecture",
+        "query": "how does the embedding service handle idle timeout and model unloading",
         "docs": [
-            "GPU passthrough allows a VM to directly access a physical GPU "
-            "using IOMMU technology. This enables near-native GPU performance "
-            "for workloads like gaming, machine learning, and video rendering "
-            "inside virtual machines.",
-            "The best chocolate cake recipe uses Dutch process cocoa powder, "
-            "buttermilk, and a touch of espresso to deepen the chocolate "
-            "flavor. Bake at 350F for 30 minutes.",
-            "VFIO and IOMMU groups are essential for PCIe passthrough on "
-            "Linux. You need to enable IOMMU in BIOS, add kernel parameters "
-            "(intel_iommu=on or amd_iommu=on), and bind the GPU to the "
-            "vfio-pci driver before starting the VM.",
+            "EmbeddingService orchestrates thread-safe embedding and reranking "
+            "with lazy loading. The reranker has a configurable idle timeout "
+            "(default 600s) — a threading.Timer fires after inactivity and "
+            "calls provider.unload() to release memory. The embedder stays "
+            "warm-loaded since it's used more frequently. shutdown() cancels "
+            "the timer and chains to both providers' unload methods.",
+            "The anamnesis LSP subsystem solidlsp (~7,400 LOC) has performance "
+            "issues: duplicate filesystem operations from recursive directory "
+            "walks, unbounded caches growing monotonically, and O(n) symbol "
+            "lookups that should be O(1) with proper indexing.",
+            "VCV Rack v2 plugins must be migrated from the v1 API. Key changes "
+            "include replacing Widget::step() with process(), using "
+            "createModel<>() instead of Model::create(), and updating the "
+            "plugin.json manifest format. Install .vcvplugin files via "
+            "Library > Install from file.",
         ],
-        # Both doc 0 and 2 are relevant; models may rank either on top.
-        "expected_top": None,
-        "expected_bottom": 1,  # Cake recipe
+        "expected_top": 0,  # Embedding idle timeout doc
+        "expected_bottom": 2,  # VCV Rack is completely unrelated
     },
 
     # -----------------------------------------------------------------
-    # 2. TWO RELEVANT + ONE IRRELEVANT — discriminate topic boundaries
+    # 2. CODE REVIEW vs REMEDIATION — distinguishing similar note types
+    # Both doc 0 and 1 are about the same codebase (znote-mcp) but one
+    # is a review finding and the other is the fix plan.
     # -----------------------------------------------------------------
     {
-        "tag": "topic-boundary",
-        "query": "Python async programming with asyncio event loop",
+        "tag": "review-vs-remediation",
+        "query": "SQL injection vulnerability in LIKE pattern handling",
         "docs": [
-            "Pandas DataFrames provide powerful tabular data structures for "
-            "data analysis. Use df.groupby() for aggregation, df.merge() for "
-            "joins, and df.pivot_table() for reshaping data.",
-            "The asyncio module in Python provides infrastructure for writing "
-            "single-threaded concurrent code using coroutines, multiplexing "
-            "I/O access over sockets, and running network clients and servers. "
-            "Use async/await syntax with asyncio.run() as the entry point.",
-            "SQLAlchemy's async extension allows database operations within "
-            "an asyncio event loop. Use create_async_engine() and "
-            "AsyncSession for non-blocking database access in async Python "
-            "applications.",
+            "Security review found residual vulnerability: LIKE pattern "
+            "escaping is not consistently applied across all search code "
+            "paths (CWE-89). The tag search uses parameterized queries "
+            "but the content FTS5 search interpolates user input into "
+            "MATCH expressions without escaping special characters.",
+            "Remediation plan Phase 3 addresses the LIKE injection finding: "
+            "add _escape_like() helper to SearchService, apply to all "
+            "4 search methods, add regression tests with payloads like "
+            "'%; DROP TABLE notes; --' and 'test%_wildcard'. Estimated "
+            "effort: 2 hours. Depends on Phase 2 (test infrastructure).",
+            "The dual storage system uses markdown files as source of truth "
+            "with SQLite as an indexing layer. WAL mode enables concurrent "
+            "reads during writes. The database can be fully rebuilt from "
+            "markdown files via zk_system(action='rebuild').",
         ],
-        "expected_top": None,  # Both doc 1 and 2 are relevant
-        "expected_bottom": 0,  # Pandas doc
+        # Both doc 0 (finding) and doc 1 (fix plan) are directly relevant
+        # to the SQL injection query. Doc 2 (architecture overview) is not.
+        "expected_top": None,  # Finding (0) vs fix plan (1) — both relevant
+        "expected_bottom": 2,  # General architecture is not about SQL injection
     },
 
     # -----------------------------------------------------------------
-    # 3. CLEAR WINNER — one doc is a direct answer
+    # 3. CROSS-DOMAIN TERMINOLOGY — "hub" means different things
+    # In zettelkasten, "hub" is a note type. In networking, it's hardware.
     # -----------------------------------------------------------------
     {
-        "tag": "clear-winner",
-        "query": "Kubernetes pod networking and service discovery",
+        "tag": "hub-homonym",
+        "query": "hub notes that synthesize cross-domain implementation findings",
         "docs": [
-            "Each Kubernetes pod gets its own IP address. Pods communicate "
-            "with each other using these IPs directly, while Services provide "
-            "stable endpoints via ClusterIP, NodePort, or LoadBalancer types. "
-            "CoreDNS handles service discovery within the cluster.",
-            "React hooks like useState and useEffect allow functional "
-            "components to manage state and side effects. Custom hooks "
-            "extract reusable stateful logic across components.",
-            "Container networking uses network namespaces and virtual "
-            "ethernet pairs (veth) to provide isolated network stacks. CNI "
-            "plugins like Calico and Flannel implement the networking model "
-            "for container orchestrators.",
+            "Hub notes serve as synthesis points in the zettelkasten, "
+            "aggregating findings from multiple specialist reviews into a "
+            "coherent whole. A typical hub links to 4-8 phase records, "
+            "gate verifications, and code review notes, providing a single "
+            "entry point for understanding a complete implementation cycle.",
+            "In-Memoria General Codebase Synthesis identifies compound "
+            "problems invisible to single-domain analysis. Key insight: "
+            "a Safety Net Failure Chain where Rust panic crashes Node.js, "
+            "225 'any' types bypass TypeScript checks, missing Zod "
+            "validation allows malformed data, and no panic handling in "
+            "FFI means unrecoverable crashes.",
+            "A network hub is a basic Layer 1 device that broadcasts all "
+            "incoming traffic to every connected port. Unlike switches, "
+            "hubs cannot learn MAC addresses or create dedicated circuits. "
+            "They have been largely replaced by switches in modern LANs.",
         ],
-        "expected_top": 0,  # K8s doc is the direct answer
-        "expected_bottom": 1,  # React doc
+        "expected_top": None,  # Both doc 0 (hub concept) and doc 1 (actual hub) relevant
+        "expected_bottom": 2,  # Networking hardware hub
     },
 
     # -----------------------------------------------------------------
-    # 4. LEXICAL OVERLAP TRAP — high keyword overlap but wrong topic
-    # The distractor doc shares many words with the query (memory, leak,
-    # application, process) but is about plumbing, not software.
+    # 4. SAME PROJECT, DIFFERENT PHASE — distinguishing phases
+    # All docs are about anamnesis but at different lifecycle stages.
     # -----------------------------------------------------------------
     {
-        "tag": "lexical-trap",
-        "query": "How to debug memory leaks in a Node.js application",
+        "tag": "phase-discrimination",
+        "query": "anamnesis test coverage gaps and missing test functions",
         "docs": [
-            "Use Chrome DevTools to take heap snapshots and compare memory "
-            "allocations over time. The --inspect flag enables remote "
-            "debugging. Look for detached DOM nodes and growing closures "
-            "as common causes of memory leaks in Node.js.",
-            "Water leaks in residential plumbing can cause significant "
-            "memory loss in building materials. The application of leak "
-            "detection processes involves pressurizing the system and "
-            "monitoring for drops. Memory foam insulation around pipes "
-            "prevents condensation leaks.",
-            "Garbage collection in V8 uses a generational approach with "
-            "young and old spaces. Objects that survive multiple GC cycles "
-            "are promoted to old space, which is collected less frequently.",
+            "Anamnesis test coverage remediation plan: ~85 new test "
+            "functions across 4 new files and 5 modified files. Execution "
+            "order: Phase 1 (unit tests for helpers), Phase 2 (integration "
+            "tests for matchers), Phase 3 (dispatch routing tests), Phase 4 "
+            "(cache invalidation edge cases). Each phase has a gate check.",
+            "Anamnesis Feb 6 Remediation Phase Sequencing: 33 items across "
+            "6 phases. Architecture cleanup (remove phantom deps), code "
+            "quality (fix type annotations), performance (cache tuning), "
+            "security (input validation), documentation (inline comments), "
+            "and testing (coverage gaps). Priority-ordered by risk.",
+            "Post-remediation assessment: 183+ lines of synergy edge-case "
+            "tests added, -2,400 LOC dead code removed, test health improved "
+            "from 'Needs Work' to 'Adequate with Known Gaps'. Remaining "
+            "gaps: no property-based tests, limited concurrency testing, "
+            "mock theater in 3 integration test files.",
         ],
-        "expected_top": 0,  # DevTools/heap snapshots — direct answer
-        "expected_bottom": None,  # Plumbing (1) vs GC internals (2) — both partially relevant
+        # All three are about anamnesis testing/remediation. Doc 0 is the
+        # specific test coverage plan; doc 2 is the post-remediation review.
+        "expected_top": 0,  # Specific test coverage plan
+        "expected_bottom": None,  # Docs 1 and 2 both relate to test gaps
     },
 
     # -----------------------------------------------------------------
-    # 5. PARAPHRASE DETECTION — relevant doc uses different vocabulary
-    # No shared keywords between query and the best doc.
+    # 5. RUST FFI vs PYTHON FFI — related concepts, different ecosystems
+    # Query is about Rust/Node FFI; distractor is Python C extension.
     # -----------------------------------------------------------------
     {
-        "tag": "paraphrase",
-        "query": "techniques for reducing neural network model size for deployment",
+        "tag": "ffi-ecosystem",
+        "query": "Rust panic crashes Node.js process through FFI boundary",
         "docs": [
-            "Data augmentation strategies such as random cropping, flipping, "
-            "and color jittering expand the effective training dataset size "
-            "without collecting new data. Mixup and CutMix further improve "
-            "generalization by blending training examples.",
-            "Quantization converts floating-point weights to lower-precision "
-            "integers (INT8 or INT4), reducing file size by 2-4x. Knowledge "
-            "distillation trains a compact student network to mimic a larger "
-            "teacher's outputs. Structured pruning removes entire channels "
-            "or attention heads deemed least important.",
-            "The ONNX format enables interoperability between ML frameworks. "
-            "Models trained in PyTorch can be exported to ONNX and served "
-            "with ONNX Runtime for optimized inference on CPU and GPU.",
+            "In-Memoria has two critical crash vectors: Rust panic! in "
+            "native modules propagates through the napi-rs FFI boundary and "
+            "terminates the Node.js process with SIGABRT. The second vector "
+            "is a forced process.exit() in src/index.ts error handlers. "
+            "Both bypass graceful shutdown. Priority: CRITICAL.",
+            "Python C extensions using ctypes or cffi must handle segfaults "
+            "carefully. A SIGSEGV in native code kills the Python interpreter. "
+            "Use faulthandler module to get tracebacks from crashes. "
+            "Consider using Cython for safer memory management at the "
+            "Python/C boundary.",
+            "The TypeScript FFI type definitions have a subtle bug: "
+            "lowercase 'symbol' (JavaScript primitive type) is used where "
+            "'Symbol' (the interface) is needed. This causes type errors "
+            "in strict mode. Wave 1, P1 High, Low effort fix.",
         ],
-        # All three docs are ML-adjacent; some models score all negatively
-        # and struggle to separate them.  Quality signal, not smoke gate.
-        "expected_top": None,  # Quantization (1) should win but scores are close
-        "expected_bottom": None,  # Data augmentation (0) vs ONNX (2) — both weak matches
+        "expected_top": 0,  # Rust/Node panic crash — direct match
+        "expected_bottom": 1,  # Python C extensions — different ecosystem
     },
 
     # -----------------------------------------------------------------
-    # 6. NEGATION SENSITIVITY — doc discusses topic but negates it
-    # A naive keyword matcher would rank the negation doc highly.
+    # 6. HARDWARE vs SOFTWARE — 3D printer config vs software config
+    # "Configuration" appears in both but means very different things.
     # -----------------------------------------------------------------
     {
-        "tag": "negation",
-        "query": "benefits of using microservices architecture",
+        "tag": "config-homonym",
+        "query": "Klipper configuration for probe calibration and mesh leveling",
         "docs": [
-            "Microservices architecture allows teams to deploy services "
-            "independently, scale individual components based on demand, "
-            "and use different technology stacks per service. This enables "
-            "faster release cycles and better fault isolation.",
-            "Microservices architecture is often not beneficial for small "
-            "teams. The operational overhead of managing dozens of services, "
-            "distributed tracing, service mesh configuration, and eventual "
-            "consistency problems frequently outweigh any gains. Most "
-            "startups would be better served by a well-structured monolith.",
-            "GraphQL provides a flexible query language for APIs that lets "
-            "clients request exactly the data they need. It reduces "
-            "over-fetching compared to REST endpoints.",
+            "Klipper config for Beacon probe integration: split across "
+            "beacon.cfg (probe settings, mesh parameters, z-offset), "
+            "beacon_macro.cfg (calibration macros, PROBE_CALIBRATE), and "
+            "printer.cfg (include order, stepper definitions). The Beacon "
+            "probe uses eddy current sensing for non-contact mesh leveling.",
+            "ZettelkastenConfig uses Pydantic BaseSettings with env var "
+            "support. Key settings: ZETTELKASTEN_NOTES_DIR, "
+            "ZETTELKASTEN_DATABASE_PATH, ZETTELKASTEN_EMBEDDINGS_ENABLED. "
+            "The config.py module validates paths, sets defaults, and "
+            "supports .env file loading via python-dotenv.",
+            "Manta M5P board wiring: TMC5160T Plus drivers on X/Y steppers "
+            "(48V, 2.0A RMS), TMC2209 on Z and extruder (24V). Heater SSR "
+            "outputs on HE0/HE1 pins. Thermistor inputs on TH0 (hotend) "
+            "and TH1 (bed). Fan PWM on FAN0-FAN2.",
         ],
-        # Negation is the hardest semantic challenge; most rerankers treat
-        # both microservices docs as relevant.  Only assert bottom (GraphQL).
-        "expected_top": None,  # Positive (0) vs critique (1) — hard for rerankers
-        "expected_bottom": 2,  # GraphQL is off-topic
+        "expected_top": 0,  # Klipper/Beacon probe config
+        "expected_bottom": 1,  # Software config system — wrong domain
     },
 
     # -----------------------------------------------------------------
-    # 7. SPECIFICITY — general overview vs precise answer
-    # Query asks about a specific technique; one doc is broad, one is exact.
+    # 7. GATE vs PLAN vs REVIEW — zettelkasten workflow stages
+    # Tests whether reranker can distinguish note purposes within the
+    # same project workflow.
     # -----------------------------------------------------------------
     {
-        "tag": "specificity",
-        "query": "how does WAL mode work in SQLite",
+        "tag": "workflow-stage",
+        "query": "verification criteria for passing a phase gate",
         "docs": [
-            "SQLite is a lightweight, serverless database engine used in "
-            "mobile apps, embedded systems, and as an application file format. "
-            "It supports ACID transactions and is the most widely deployed "
-            "database in the world.",
-            "In WAL (Write-Ahead Logging) mode, SQLite writes changes to a "
-            "separate WAL file instead of directly modifying the database. "
-            "Readers see a consistent snapshot while writers append to the "
-            "WAL. Checkpointing merges WAL changes back into the main "
-            "database file. This allows concurrent reads during writes.",
-            "PostgreSQL uses MVCC (Multi-Version Concurrency Control) and "
-            "WAL for crash recovery. The WAL in PostgreSQL streams to "
-            "replicas for high availability setups using pg_basebackup.",
+            "Gate: Phase 6 Test Coverage Verification Criteria. 8 checks: "
+            "(1) pytest tests/test_dispatch.py passes, (2) cache tests "
+            "cover invalidation edge cases, (3) AST matcher handles all "
+            "node types, (4) regex matcher fallback works when tree-sitter "
+            "unavailable, (5) helper unit tests achieve 90% branch coverage. "
+            "Each check has an exact command and expected result.",
+            "Implementation Plan: Review Finding Remediation — 5 Phases, "
+            "16 items sequenced by dependency. Phase 1: crash prevention "
+            "(2 items), Phase 2: type safety (4 items), Phase 3: security "
+            "(3 items), Phase 4: performance (4 items), Phase 5: cleanup "
+            "(3 items). Each phase produces a deliverable and gate check.",
+            "Code Quality Review: Persistent Backend Wiring in ProjectContext. "
+            "Findings: (1) ProjectContext.__init__ creates new service "
+            "instances instead of sharing the singleton, (2) shutdown() "
+            "doesn't propagate to child services, (3) no connection pooling "
+            "for SQLite backends across project switches.",
         ],
-        "expected_top": 1,  # Specific SQLite WAL explanation
-        "expected_bottom": None,  # Don't assert — doc 0 (general SQLite) and doc 2
-                                  # (PostgreSQL WAL) both have partial relevance
+        "expected_top": 0,  # Gate criteria — exactly what's asked for
+        "expected_bottom": 2,  # Code review finding — not about gates
     },
 
     # -----------------------------------------------------------------
-    # 8. CROSS-DOMAIN HOMONYM — same word, different meaning
-    # "Python" as programming language vs the snake.
+    # 8. LEXICAL TRAP — "test" in different contexts
+    # "Test" appears in testing strategy AND in the test note content,
+    # but only one is about testing methodology.
     # -----------------------------------------------------------------
     {
-        "tag": "homonym",
-        "query": "Python type hints and static type checking with mypy",
+        "tag": "test-lexical-trap",
+        "query": "test strategy for embedding integration with fake providers",
         "docs": [
-            "Python type hints (PEP 484) annotate function signatures with "
-            "expected types. Use mypy or pyright for static analysis. Common "
-            "patterns include Optional[T], Union[A, B], and generic "
-            "containers like List[int] and Dict[str, Any].",
-            "The Burmese python (Python bivittatus) is one of the largest "
-            "snake species in the world, reaching lengths of 23 feet. "
-            "These constrictors are found in Southeast Asian tropical "
-            "forests and grasslands. Their population status is assessed "
-            "as vulnerable by the IUCN.",
-            "Static analysis tools examine source code without executing "
-            "it. Linters like ESLint for JavaScript and Pylint for Python "
-            "catch common errors. Type checkers go further by verifying "
-            "type correctness across function boundaries.",
+            "The 5-phase embedding test suite (~1,923 lines) uses "
+            "FakeEmbeddingProvider and FakeRerankerProvider throughout. "
+            "Critical finding: OnnxRerankerProvider._score_pairs() has a "
+            "NameError bug that no test catches because all phases use "
+            "fakes. Real ONNX providers are never exercised in the test "
+            "suite, creating a false confidence problem.",
+            "Test Note 3. This is a test note created for verifying the "
+            "zettelkasten CRUD operations. Tags: test, sample. Content is "
+            "minimal and exists only to validate create/read/update/delete "
+            "workflows in the MCP server integration tests.",
+            "The protocol test suite (test_mcp_protocol.py) exercises all "
+            "22 MCP tools through the full JSON-RPC pipeline using "
+            "mcp.shared.memory transport. No mocking — real service layer "
+            "with FakeEmbeddingProvider for deterministic vector search. "
+            "30 tests covering CRUD, search, links, batch, and semantic.",
         ],
-        "expected_top": 0,  # PEP 484 / mypy doc
-        "expected_bottom": 1,  # Snake doc
+        # Doc 0 and 2 are both about test strategy with fake providers.
+        # Doc 1 is a literal "test note" — lexical match but wrong meaning.
+        "expected_top": None,  # Both doc 0 and 2 are relevant
+        "expected_bottom": 1,  # Literal test note, not about testing strategy
     },
 
     # -----------------------------------------------------------------
-    # 9. TEMPORAL SENSITIVITY — outdated vs current information
-    # Query implies current best practice; one doc is clearly dated.
+    # 9. BRANCH MERGE ANALYSIS — specific git workflow
+    # Narrow query about branch divergence; distractors are general
+    # code review and architecture.
     # -----------------------------------------------------------------
     {
-        "tag": "temporal",
-        "query": "current best practices for React state management",
+        "tag": "branch-merge",
+        "query": "branch divergence analysis between main and local-work-backup",
         "docs": [
-            "React state management in 2024 favors built-in hooks: "
-            "useState for local state, useReducer for complex logic, and "
-            "useContext + useSyncExternalStore for shared state. Server "
-            "Components reduce client-side state needs. Libraries like "
-            "Zustand and Jotai offer lightweight alternatives to Redux.",
-            "Managing state in React class components requires calling "
-            "this.setState() with an updater object. Redux with "
-            "mapStateToProps and connect() HOC is the standard pattern "
-            "for global state. Use componentDidMount for data fetching "
-            "and componentWillUnmount for cleanup.",
-            "Vue.js uses a reactive data model where changes to component "
-            "data automatically trigger DOM updates. The Composition API "
-            "provides ref() and reactive() for fine-grained reactivity.",
+            "Refactoring analysis of znote-mcp branch merge strategy. "
+            "Main branch (5 commits) adds project management and Obsidian "
+            "mirroring. local-work-backup (13 commits) adds git-based "
+            "concurrency control and versioned operations. 4 missing "
+            "cross-branch components, 2 schema conflicts in models, "
+            "6 silent error handlers that swallow exceptions.",
+            "Meta-analysis of Round 1 code review findings for znote-mcp: "
+            "validated 12 critical findings, discovered 6 previously missed "
+            "issues, recalibrated 2 overstated concerns. Final assessment: "
+            "functional but needs work. Key risk: insufficient error "
+            "propagation in storage layer.",
+            "The dual storage architecture uses markdown files as source "
+            "of truth with SQLite as an indexing layer. Notes are stored "
+            "as individual .md files with YAML frontmatter. The SQLite "
+            "database provides FTS5 full-text search and can be rebuilt "
+            "from scratch via zk_system(action='rebuild').",
         ],
-        # Both React docs (0 and 1) are relevant; models may not
-        # distinguish modern vs legacy.  Only assert Vue (2) is bottom.
-        "expected_top": None,  # Modern (0) vs class-based (1) — temporal nuance
-        "expected_bottom": 2,  # Vue.js is wrong framework entirely
+        "expected_top": 0,  # Branch merge analysis — exact match
+        "expected_bottom": 2,  # Architecture overview — unrelated to branches
     },
 
     # -----------------------------------------------------------------
-    # 10. CONCEPTUAL SIMILARITY — related but distinct concepts
-    # Query is about one concept; distractor is a closely related but
-    # different concept from the same domain.
-    # -----------------------------------------------------------------
-    {
-        "tag": "conceptual-near-miss",
-        "query": "difference between authentication and authorization",
-        "docs": [
-            "Authentication verifies who a user is (identity), while "
-            "authorization determines what they can access (permissions). "
-            "Authentication happens first — you prove your identity with "
-            "credentials. Authorization follows — the system checks your "
-            "roles and permissions against the requested resource.",
-            "OAuth 2.0 is an authorization framework that enables "
-            "third-party applications to obtain limited access to HTTP "
-            "services. It uses access tokens, refresh tokens, and scopes "
-            "to delegate permissions without sharing credentials.",
-            "Symmetric encryption (AES) uses the same key for encryption "
-            "and decryption, while asymmetric encryption (RSA) uses a "
-            "public-private key pair. TLS handshakes combine both: "
-            "asymmetric for key exchange, symmetric for data transfer.",
-        ],
-        "expected_top": 0,  # Directly explains the difference
-        "expected_bottom": 2,  # Encryption is a different security topic
-    },
-
-    # -----------------------------------------------------------------
-    # 11. SHORT QUERY — single-word or very terse query
-    # Tests model behavior with minimal query context.
+    # 10. SHORT QUERY — terse search term from daily workflow
     # -----------------------------------------------------------------
     {
         "tag": "short-query",
-        "query": "mutex",
+        "query": "obsidian mirroring",
         "docs": [
-            "A mutex (mutual exclusion) is a synchronization primitive that "
-            "prevents multiple threads from simultaneously accessing a shared "
-            "resource. Only the thread that locks the mutex can unlock it. "
-            "Unlike semaphores, mutexes enforce ownership semantics.",
-            "The Rust programming language enforces memory safety through "
-            "its ownership system: each value has exactly one owner, "
-            "references are checked at compile time, and dangling pointers "
-            "are impossible. The borrow checker prevents data races.",
-            "In music production, mixing involves adjusting levels, panning, "
-            "EQ, and effects across multiple audio tracks to create a "
-            "balanced stereo output. Mastering is the final step before "
-            "distribution.",
+            "Obsidian vault mirroring writes shadow copies of notes to a "
+            "configured vault path. _build_obsidian_filename() adds a date "
+            "prefix (YYYY-MM-DD_) to all filenames. Link rewriting converts "
+            "zettelkasten IDs to wikilinks with the date prefix. Controlled "
+            "by ZETTELKASTEN_OBSIDIAN_VAULT env var.",
+            "OrcaSlicer 0.8mm nozzle configuration: layer height 0.4mm, "
+            "line width 0.88mm, wall loops 3, sparse infill 15%, support "
+            "threshold angle 40 degrees. Print speed 150mm/s for inner "
+            "walls, 200mm/s for infill. Retraction 0.5mm at 40mm/s for "
+            "direct drive extruder.",
+            "The zettelkasten search service supports multiple modes: "
+            "text (FTS5), tag filtering, link traversal, and semantic "
+            "vector search. The default mode 'auto' routes based on "
+            "available capabilities and filter parameters.",
         ],
-        "expected_top": 0,  # Mutex definition
-        "expected_bottom": None,  # Rust ownership (1) vs music (2) — both far from "mutex"
+        "expected_top": 0,  # Obsidian mirroring doc
+        "expected_bottom": 1,  # 3D printer settings
     },
 
     # -----------------------------------------------------------------
-    # 12. LONG QUERY — verbose, multi-sentence query
-    # Tests whether models handle context-rich queries well.
+    # 11. LONG QUERY — verbose multi-sentence search
+    # Mimics a detailed investigation query about a specific bug.
     # -----------------------------------------------------------------
     {
         "tag": "long-query",
         "query": (
-            "I'm building a web application that needs to handle file "
-            "uploads from users. The files can be large (up to 2GB) and "
-            "I need to show upload progress to the user. I'm using React "
-            "on the frontend and Express.js on the backend. What's the "
-            "best approach for implementing resumable uploads with "
-            "progress tracking?"
+            "I'm investigating a bug where the session-manager agent enters "
+            "an infinite search loop, making excessive zettelkasten queries "
+            "during project initialization. It seems to be searching for "
+            "prior session notes repeatedly without finding them, causing "
+            "the session startup to take several minutes instead of seconds."
         ),
         "docs": [
-            "The tus protocol is an open standard for resumable file "
-            "uploads. It breaks large files into chunks and tracks upload "
-            "progress server-side. If a connection drops, the client "
-            "queries the server for the last received offset and resumes "
-            "from there. Libraries like tus-js-client (React) and "
-            "tus-node-server (Express) implement the protocol.",
-            "React's useCallback hook memoizes function references to "
-            "prevent unnecessary re-renders in child components. Use it "
-            "when passing callbacks to optimized children wrapped in "
-            "React.memo(). Don't overuse it — the memoization itself "
-            "has a cost.",
-            "Express.js middleware functions execute during the "
-            "request-response cycle. Use app.use() for global middleware "
-            "and router.use() for route-specific middleware. Common "
-            "middleware includes body-parser, cors, and helmet for "
-            "security headers.",
+            "Bug: Session-Manager Agent Search Loop. The session-manager "
+            "agent's prior-work discovery phase calls zk_search_notes in a "
+            "loop, searching for session tracking notes with increasingly "
+            "broad queries when initial searches return empty. Root cause: "
+            "the search tag filter uses OR semantics but the agent expects "
+            "AND. Fix: switch to explicit tag intersection in the search "
+            "service, add a max-retry limit to the discovery loop.",
+            "Zettelkasten Steward Report - 2026-02-16. Routine maintenance "
+            "completed: tag cleanup removed 14 orphan tags, database "
+            "integrity check passed, 3 notes had stale project references "
+            "updated, embedding index is current (962 notes, 1,847 chunks). "
+            "No action items.",
+            "The anamnesis session tracking system uses start_session and "
+            "end_session to bracket work periods. Sessions record: project "
+            "context, tools used, decisions made, and duration. The "
+            "get_sessions endpoint retrieves historical session data for "
+            "continuity across conversations.",
         ],
-        "expected_top": 0,  # tus protocol — directly answers the question
-        "expected_bottom": 1,  # useCallback — wrong topic despite React mention
+        "expected_top": 0,  # Session-manager search loop bug — exact match
+        "expected_bottom": 1,  # Steward report — routine maintenance, not a bug
+    },
+
+    # -----------------------------------------------------------------
+    # 12. SAFETY NET PATTERN — cross-cutting architectural concern
+    # Tests whether reranker can match an abstract concept (cascading
+    # failure) to a concrete description.
+    # -----------------------------------------------------------------
+    {
+        "tag": "cascading-failure",
+        "query": "safety net failure chain where multiple protective layers have aligned holes",
+        "docs": [
+            "Cross-domain synthesis identifying compound problems: Safety "
+            "Net Failure Chain — Rust panic! crashes Node.js (no FFI panic "
+            "handler), 225 'any' types bypass TypeScript checking (no strict "
+            "mode), missing Zod validation allows malformed data through "
+            "API boundary (no runtime checks). Each layer's gap aligns with "
+            "the next, creating an unprotected path from input to crash.",
+            "Remove phantom dependencies from pyproject.toml: pydantic, "
+            "tenacity, and anyio are listed as direct dependencies but are "
+            "only pulled in transitively through other packages. Removing "
+            "them reduces install size and prevents version conflicts. "
+            "Verification: run import checks after removal.",
+            "CircuitBreaker absence risk assessment: the service layer has "
+            "no circuit breaker pattern for external calls (embedding model "
+            "inference, HuggingFace Hub downloads). A slow or failing "
+            "external service causes cascading timeouts across all MCP "
+            "tool handlers. Recommended: add circuit breaker with "
+            "exponential backoff.",
+        ],
+        # Doc 0 is the exact safety-net-failure-chain note. Doc 2 is about
+        # cascading failure but a different pattern (circuit breaker).
+        "expected_top": 0,  # Safety net failure chain — exact concept match
+        "expected_bottom": 1,  # Dependency cleanup — unrelated
     },
 ]
 

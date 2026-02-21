@@ -1,6 +1,6 @@
 {
   "system_info": {
-    "timestamp": "2026-02-21T02:21:51.311114+00:00",
+    "timestamp": "2026-02-21T02:32:42.368450+00:00",
     "python_version": "3.11.14",
     "platform": "Linux-6.19.3-2-cachyos-x86_64-with-glibc2.43",
     "cpu": "unknown",
@@ -19,16 +19,96 @@
       "model_id": "cross-encoder/ms-marco-MiniLM-L-6-v2",
       "status": "ok",
       "error": null,
-      "load_time_s": 0.47,
-      "rss_delta_mb": 145.2,
+      "load_time_s": 0.41,
+      "rss_delta_mb": 149.9,
       "cases": [
         {
-          "tag": "basic-relevance",
-          "query": "How to configure GPU passthrough in a virtual machine",
+          "tag": "embedding-architecture",
+          "query": "how does the embedding service handle idle timeout and model...",
           "scores": [
-            5.148624,
-            -11.267612,
-            4.495625
+            6.477637,
+            -10.925932,
+            -11.255681
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "review-vs-remediation",
+          "query": "SQL injection vulnerability in LIKE pattern handling",
+          "scores": [
+            3.227314,
+            -4.800102,
+            -11.06039
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "hub-homonym",
+          "query": "hub notes that synthesize cross-domain implementation findin...",
+          "scores": [
+            6.203804,
+            -7.454394,
+            -10.063007
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "phase-discrimination",
+          "query": "anamnesis test coverage gaps and missing test functions",
+          "scores": [
+            5.97402,
+            3.144681,
+            -7.114078
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "ffi-ecosystem",
+          "query": "Rust panic crashes Node.js process through FFI boundary",
+          "scores": [
+            8.15768,
+            -9.314028,
+            -7.534048
           ],
           "ranked_order": [
             0,
@@ -43,32 +123,12 @@
           "actual_bottom": 1
         },
         {
-          "tag": "topic-boundary",
-          "query": "Python async programming with asyncio event loop",
+          "tag": "config-homonym",
+          "query": "Klipper configuration for probe calibration and mesh levelin...",
           "scores": [
-            -11.363683,
-            5.773821,
-            7.878163
-          ],
-          "ranked_order": [
-            2,
-            1,
-            0
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 2,
-          "actual_bottom": 0
-        },
-        {
-          "tag": "clear-winner",
-          "query": "Kubernetes pod networking and service discovery",
-          "scores": [
-            7.254984,
-            -11.432741,
-            -9.602446
+            6.714913,
+            -11.338381,
+            -11.294069
           ],
           "ranked_order": [
             0,
@@ -83,12 +143,12 @@
           "actual_bottom": 1
         },
         {
-          "tag": "lexical-trap",
-          "query": "How to debug memory leaks in a Node.js application",
+          "tag": "workflow-stage",
+          "query": "verification criteria for passing a phase gate",
           "scores": [
-            6.315297,
-            -6.290149,
-            -11.408667
+            7.027164,
+            -6.198208,
+            -11.426758
           ],
           "ranked_order": [
             0,
@@ -103,72 +163,12 @@
           "actual_bottom": 2
         },
         {
-          "tag": "paraphrase",
-          "query": "techniques for reducing neural network model size for deploy...",
+          "tag": "test-lexical-trap",
+          "query": "test strategy for embedding integration with fake providers",
           "scores": [
-            -8.646446,
-            -4.955543,
-            -10.831234
-          ],
-          "ranked_order": [
-            1,
-            0,
-            2
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 1,
-          "actual_bottom": 2
-        },
-        {
-          "tag": "negation",
-          "query": "benefits of using microservices architecture",
-          "scores": [
-            8.100223,
-            6.993344,
-            -11.040482
-          ],
-          "ranked_order": [
-            0,
-            1,
-            2
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 0,
-          "actual_bottom": 2
-        },
-        {
-          "tag": "specificity",
-          "query": "how does WAL mode work in SQLite",
-          "scores": [
-            -3.800527,
-            9.039431,
-            -0.004443
-          ],
-          "ranked_order": [
-            1,
-            2,
-            0
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 1,
-          "actual_bottom": 0
-        },
-        {
-          "tag": "homonym",
-          "query": "Python type hints and static type checking with mypy",
-          "scores": [
-            8.261772,
-            -9.347878,
-            2.99156
+            5.110908,
+            -9.701371,
+            2.201184
           ],
           "ranked_order": [
             0,
@@ -183,32 +183,12 @@
           "actual_bottom": 1
         },
         {
-          "tag": "temporal",
-          "query": "current best practices for React state management",
+          "tag": "branch-merge",
+          "query": "branch divergence analysis between main and local-work-backu...",
           "scores": [
-            1.913987,
-            -1.088225,
-            -10.803208
-          ],
-          "ranked_order": [
-            0,
-            1,
-            2
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 0,
-          "actual_bottom": 2
-        },
-        {
-          "tag": "conceptual-near-miss",
-          "query": "difference between authentication and authorization",
-          "scores": [
-            9.641133,
-            -3.16443,
-            -7.150947
+            4.682999,
+            -11.334744,
+            -11.477222
           ],
           "ranked_order": [
             0,
@@ -224,31 +204,51 @@
         },
         {
           "tag": "short-query",
-          "query": "mutex",
+          "query": "obsidian mirroring",
           "scores": [
-            9.972592,
-            -11.212053,
-            -10.684131
+            6.623705,
+            -11.131852,
+            -11.313511
           ],
           "ranked_order": [
             0,
-            2,
-            1
+            1,
+            2
           ],
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true,
+          "order_bottom": false,
           "actual_top": 0,
-          "actual_bottom": 1
+          "actual_bottom": 2
         },
         {
           "tag": "long-query",
-          "query": "I'm building a web application that needs to handle file upl...",
+          "query": "I'm investigating a bug where the session-manager agent ente...",
           "scores": [
-            -2.230823,
-            -8.375804,
-            -7.452199
+            3.893584,
+            -4.94742,
+            -6.997009
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": false,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "cascading-failure",
+          "query": "safety net failure chain where multiple protective layers ha...",
+          "scores": [
+            1.737333,
+            -11.439235,
+            -10.412113
           ],
           "ranked_order": [
             0,
@@ -271,16 +271,96 @@
       "model_id": "cross-encoder/ms-marco-MiniLM-L-12-v2",
       "status": "ok",
       "error": null,
-      "load_time_s": 0.35,
-      "rss_delta_mb": 99.4,
+      "load_time_s": 0.37,
+      "rss_delta_mb": 125.3,
       "cases": [
         {
-          "tag": "basic-relevance",
-          "query": "How to configure GPU passthrough in a virtual machine",
+          "tag": "embedding-architecture",
+          "query": "how does the embedding service handle idle timeout and model...",
           "scores": [
-            5.302227,
-            -11.212993,
-            4.51103
+            6.546479,
+            -11.237249,
+            -11.232169
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": false,
+          "actual_top": 0,
+          "actual_bottom": 1
+        },
+        {
+          "tag": "review-vs-remediation",
+          "query": "SQL injection vulnerability in LIKE pattern handling",
+          "scores": [
+            3.13478,
+            -5.048662,
+            -11.135516
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "hub-homonym",
+          "query": "hub notes that synthesize cross-domain implementation findin...",
+          "scores": [
+            6.767428,
+            -7.613275,
+            -10.620789
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "phase-discrimination",
+          "query": "anamnesis test coverage gaps and missing test functions",
+          "scores": [
+            5.279021,
+            3.977993,
+            -7.675705
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "ffi-ecosystem",
+          "query": "Rust panic crashes Node.js process through FFI boundary",
+          "scores": [
+            8.552761,
+            -9.384244,
+            -8.437956
           ],
           "ranked_order": [
             0,
@@ -295,32 +375,12 @@
           "actual_bottom": 1
         },
         {
-          "tag": "topic-boundary",
-          "query": "Python async programming with asyncio event loop",
+          "tag": "config-homonym",
+          "query": "Klipper configuration for probe calibration and mesh levelin...",
           "scores": [
-            -11.312969,
-            6.290953,
-            8.214362
-          ],
-          "ranked_order": [
-            2,
-            1,
-            0
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 2,
-          "actual_bottom": 0
-        },
-        {
-          "tag": "clear-winner",
-          "query": "Kubernetes pod networking and service discovery",
-          "scores": [
-            7.178941,
-            -11.290693,
-            -9.130228
+            6.722014,
+            -11.292339,
+            -11.286492
           ],
           "ranked_order": [
             0,
@@ -335,12 +395,12 @@
           "actual_bottom": 1
         },
         {
-          "tag": "lexical-trap",
-          "query": "How to debug memory leaks in a Node.js application",
+          "tag": "workflow-stage",
+          "query": "verification criteria for passing a phase gate",
           "scores": [
-            7.081487,
-            -5.587804,
-            -11.224216
+            7.084018,
+            -5.57667,
+            -11.305126
           ],
           "ranked_order": [
             0,
@@ -355,72 +415,12 @@
           "actual_bottom": 2
         },
         {
-          "tag": "paraphrase",
-          "query": "techniques for reducing neural network model size for deploy...",
+          "tag": "test-lexical-trap",
+          "query": "test strategy for embedding integration with fake providers",
           "scores": [
-            -8.575992,
-            -3.51931,
-            -10.413547
-          ],
-          "ranked_order": [
-            1,
-            0,
-            2
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 1,
-          "actual_bottom": 2
-        },
-        {
-          "tag": "negation",
-          "query": "benefits of using microservices architecture",
-          "scores": [
-            7.759419,
-            6.219513,
-            -11.071886
-          ],
-          "ranked_order": [
-            0,
-            1,
-            2
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 0,
-          "actual_bottom": 2
-        },
-        {
-          "tag": "specificity",
-          "query": "how does WAL mode work in SQLite",
-          "scores": [
-            -3.393109,
-            8.974149,
-            0.437103
-          ],
-          "ranked_order": [
-            1,
-            2,
-            0
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 1,
-          "actual_bottom": 0
-        },
-        {
-          "tag": "homonym",
-          "query": "Python type hints and static type checking with mypy",
-          "scores": [
-            8.326394,
-            -10.256896,
-            2.47959
+            5.991723,
+            -10.244421,
+            3.017394
           ],
           "ranked_order": [
             0,
@@ -435,32 +435,12 @@
           "actual_bottom": 1
         },
         {
-          "tag": "temporal",
-          "query": "current best practices for React state management",
+          "tag": "branch-merge",
+          "query": "branch divergence analysis between main and local-work-backu...",
           "scores": [
-            4.022822,
-            0.104956,
-            -10.618464
-          ],
-          "ranked_order": [
-            0,
-            1,
-            2
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 0,
-          "actual_bottom": 2
-        },
-        {
-          "tag": "conceptual-near-miss",
-          "query": "difference between authentication and authorization",
-          "scores": [
-            10.009651,
-            -2.970428,
-            -7.385533
+            4.969553,
+            -11.247556,
+            -11.321528
           ],
           "ranked_order": [
             0,
@@ -476,31 +456,51 @@
         },
         {
           "tag": "short-query",
-          "query": "mutex",
+          "query": "obsidian mirroring",
           "scores": [
-            9.820906,
-            -11.232988,
-            -11.090334
+            6.57841,
+            -11.128696,
+            -11.257874
           ],
           "ranked_order": [
             0,
-            2,
-            1
+            1,
+            2
           ],
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true,
+          "order_bottom": false,
           "actual_top": 0,
-          "actual_bottom": 1
+          "actual_bottom": 2
         },
         {
           "tag": "long-query",
-          "query": "I'm building a web application that needs to handle file upl...",
+          "query": "I'm investigating a bug where the session-manager agent ente...",
           "scores": [
-            -0.7875,
-            -4.801613,
-            -4.31658
+            3.213172,
+            -5.120465,
+            -9.560835
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": false,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "cascading-failure",
+          "query": "safety net failure chain where multiple protective layers ha...",
+          "scores": [
+            2.088253,
+            -11.321512,
+            -10.62033
           ],
           "ranked_order": [
             0,
@@ -523,16 +523,156 @@
       "model_id": "BAAI/bge-reranker-base",
       "status": "ok",
       "error": null,
-      "load_time_s": 1.32,
-      "rss_delta_mb": 1219.0,
+      "load_time_s": 1.51,
+      "rss_delta_mb": 1359.6,
       "cases": [
         {
-          "tag": "basic-relevance",
-          "query": "How to configure GPU passthrough in a virtual machine",
+          "tag": "embedding-architecture",
+          "query": "how does the embedding service handle idle timeout and model...",
           "scores": [
-            0.653008,
-            -10.194046,
-            1.383915
+            5.054482,
+            -9.875038,
+            -7.263379
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": false,
+          "actual_top": 0,
+          "actual_bottom": 1
+        },
+        {
+          "tag": "review-vs-remediation",
+          "query": "SQL injection vulnerability in LIKE pattern handling",
+          "scores": [
+            0.905982,
+            -0.947789,
+            -8.800587
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "hub-homonym",
+          "query": "hub notes that synthesize cross-domain implementation findin...",
+          "scores": [
+            3.455419,
+            -5.660309,
+            -7.453526
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "phase-discrimination",
+          "query": "anamnesis test coverage gaps and missing test functions",
+          "scores": [
+            4.223359,
+            0.357646,
+            -4.504869
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "ffi-ecosystem",
+          "query": "Rust panic crashes Node.js process through FFI boundary",
+          "scores": [
+            6.145726,
+            -8.640096,
+            -7.244831
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
+        },
+        {
+          "tag": "config-homonym",
+          "query": "Klipper configuration for probe calibration and mesh levelin...",
+          "scores": [
+            5.058815,
+            -9.692181,
+            -10.171974
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": false,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "workflow-stage",
+          "query": "verification criteria for passing a phase gate",
+          "scores": [
+            3.85707,
+            -4.482187,
+            -10.195915
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "test-lexical-trap",
+          "query": "test strategy for embedding integration with fake providers",
+          "scores": [
+            1.584548,
+            -7.301518,
+            1.640469
           ],
           "ranked_order": [
             2,
@@ -547,172 +687,12 @@
           "actual_bottom": 1
         },
         {
-          "tag": "topic-boundary",
-          "query": "Python async programming with asyncio event loop",
+          "tag": "branch-merge",
+          "query": "branch divergence analysis between main and local-work-backu...",
           "scores": [
-            -10.093337,
-            4.787956,
-            5.854079
-          ],
-          "ranked_order": [
-            2,
-            1,
-            0
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 2,
-          "actual_bottom": 0
-        },
-        {
-          "tag": "clear-winner",
-          "query": "Kubernetes pod networking and service discovery",
-          "scores": [
-            4.753787,
-            -10.184785,
-            -6.874599
-          ],
-          "ranked_order": [
-            0,
-            2,
-            1
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 0,
-          "actual_bottom": 1
-        },
-        {
-          "tag": "lexical-trap",
-          "query": "How to debug memory leaks in a Node.js application",
-          "scores": [
-            3.651314,
-            -6.900074,
-            -10.193007
-          ],
-          "ranked_order": [
-            0,
-            1,
-            2
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 0,
-          "actual_bottom": 2
-        },
-        {
-          "tag": "paraphrase",
-          "query": "techniques for reducing neural network model size for deploy...",
-          "scores": [
-            -3.526038,
-            -3.648608,
-            -7.324388
-          ],
-          "ranked_order": [
-            0,
-            1,
-            2
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 0,
-          "actual_bottom": 2
-        },
-        {
-          "tag": "negation",
-          "query": "benefits of using microservices architecture",
-          "scores": [
-            7.705833,
-            3.715618,
-            -6.647562
-          ],
-          "ranked_order": [
-            0,
-            1,
-            2
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 0,
-          "actual_bottom": 2
-        },
-        {
-          "tag": "specificity",
-          "query": "how does WAL mode work in SQLite",
-          "scores": [
-            -4.603381,
-            6.491663,
-            1.25115
-          ],
-          "ranked_order": [
-            1,
-            2,
-            0
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 1,
-          "actual_bottom": 0
-        },
-        {
-          "tag": "homonym",
-          "query": "Python type hints and static type checking with mypy",
-          "scores": [
-            3.557505,
-            -8.540167,
-            -1.113281
-          ],
-          "ranked_order": [
-            0,
-            2,
-            1
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 0,
-          "actual_bottom": 1
-        },
-        {
-          "tag": "temporal",
-          "query": "current best practices for React state management",
-          "scores": [
-            -2.790709,
-            -4.209408,
-            -10.190763
-          ],
-          "ranked_order": [
-            0,
-            1,
-            2
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 0,
-          "actual_bottom": 2
-        },
-        {
-          "tag": "conceptual-near-miss",
-          "query": "difference between authentication and authorization",
-          "scores": [
-            7.535668,
-            -2.527221,
-            -4.984433
+            3.033916,
+            -9.409174,
+            -9.898806
           ],
           "ranked_order": [
             0,
@@ -728,11 +708,11 @@
         },
         {
           "tag": "short-query",
-          "query": "mutex",
+          "query": "obsidian mirroring",
           "scores": [
-            9.684793,
-            -8.529341,
-            -8.474704
+            2.736701,
+            -10.196822,
+            -10.196692
           ],
           "ranked_order": [
             0,
@@ -748,11 +728,31 @@
         },
         {
           "tag": "long-query",
-          "query": "I'm building a web application that needs to handle file upl...",
+          "query": "I'm investigating a bug where the session-manager agent ente...",
           "scores": [
-            5.361319,
-            -7.560317,
-            -1.246444
+            5.762584,
+            -5.310528,
+            -4.655699
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
+        },
+        {
+          "tag": "cascading-failure",
+          "query": "safety net failure chain where multiple protective layers ha...",
+          "scores": [
+            -2.265851,
+            -10.196815,
+            -8.299146
           ],
           "ranked_order": [
             0,
@@ -775,16 +775,96 @@
       "model_id": "BAAI/bge-reranker-large",
       "status": "ok",
       "error": null,
-      "load_time_s": 0.97,
-      "rss_delta_mb": 837.9,
+      "load_time_s": 1.0,
+      "rss_delta_mb": 736.2,
       "cases": [
         {
-          "tag": "basic-relevance",
-          "query": "How to configure GPU passthrough in a virtual machine",
+          "tag": "embedding-architecture",
+          "query": "how does the embedding service handle idle timeout and model...",
           "scores": [
-            1.680141,
-            -9.480926,
-            1.288659
+            4.259433,
+            -9.470437,
+            -9.418819
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": false,
+          "actual_top": 0,
+          "actual_bottom": 1
+        },
+        {
+          "tag": "review-vs-remediation",
+          "query": "SQL injection vulnerability in LIKE pattern handling",
+          "scores": [
+            1.236965,
+            -2.789976,
+            -8.152992
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "hub-homonym",
+          "query": "hub notes that synthesize cross-domain implementation findin...",
+          "scores": [
+            1.701067,
+            -6.875721,
+            -9.423499
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "phase-discrimination",
+          "query": "anamnesis test coverage gaps and missing test functions",
+          "scores": [
+            0.832203,
+            0.187811,
+            -4.334581
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "ffi-ecosystem",
+          "query": "Rust panic crashes Node.js process through FFI boundary",
+          "scores": [
+            6.376801,
+            -8.438986,
+            -6.229573
           ],
           "ranked_order": [
             0,
@@ -799,52 +879,32 @@
           "actual_bottom": 1
         },
         {
-          "tag": "topic-boundary",
-          "query": "Python async programming with asyncio event loop",
+          "tag": "config-homonym",
+          "query": "Klipper configuration for probe calibration and mesh levelin...",
           "scores": [
-            -9.374032,
-            3.150151,
-            4.143442
-          ],
-          "ranked_order": [
-            2,
-            1,
-            0
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 2,
-          "actual_bottom": 0
-        },
-        {
-          "tag": "clear-winner",
-          "query": "Kubernetes pod networking and service discovery",
-          "scores": [
-            4.656589,
-            -9.481425,
-            -8.393562
+            2.889071,
+            -9.37661,
+            -9.473293
           ],
           "ranked_order": [
             0,
-            2,
-            1
+            1,
+            2
           ],
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true,
+          "order_bottom": false,
           "actual_top": 0,
-          "actual_bottom": 1
+          "actual_bottom": 2
         },
         {
-          "tag": "lexical-trap",
-          "query": "How to debug memory leaks in a Node.js application",
+          "tag": "workflow-stage",
+          "query": "verification criteria for passing a phase gate",
           "scores": [
-            4.346924,
-            -8.276721,
-            -9.46987
+            1.924514,
+            -4.932147,
+            -9.48209
           ],
           "ranked_order": [
             0,
@@ -859,72 +919,12 @@
           "actual_bottom": 2
         },
         {
-          "tag": "paraphrase",
-          "query": "techniques for reducing neural network model size for deploy...",
+          "tag": "test-lexical-trap",
+          "query": "test strategy for embedding integration with fake providers",
           "scores": [
-            -5.504904,
-            -2.827361,
-            -9.374868
-          ],
-          "ranked_order": [
-            1,
-            0,
-            2
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 1,
-          "actual_bottom": 2
-        },
-        {
-          "tag": "negation",
-          "query": "benefits of using microservices architecture",
-          "scores": [
-            5.522735,
-            2.461856,
-            -8.451793
-          ],
-          "ranked_order": [
-            0,
-            1,
-            2
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 0,
-          "actual_bottom": 2
-        },
-        {
-          "tag": "specificity",
-          "query": "how does WAL mode work in SQLite",
-          "scores": [
-            -6.075926,
-            5.131257,
-            -2.501696
-          ],
-          "ranked_order": [
-            1,
-            2,
-            0
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 1,
-          "actual_bottom": 0
-        },
-        {
-          "tag": "homonym",
-          "query": "Python type hints and static type checking with mypy",
-          "scores": [
-            2.615575,
-            -9.36972,
-            -1.848109
+            1.69789,
+            -8.611034,
+            0.686558
           ],
           "ranked_order": [
             0,
@@ -939,52 +939,32 @@
           "actual_bottom": 1
         },
         {
-          "tag": "temporal",
-          "query": "current best practices for React state management",
+          "tag": "branch-merge",
+          "query": "branch divergence analysis between main and local-work-backu...",
           "scores": [
-            -1.096468,
-            -1.503281,
-            -9.481115
+            2.233095,
+            -9.481534,
+            -9.479856
           ],
           "ranked_order": [
             0,
-            1,
-            2
+            2,
+            1
           ],
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true,
+          "order_bottom": false,
           "actual_top": 0,
-          "actual_bottom": 2
-        },
-        {
-          "tag": "conceptual-near-miss",
-          "query": "difference between authentication and authorization",
-          "scores": [
-            6.751755,
-            -3.174792,
-            -7.51805
-          ],
-          "ranked_order": [
-            0,
-            1,
-            2
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 0,
-          "actual_bottom": 2
+          "actual_bottom": 1
         },
         {
           "tag": "short-query",
-          "query": "mutex",
+          "query": "obsidian mirroring",
           "scores": [
-            7.528186,
-            -9.226633,
-            -9.454534
+            2.653936,
+            -9.473987,
+            -9.481522
           ],
           "ranked_order": [
             0,
@@ -994,17 +974,37 @@
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true,
+          "order_bottom": false,
           "actual_top": 0,
           "actual_bottom": 2
         },
         {
           "tag": "long-query",
-          "query": "I'm building a web application that needs to handle file upl...",
+          "query": "I'm investigating a bug where the session-manager agent ente...",
           "scores": [
-            3.707028,
-            -4.562555,
-            -1.550231
+            4.745779,
+            -3.106238,
+            -5.9024
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": false,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "cascading-failure",
+          "query": "safety net failure chain where multiple protective layers ha...",
+          "scores": [
+            -0.889368,
+            -9.480803,
+            -9.387482
           ],
           "ranked_order": [
             0,
@@ -1027,16 +1027,16 @@
       "model_id": "Alibaba-NLP/gte-reranker-modernbert-base",
       "status": "ok",
       "error": null,
-      "load_time_s": 0.55,
-      "rss_delta_mb": 337.9,
+      "load_time_s": 0.42,
+      "rss_delta_mb": 0.3,
       "cases": [
         {
-          "tag": "basic-relevance",
-          "query": "How to configure GPU passthrough in a virtual machine",
+          "tag": "embedding-architecture",
+          "query": "how does the embedding service handle idle timeout and model...",
           "scores": [
-            3.48435,
-            -3.093599,
-            2.955285
+            3.395346,
+            -1.182977,
+            -0.342127
           ],
           "ranked_order": [
             0,
@@ -1046,157 +1046,17 @@
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true,
+          "order_bottom": false,
           "actual_top": 0,
           "actual_bottom": 1
         },
         {
-          "tag": "topic-boundary",
-          "query": "Python async programming with asyncio event loop",
+          "tag": "review-vs-remediation",
+          "query": "SQL injection vulnerability in LIKE pattern handling",
           "scores": [
-            -1.728664,
-            2.642558,
-            3.045571
-          ],
-          "ranked_order": [
-            2,
-            1,
-            0
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 2,
-          "actual_bottom": 0
-        },
-        {
-          "tag": "clear-winner",
-          "query": "Kubernetes pod networking and service discovery",
-          "scores": [
-            3.36906,
-            -1.388905,
-            1.736857
-          ],
-          "ranked_order": [
-            0,
-            2,
-            1
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 0,
-          "actual_bottom": 1
-        },
-        {
-          "tag": "lexical-trap",
-          "query": "How to debug memory leaks in a Node.js application",
-          "scores": [
-            3.44342,
-            1.024503,
-            1.50773
-          ],
-          "ranked_order": [
-            0,
-            2,
-            1
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 0,
-          "actual_bottom": 1
-        },
-        {
-          "tag": "paraphrase",
-          "query": "techniques for reducing neural network model size for deploy...",
-          "scores": [
-            1.684337,
-            2.408272,
-            1.612929
-          ],
-          "ranked_order": [
-            1,
-            0,
-            2
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 1,
-          "actual_bottom": 2
-        },
-        {
-          "tag": "negation",
-          "query": "benefits of using microservices architecture",
-          "scores": [
-            2.598615,
-            3.016744,
-            1.339298
-          ],
-          "ranked_order": [
-            1,
-            0,
-            2
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 1,
-          "actual_bottom": 2
-        },
-        {
-          "tag": "specificity",
-          "query": "how does WAL mode work in SQLite",
-          "scores": [
-            1.278338,
-            3.974741,
-            1.45999
-          ],
-          "ranked_order": [
-            1,
-            2,
-            0
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 1,
-          "actual_bottom": 0
-        },
-        {
-          "tag": "homonym",
-          "query": "Python type hints and static type checking with mypy",
-          "scores": [
-            4.138513,
-            -1.246154,
-            1.486948
-          ],
-          "ranked_order": [
-            0,
-            2,
-            1
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 0,
-          "actual_bottom": 1
-        },
-        {
-          "tag": "temporal",
-          "query": "current best practices for React state management",
-          "scores": [
-            3.137586,
-            2.500005,
-            1.380481
+            2.555705,
+            2.433961,
+            -0.415288
           ],
           "ranked_order": [
             0,
@@ -1211,12 +1071,132 @@
           "actual_bottom": 2
         },
         {
-          "tag": "conceptual-near-miss",
-          "query": "difference between authentication and authorization",
+          "tag": "hub-homonym",
+          "query": "hub notes that synthesize cross-domain implementation findin...",
           "scores": [
-            3.777137,
-            1.566561,
-            1.091619
+            3.301886,
+            1.733539,
+            0.434054
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "phase-discrimination",
+          "query": "anamnesis test coverage gaps and missing test functions",
+          "scores": [
+            2.623682,
+            2.079179,
+            1.791255
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "ffi-ecosystem",
+          "query": "Rust panic crashes Node.js process through FFI boundary",
+          "scores": [
+            4.259245,
+            0.96233,
+            1.45604
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
+        },
+        {
+          "tag": "config-homonym",
+          "query": "Klipper configuration for probe calibration and mesh levelin...",
+          "scores": [
+            3.824556,
+            0.819233,
+            0.686857
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": false,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "workflow-stage",
+          "query": "verification criteria for passing a phase gate",
+          "scores": [
+            2.912149,
+            1.125946,
+            -2.765695
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "test-lexical-trap",
+          "query": "test strategy for embedding integration with fake providers",
+          "scores": [
+            3.10688,
+            1.217897,
+            2.241906
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
+        },
+        {
+          "tag": "branch-merge",
+          "query": "branch divergence analysis between main and local-work-backu...",
+          "scores": [
+            2.912465,
+            0.465258,
+            -0.306391
           ],
           "ranked_order": [
             0,
@@ -1232,11 +1212,11 @@
         },
         {
           "tag": "short-query",
-          "query": "mutex",
+          "query": "obsidian mirroring",
           "scores": [
-            2.59927,
-            1.546848,
-            0.291435
+            3.197988,
+            0.874159,
+            -1.073722
           ],
           "ranked_order": [
             0,
@@ -1246,17 +1226,37 @@
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true,
+          "order_bottom": false,
           "actual_top": 0,
           "actual_bottom": 2
         },
         {
           "tag": "long-query",
-          "query": "I'm building a web application that needs to handle file upl...",
+          "query": "I'm investigating a bug where the session-manager agent ente...",
           "scores": [
-            3.354043,
-            1.548527,
-            1.827809
+            2.965515,
+            1.50395,
+            1.297292
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": false,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "cascading-failure",
+          "query": "safety net failure chain where multiple protective layers ha...",
+          "scores": [
+            2.856464,
+            -2.898237,
+            0.008854
           ],
           "ranked_order": [
             0,
@@ -1279,56 +1279,16 @@
       "model_id": "hooman650/bge-reranker-v2-m3-onnx-o4",
       "status": "ok",
       "error": null,
-      "load_time_s": 0.87,
-      "rss_delta_mb": 1336.4,
+      "load_time_s": 0.84,
+      "rss_delta_mb": 1726.5,
       "cases": [
         {
-          "tag": "basic-relevance",
-          "query": "How to configure GPU passthrough in a virtual machine",
+          "tag": "embedding-architecture",
+          "query": "how does the embedding service handle idle timeout and model...",
           "scores": [
-            2.048788,
-            -11.011244,
-            2.110091
-          ],
-          "ranked_order": [
-            2,
-            0,
-            1
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 2,
-          "actual_bottom": 1
-        },
-        {
-          "tag": "topic-boundary",
-          "query": "Python async programming with asyncio event loop",
-          "scores": [
-            -8.512163,
-            2.926917,
-            4.042352
-          ],
-          "ranked_order": [
-            2,
-            1,
-            0
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 2,
-          "actual_bottom": 0
-        },
-        {
-          "tag": "clear-winner",
-          "query": "Kubernetes pod networking and service discovery",
-          "scores": [
-            4.654775,
-            -10.914123,
-            -8.071304
+            3.915017,
+            -9.071152,
+            -8.216526
           ],
           "ranked_order": [
             0,
@@ -1338,17 +1298,17 @@
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true,
+          "order_bottom": false,
           "actual_top": 0,
           "actual_bottom": 1
         },
         {
-          "tag": "lexical-trap",
-          "query": "How to debug memory leaks in a Node.js application",
+          "tag": "review-vs-remediation",
+          "query": "SQL injection vulnerability in LIKE pattern handling",
           "scores": [
-            3.984077,
-            -6.433258,
-            -10.990578
+            0.841568,
+            -1.904002,
+            -9.84331
           ],
           "ranked_order": [
             0,
@@ -1363,32 +1323,12 @@
           "actual_bottom": 2
         },
         {
-          "tag": "paraphrase",
-          "query": "techniques for reducing neural network model size for deploy...",
+          "tag": "hub-homonym",
+          "query": "hub notes that synthesize cross-domain implementation findin...",
           "scores": [
-            -5.067585,
-            -4.00913,
-            -7.03832
-          ],
-          "ranked_order": [
-            1,
-            0,
-            2
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 1,
-          "actual_bottom": 2
-        },
-        {
-          "tag": "negation",
-          "query": "benefits of using microservices architecture",
-          "scores": [
-            4.427476,
-            2.51404,
-            -9.598644
+            2.408657,
+            -6.154782,
+            -8.295322
           ],
           "ranked_order": [
             0,
@@ -1403,32 +1343,32 @@
           "actual_bottom": 2
         },
         {
-          "tag": "specificity",
-          "query": "how does WAL mode work in SQLite",
+          "tag": "phase-discrimination",
+          "query": "anamnesis test coverage gaps and missing test functions",
           "scores": [
-            -6.45784,
-            5.307787,
-            -0.918427
+            1.232715,
+            -0.013769,
+            -2.654693
           ],
           "ranked_order": [
+            0,
             1,
-            2,
-            0
+            2
           ],
           "finite": true,
           "varying": true,
           "order_top": true,
           "order_bottom": true,
-          "actual_top": 1,
-          "actual_bottom": 0
+          "actual_top": 0,
+          "actual_bottom": 2
         },
         {
-          "tag": "homonym",
-          "query": "Python type hints and static type checking with mypy",
+          "tag": "ffi-ecosystem",
+          "query": "Rust panic crashes Node.js process through FFI boundary",
           "scores": [
-            3.736568,
-            -8.418321,
-            -0.055019
+            5.983535,
+            -7.263185,
+            -5.736551
           ],
           "ranked_order": [
             0,
@@ -1443,32 +1383,72 @@
           "actual_bottom": 1
         },
         {
-          "tag": "temporal",
-          "query": "current best practices for React state management",
+          "tag": "config-homonym",
+          "query": "Klipper configuration for probe calibration and mesh levelin...",
           "scores": [
-            -0.005552,
-            0.223598,
-            -10.519961
+            4.369137,
+            -6.68942,
+            -8.246525
           ],
           "ranked_order": [
-            1,
             0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": false,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "workflow-stage",
+          "query": "verification criteria for passing a phase gate",
+          "scores": [
+            2.952355,
+            -3.852015,
+            -10.24729
+          ],
+          "ranked_order": [
+            0,
+            1,
             2
           ],
           "finite": true,
           "varying": true,
           "order_top": true,
           "order_bottom": true,
-          "actual_top": 1,
+          "actual_top": 0,
           "actual_bottom": 2
         },
         {
-          "tag": "conceptual-near-miss",
-          "query": "difference between authentication and authorization",
+          "tag": "test-lexical-trap",
+          "query": "test strategy for embedding integration with fake providers",
           "scores": [
-            6.837499,
-            -3.170875,
-            -5.167596
+            1.747902,
+            -7.587563,
+            0.968547
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
+        },
+        {
+          "tag": "branch-merge",
+          "query": "branch divergence analysis between main and local-work-backu...",
+          "scores": [
+            2.668959,
+            -8.55764,
+            -9.827927
           ],
           "ranked_order": [
             0,
@@ -1484,31 +1464,51 @@
         },
         {
           "tag": "short-query",
-          "query": "mutex",
+          "query": "obsidian mirroring",
           "scores": [
-            7.336679,
-            -10.384733,
-            -8.494324
+            2.333135,
+            -9.237574,
+            -10.534601
           ],
           "ranked_order": [
             0,
-            2,
-            1
+            1,
+            2
           ],
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true,
+          "order_bottom": false,
           "actual_top": 0,
-          "actual_bottom": 1
+          "actual_bottom": 2
         },
         {
           "tag": "long-query",
-          "query": "I'm building a web application that needs to handle file upl...",
+          "query": "I'm investigating a bug where the session-manager agent ente...",
           "scores": [
-            3.375554,
-            -7.934627,
-            -4.265463
+            4.968782,
+            -2.589498,
+            -6.905636
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": false,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "cascading-failure",
+          "query": "safety net failure chain where multiple protective layers ha...",
+          "scores": [
+            0.220626,
+            -11.03616,
+            -8.693334
           ],
           "ranked_order": [
             0,
@@ -1531,56 +1531,16 @@
       "model_id": "jinaai/jina-reranker-v2-base-multilingual",
       "status": "ok",
       "error": null,
-      "load_time_s": 1.15,
-      "rss_delta_mb": 805.1,
+      "load_time_s": 1.24,
+      "rss_delta_mb": 953.0,
       "cases": [
         {
-          "tag": "basic-relevance",
-          "query": "How to configure GPU passthrough in a virtual machine",
+          "tag": "embedding-architecture",
+          "query": "how does the embedding service handle idle timeout and model...",
           "scores": [
-            0.28316,
-            -3.457185,
-            0.876094
-          ],
-          "ranked_order": [
-            2,
-            0,
-            1
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 2,
-          "actual_bottom": 1
-        },
-        {
-          "tag": "topic-boundary",
-          "query": "Python async programming with asyncio event loop",
-          "scores": [
-            -3.5763,
-            1.176165,
-            1.698827
-          ],
-          "ranked_order": [
-            2,
-            1,
-            0
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 2,
-          "actual_bottom": 0
-        },
-        {
-          "tag": "clear-winner",
-          "query": "Kubernetes pod networking and service discovery",
-          "scores": [
-            1.474553,
-            -3.600089,
-            -2.192834
+            1.647447,
+            -3.673585,
+            -3.545816
           ],
           "ranked_order": [
             0,
@@ -1590,17 +1550,17 @@
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true,
+          "order_bottom": false,
           "actual_top": 0,
           "actual_bottom": 1
         },
         {
-          "tag": "lexical-trap",
-          "query": "How to debug memory leaks in a Node.js application",
+          "tag": "review-vs-remediation",
+          "query": "SQL injection vulnerability in LIKE pattern handling",
           "scores": [
-            1.719705,
-            -2.232933,
-            -3.056697
+            0.793928,
+            -0.039743,
+            -3.026579
           ],
           "ranked_order": [
             0,
@@ -1615,32 +1575,12 @@
           "actual_bottom": 2
         },
         {
-          "tag": "paraphrase",
-          "query": "techniques for reducing neural network model size for deploy...",
+          "tag": "hub-homonym",
+          "query": "hub notes that synthesize cross-domain implementation findin...",
           "scores": [
-            -1.676262,
-            -1.222959,
-            -2.612297
-          ],
-          "ranked_order": [
-            1,
-            0,
-            2
-          ],
-          "finite": true,
-          "varying": true,
-          "order_top": true,
-          "order_bottom": true,
-          "actual_top": 1,
-          "actual_bottom": 2
-        },
-        {
-          "tag": "negation",
-          "query": "benefits of using microservices architecture",
-          "scores": [
-            1.730869,
-            0.954612,
-            -3.171697
+            0.84481,
+            -1.575702,
+            -2.353745
           ],
           "ranked_order": [
             0,
@@ -1655,32 +1595,32 @@
           "actual_bottom": 2
         },
         {
-          "tag": "specificity",
-          "query": "how does WAL mode work in SQLite",
+          "tag": "phase-discrimination",
+          "query": "anamnesis test coverage gaps and missing test functions",
           "scores": [
-            -1.539278,
-            1.699815,
-            -1.101905
+            1.116038,
+            0.122027,
+            -1.088938
           ],
           "ranked_order": [
+            0,
             1,
-            2,
-            0
+            2
           ],
           "finite": true,
           "varying": true,
           "order_top": true,
           "order_bottom": true,
-          "actual_top": 1,
-          "actual_bottom": 0
+          "actual_top": 0,
+          "actual_bottom": 2
         },
         {
-          "tag": "homonym",
-          "query": "Python type hints and static type checking with mypy",
+          "tag": "ffi-ecosystem",
+          "query": "Rust panic crashes Node.js process through FFI boundary",
           "scores": [
-            1.536976,
-            -3.00758,
-            0.312469
+            1.843393,
+            -2.176636,
+            -0.790836
           ],
           "ranked_order": [
             0,
@@ -1695,12 +1635,32 @@
           "actual_bottom": 1
         },
         {
-          "tag": "temporal",
-          "query": "current best practices for React state management",
+          "tag": "config-homonym",
+          "query": "Klipper configuration for probe calibration and mesh levelin...",
           "scores": [
-            1.021956,
-            0.65567,
-            -2.870321
+            1.596406,
+            -3.227732,
+            -3.11157
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
+        },
+        {
+          "tag": "workflow-stage",
+          "query": "verification criteria for passing a phase gate",
+          "scores": [
+            1.415569,
+            -1.899502,
+            -3.7418
           ],
           "ranked_order": [
             0,
@@ -1715,12 +1675,32 @@
           "actual_bottom": 2
         },
         {
-          "tag": "conceptual-near-miss",
-          "query": "difference between authentication and authorization",
+          "tag": "test-lexical-trap",
+          "query": "test strategy for embedding integration with fake providers",
           "scores": [
-            1.70989,
-            -1.351172,
-            -2.229376
+            1.168207,
+            -2.25572,
+            0.831196
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
+        },
+        {
+          "tag": "branch-merge",
+          "query": "branch divergence analysis between main and local-work-backu...",
+          "scores": [
+            0.637539,
+            -3.292778,
+            -3.452935
           ],
           "ranked_order": [
             0,
@@ -1736,11 +1716,11 @@
         },
         {
           "tag": "short-query",
-          "query": "mutex",
+          "query": "obsidian mirroring",
           "scores": [
-            2.057056,
-            -3.032238,
-            -3.022374
+            1.372365,
+            -3.547574,
+            -3.338185
           ],
           "ranked_order": [
             0,
@@ -1756,11 +1736,31 @@
         },
         {
           "tag": "long-query",
-          "query": "I'm building a web application that needs to handle file upl...",
+          "query": "I'm investigating a bug where the session-manager agent ente...",
           "scores": [
-            0.263762,
-            -2.310777,
-            -2.185999
+            0.655937,
+            -1.411265,
+            -2.606258
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": false,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "cascading-failure",
+          "query": "safety net failure chain where multiple protective layers ha...",
+          "scores": [
+            -0.054124,
+            -3.741235,
+            -3.428394
           ],
           "ranked_order": [
             0,
