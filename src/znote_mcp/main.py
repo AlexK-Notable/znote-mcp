@@ -88,6 +88,22 @@ def main():
     if deps_ok and not os.getenv("ZETTELKASTEN_EMBEDDINGS_ENABLED"):
         config.embeddings_enabled = True
 
+    # Hardware auto-tuning: detect GPU/RAM and set optimal defaults
+    if config.embeddings_enabled:
+        from znote_mcp.hardware import apply_tuning, compute_tuning, detect_hardware
+
+        profile = detect_hardware()
+        tuning = compute_tuning(profile)
+        apply_tuning(config, tuning)
+        logger.info(
+            "Hardware auto-tune: %s (batch=%d, embed_tokens=%d, rerank_tokens=%d, mem=%.1fGB)",
+            tuning.device_label,
+            tuning.embedding_batch_size,
+            tuning.embedding_max_tokens,
+            tuning.reranker_max_tokens,
+            tuning.embedding_memory_budget_gb,
+        )
+
     # Pre-download embedding models in background so first search is fast
     if deps_ok and config.embeddings_enabled:
         warmup_models_background(

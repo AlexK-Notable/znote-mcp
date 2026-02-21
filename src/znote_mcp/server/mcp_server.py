@@ -157,7 +157,7 @@ class ZettelkastenMcpServer:
             )
             reranker = OnnxRerankerProvider(
                 model_id=config.reranker_model,
-                max_length=config.embedding_max_tokens,
+                max_length=config.reranker_max_tokens,
                 cache_dir=config.embedding_model_cache_dir,
                 providers=config.onnx_providers,
             )
@@ -1263,6 +1263,15 @@ class ZettelkastenMcpServer:
                         output += "## Embeddings\n"
                         output += f"**Enabled:** {'Yes' if config.embeddings_enabled else 'No'}\n"
                         if config.embeddings_enabled:
+                            # Hardware profile
+                            from znote_mcp.hardware import (
+                                compute_tuning,
+                                detect_hardware,
+                            )
+
+                            hw_profile = detect_hardware()
+                            hw_tuning = compute_tuning(hw_profile)
+                            output += f"**Hardware:** {hw_tuning.device_label}\n"
                             output += f"**Model:** {config.embedding_model}\n"
                             output += f"**Dimension:** {config.embedding_dim}\n"
                             output += f"**Providers:** {config.onnx_providers}\n"
@@ -1276,7 +1285,9 @@ class ZettelkastenMcpServer:
                                 output += f"**Coverage:** {pct:.0f}%\n"
                             # Show tuning parameters and memory estimate
                             output += f"**Batch Size:** {config.embedding_batch_size}\n"
-                            output += f"**Max Tokens:** {config.embedding_max_tokens}\n"
+                            output += f"**Embed Max Tokens:** {config.embedding_max_tokens}\n"
+                            output += f"**Rerank Max Tokens:** {config.reranker_max_tokens}\n"
+                            output += f"**Memory Budget:** {config.embedding_memory_budget_gb:.1f}GB\n"
                             output += f"**Chunk Size:** {config.embedding_chunk_size} tokens (overlap: {config.embedding_chunk_overlap})\n"
                             peak = estimate_embedding_peak_memory(
                                 config.embedding_batch_size,

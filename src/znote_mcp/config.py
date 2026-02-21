@@ -127,6 +127,11 @@ class ZettelkastenConfig(BaseModel):
             os.getenv("ZETTELKASTEN_EMBEDDING_MAX_TOKENS", "2048")
         )
     )
+    reranker_max_tokens: int = Field(
+        default_factory=lambda: int(
+            os.getenv("ZETTELKASTEN_RERANKER_MAX_TOKENS", "2048")
+        )
+    )
     reranker_idle_timeout: int = Field(
         default_factory=lambda: int(
             os.getenv("ZETTELKASTEN_RERANKER_IDLE_TIMEOUT", "600")
