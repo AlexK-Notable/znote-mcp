@@ -1,6 +1,6 @@
 {
   "system_info": {
-    "timestamp": "2026-02-21T01:34:57.960153+00:00",
+    "timestamp": "2026-02-21T02:21:51.311114+00:00",
     "python_version": "3.11.14",
     "platform": "Linux-6.19.3-2-cachyos-x86_64-with-glibc2.43",
     "cpu": "unknown",
@@ -19,11 +19,12 @@
       "model_id": "cross-encoder/ms-marco-MiniLM-L-6-v2",
       "status": "ok",
       "error": null,
-      "load_time_s": 0.5,
-      "rss_delta_mb": 145.1,
+      "load_time_s": 0.47,
+      "rss_delta_mb": 145.2,
       "cases": [
         {
-          "query": "How to configure GPU passthrough in a virtual machine...",
+          "tag": "basic-relevance",
+          "query": "How to configure GPU passthrough in a virtual machine",
           "scores": [
             5.148624,
             -11.267612,
@@ -37,10 +38,13 @@
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
         },
         {
-          "query": "Python async programming with asyncio event loop...",
+          "tag": "topic-boundary",
+          "query": "Python async programming with asyncio event loop",
           "scores": [
             -11.363683,
             5.773821,
@@ -54,10 +58,13 @@
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true
+          "order_bottom": true,
+          "actual_top": 2,
+          "actual_bottom": 0
         },
         {
-          "query": "Kubernetes pod networking and service discovery...",
+          "tag": "clear-winner",
+          "query": "Kubernetes pod networking and service discovery",
           "scores": [
             7.254984,
             -11.432741,
@@ -71,7 +78,189 @@
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
+        },
+        {
+          "tag": "lexical-trap",
+          "query": "How to debug memory leaks in a Node.js application",
+          "scores": [
+            6.315297,
+            -6.290149,
+            -11.408667
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "paraphrase",
+          "query": "techniques for reducing neural network model size for deploy...",
+          "scores": [
+            -8.646446,
+            -4.955543,
+            -10.831234
+          ],
+          "ranked_order": [
+            1,
+            0,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 1,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "negation",
+          "query": "benefits of using microservices architecture",
+          "scores": [
+            8.100223,
+            6.993344,
+            -11.040482
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "specificity",
+          "query": "how does WAL mode work in SQLite",
+          "scores": [
+            -3.800527,
+            9.039431,
+            -0.004443
+          ],
+          "ranked_order": [
+            1,
+            2,
+            0
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 1,
+          "actual_bottom": 0
+        },
+        {
+          "tag": "homonym",
+          "query": "Python type hints and static type checking with mypy",
+          "scores": [
+            8.261772,
+            -9.347878,
+            2.99156
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
+        },
+        {
+          "tag": "temporal",
+          "query": "current best practices for React state management",
+          "scores": [
+            1.913987,
+            -1.088225,
+            -10.803208
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "conceptual-near-miss",
+          "query": "difference between authentication and authorization",
+          "scores": [
+            9.641133,
+            -3.16443,
+            -7.150947
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "short-query",
+          "query": "mutex",
+          "scores": [
+            9.972592,
+            -11.212053,
+            -10.684131
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
+        },
+        {
+          "tag": "long-query",
+          "query": "I'm building a web application that needs to handle file upl...",
+          "scores": [
+            -2.230823,
+            -8.375804,
+            -7.452199
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
         }
       ],
       "scores_ok": true,
@@ -82,11 +271,12 @@
       "model_id": "cross-encoder/ms-marco-MiniLM-L-12-v2",
       "status": "ok",
       "error": null,
-      "load_time_s": 0.38,
-      "rss_delta_mb": 115.7,
+      "load_time_s": 0.35,
+      "rss_delta_mb": 99.4,
       "cases": [
         {
-          "query": "How to configure GPU passthrough in a virtual machine...",
+          "tag": "basic-relevance",
+          "query": "How to configure GPU passthrough in a virtual machine",
           "scores": [
             5.302227,
             -11.212993,
@@ -100,10 +290,13 @@
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
         },
         {
-          "query": "Python async programming with asyncio event loop...",
+          "tag": "topic-boundary",
+          "query": "Python async programming with asyncio event loop",
           "scores": [
             -11.312969,
             6.290953,
@@ -117,10 +310,13 @@
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true
+          "order_bottom": true,
+          "actual_top": 2,
+          "actual_bottom": 0
         },
         {
-          "query": "Kubernetes pod networking and service discovery...",
+          "tag": "clear-winner",
+          "query": "Kubernetes pod networking and service discovery",
           "scores": [
             7.178941,
             -11.290693,
@@ -134,7 +330,189 @@
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
+        },
+        {
+          "tag": "lexical-trap",
+          "query": "How to debug memory leaks in a Node.js application",
+          "scores": [
+            7.081487,
+            -5.587804,
+            -11.224216
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "paraphrase",
+          "query": "techniques for reducing neural network model size for deploy...",
+          "scores": [
+            -8.575992,
+            -3.51931,
+            -10.413547
+          ],
+          "ranked_order": [
+            1,
+            0,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 1,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "negation",
+          "query": "benefits of using microservices architecture",
+          "scores": [
+            7.759419,
+            6.219513,
+            -11.071886
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "specificity",
+          "query": "how does WAL mode work in SQLite",
+          "scores": [
+            -3.393109,
+            8.974149,
+            0.437103
+          ],
+          "ranked_order": [
+            1,
+            2,
+            0
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 1,
+          "actual_bottom": 0
+        },
+        {
+          "tag": "homonym",
+          "query": "Python type hints and static type checking with mypy",
+          "scores": [
+            8.326394,
+            -10.256896,
+            2.47959
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
+        },
+        {
+          "tag": "temporal",
+          "query": "current best practices for React state management",
+          "scores": [
+            4.022822,
+            0.104956,
+            -10.618464
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "conceptual-near-miss",
+          "query": "difference between authentication and authorization",
+          "scores": [
+            10.009651,
+            -2.970428,
+            -7.385533
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "short-query",
+          "query": "mutex",
+          "scores": [
+            9.820906,
+            -11.232988,
+            -11.090334
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
+        },
+        {
+          "tag": "long-query",
+          "query": "I'm building a web application that needs to handle file upl...",
+          "scores": [
+            -0.7875,
+            -4.801613,
+            -4.31658
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
         }
       ],
       "scores_ok": true,
@@ -145,11 +523,12 @@
       "model_id": "BAAI/bge-reranker-base",
       "status": "ok",
       "error": null,
-      "load_time_s": 1.42,
-      "rss_delta_mb": 1379.8,
+      "load_time_s": 1.32,
+      "rss_delta_mb": 1219.0,
       "cases": [
         {
-          "query": "How to configure GPU passthrough in a virtual machine...",
+          "tag": "basic-relevance",
+          "query": "How to configure GPU passthrough in a virtual machine",
           "scores": [
             0.653008,
             -10.194046,
@@ -163,10 +542,13 @@
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true
+          "order_bottom": true,
+          "actual_top": 2,
+          "actual_bottom": 1
         },
         {
-          "query": "Python async programming with asyncio event loop...",
+          "tag": "topic-boundary",
+          "query": "Python async programming with asyncio event loop",
           "scores": [
             -10.093337,
             4.787956,
@@ -180,10 +562,13 @@
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true
+          "order_bottom": true,
+          "actual_top": 2,
+          "actual_bottom": 0
         },
         {
-          "query": "Kubernetes pod networking and service discovery...",
+          "tag": "clear-winner",
+          "query": "Kubernetes pod networking and service discovery",
           "scores": [
             4.753787,
             -10.184785,
@@ -197,7 +582,189 @@
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
+        },
+        {
+          "tag": "lexical-trap",
+          "query": "How to debug memory leaks in a Node.js application",
+          "scores": [
+            3.651314,
+            -6.900074,
+            -10.193007
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "paraphrase",
+          "query": "techniques for reducing neural network model size for deploy...",
+          "scores": [
+            -3.526038,
+            -3.648608,
+            -7.324388
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "negation",
+          "query": "benefits of using microservices architecture",
+          "scores": [
+            7.705833,
+            3.715618,
+            -6.647562
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "specificity",
+          "query": "how does WAL mode work in SQLite",
+          "scores": [
+            -4.603381,
+            6.491663,
+            1.25115
+          ],
+          "ranked_order": [
+            1,
+            2,
+            0
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 1,
+          "actual_bottom": 0
+        },
+        {
+          "tag": "homonym",
+          "query": "Python type hints and static type checking with mypy",
+          "scores": [
+            3.557505,
+            -8.540167,
+            -1.113281
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
+        },
+        {
+          "tag": "temporal",
+          "query": "current best practices for React state management",
+          "scores": [
+            -2.790709,
+            -4.209408,
+            -10.190763
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "conceptual-near-miss",
+          "query": "difference between authentication and authorization",
+          "scores": [
+            7.535668,
+            -2.527221,
+            -4.984433
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "short-query",
+          "query": "mutex",
+          "scores": [
+            9.684793,
+            -8.529341,
+            -8.474704
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
+        },
+        {
+          "tag": "long-query",
+          "query": "I'm building a web application that needs to handle file upl...",
+          "scores": [
+            5.361319,
+            -7.560317,
+            -1.246444
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
         }
       ],
       "scores_ok": true,
@@ -208,11 +775,12 @@
       "model_id": "BAAI/bge-reranker-large",
       "status": "ok",
       "error": null,
-      "load_time_s": 1.06,
-      "rss_delta_mb": 908.0,
+      "load_time_s": 0.97,
+      "rss_delta_mb": 837.9,
       "cases": [
         {
-          "query": "How to configure GPU passthrough in a virtual machine...",
+          "tag": "basic-relevance",
+          "query": "How to configure GPU passthrough in a virtual machine",
           "scores": [
             1.680141,
             -9.480926,
@@ -226,10 +794,13 @@
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
         },
         {
-          "query": "Python async programming with asyncio event loop...",
+          "tag": "topic-boundary",
+          "query": "Python async programming with asyncio event loop",
           "scores": [
             -9.374032,
             3.150151,
@@ -243,10 +814,13 @@
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true
+          "order_bottom": true,
+          "actual_top": 2,
+          "actual_bottom": 0
         },
         {
-          "query": "Kubernetes pod networking and service discovery...",
+          "tag": "clear-winner",
+          "query": "Kubernetes pod networking and service discovery",
           "scores": [
             4.656589,
             -9.481425,
@@ -260,7 +834,189 @@
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
+        },
+        {
+          "tag": "lexical-trap",
+          "query": "How to debug memory leaks in a Node.js application",
+          "scores": [
+            4.346924,
+            -8.276721,
+            -9.46987
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "paraphrase",
+          "query": "techniques for reducing neural network model size for deploy...",
+          "scores": [
+            -5.504904,
+            -2.827361,
+            -9.374868
+          ],
+          "ranked_order": [
+            1,
+            0,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 1,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "negation",
+          "query": "benefits of using microservices architecture",
+          "scores": [
+            5.522735,
+            2.461856,
+            -8.451793
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "specificity",
+          "query": "how does WAL mode work in SQLite",
+          "scores": [
+            -6.075926,
+            5.131257,
+            -2.501696
+          ],
+          "ranked_order": [
+            1,
+            2,
+            0
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 1,
+          "actual_bottom": 0
+        },
+        {
+          "tag": "homonym",
+          "query": "Python type hints and static type checking with mypy",
+          "scores": [
+            2.615575,
+            -9.36972,
+            -1.848109
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
+        },
+        {
+          "tag": "temporal",
+          "query": "current best practices for React state management",
+          "scores": [
+            -1.096468,
+            -1.503281,
+            -9.481115
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "conceptual-near-miss",
+          "query": "difference between authentication and authorization",
+          "scores": [
+            6.751755,
+            -3.174792,
+            -7.51805
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "short-query",
+          "query": "mutex",
+          "scores": [
+            7.528186,
+            -9.226633,
+            -9.454534
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "long-query",
+          "query": "I'm building a web application that needs to handle file upl...",
+          "scores": [
+            3.707028,
+            -4.562555,
+            -1.550231
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
         }
       ],
       "scores_ok": true,
@@ -271,11 +1027,12 @@
       "model_id": "Alibaba-NLP/gte-reranker-modernbert-base",
       "status": "ok",
       "error": null,
-      "load_time_s": 0.44,
-      "rss_delta_mb": 0.5,
+      "load_time_s": 0.55,
+      "rss_delta_mb": 337.9,
       "cases": [
         {
-          "query": "How to configure GPU passthrough in a virtual machine...",
+          "tag": "basic-relevance",
+          "query": "How to configure GPU passthrough in a virtual machine",
           "scores": [
             3.48435,
             -3.093599,
@@ -289,10 +1046,13 @@
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
         },
         {
-          "query": "Python async programming with asyncio event loop...",
+          "tag": "topic-boundary",
+          "query": "Python async programming with asyncio event loop",
           "scores": [
             -1.728664,
             2.642558,
@@ -306,10 +1066,13 @@
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true
+          "order_bottom": true,
+          "actual_top": 2,
+          "actual_bottom": 0
         },
         {
-          "query": "Kubernetes pod networking and service discovery...",
+          "tag": "clear-winner",
+          "query": "Kubernetes pod networking and service discovery",
           "scores": [
             3.36906,
             -1.388905,
@@ -323,7 +1086,189 @@
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
+        },
+        {
+          "tag": "lexical-trap",
+          "query": "How to debug memory leaks in a Node.js application",
+          "scores": [
+            3.44342,
+            1.024503,
+            1.50773
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
+        },
+        {
+          "tag": "paraphrase",
+          "query": "techniques for reducing neural network model size for deploy...",
+          "scores": [
+            1.684337,
+            2.408272,
+            1.612929
+          ],
+          "ranked_order": [
+            1,
+            0,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 1,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "negation",
+          "query": "benefits of using microservices architecture",
+          "scores": [
+            2.598615,
+            3.016744,
+            1.339298
+          ],
+          "ranked_order": [
+            1,
+            0,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 1,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "specificity",
+          "query": "how does WAL mode work in SQLite",
+          "scores": [
+            1.278338,
+            3.974741,
+            1.45999
+          ],
+          "ranked_order": [
+            1,
+            2,
+            0
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 1,
+          "actual_bottom": 0
+        },
+        {
+          "tag": "homonym",
+          "query": "Python type hints and static type checking with mypy",
+          "scores": [
+            4.138513,
+            -1.246154,
+            1.486948
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
+        },
+        {
+          "tag": "temporal",
+          "query": "current best practices for React state management",
+          "scores": [
+            3.137586,
+            2.500005,
+            1.380481
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "conceptual-near-miss",
+          "query": "difference between authentication and authorization",
+          "scores": [
+            3.777137,
+            1.566561,
+            1.091619
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "short-query",
+          "query": "mutex",
+          "scores": [
+            2.59927,
+            1.546848,
+            0.291435
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "long-query",
+          "query": "I'm building a web application that needs to handle file upl...",
+          "scores": [
+            3.354043,
+            1.548527,
+            1.827809
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
         }
       ],
       "scores_ok": true,
@@ -334,11 +1279,12 @@
       "model_id": "hooman650/bge-reranker-v2-m3-onnx-o4",
       "status": "ok",
       "error": null,
-      "load_time_s": 0.84,
-      "rss_delta_mb": 1693.7,
+      "load_time_s": 0.87,
+      "rss_delta_mb": 1336.4,
       "cases": [
         {
-          "query": "How to configure GPU passthrough in a virtual machine...",
+          "tag": "basic-relevance",
+          "query": "How to configure GPU passthrough in a virtual machine",
           "scores": [
             2.048788,
             -11.011244,
@@ -352,10 +1298,13 @@
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true
+          "order_bottom": true,
+          "actual_top": 2,
+          "actual_bottom": 1
         },
         {
-          "query": "Python async programming with asyncio event loop...",
+          "tag": "topic-boundary",
+          "query": "Python async programming with asyncio event loop",
           "scores": [
             -8.512163,
             2.926917,
@@ -369,10 +1318,13 @@
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true
+          "order_bottom": true,
+          "actual_top": 2,
+          "actual_bottom": 0
         },
         {
-          "query": "Kubernetes pod networking and service discovery...",
+          "tag": "clear-winner",
+          "query": "Kubernetes pod networking and service discovery",
           "scores": [
             4.654775,
             -10.914123,
@@ -386,7 +1338,189 @@
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
+        },
+        {
+          "tag": "lexical-trap",
+          "query": "How to debug memory leaks in a Node.js application",
+          "scores": [
+            3.984077,
+            -6.433258,
+            -10.990578
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "paraphrase",
+          "query": "techniques for reducing neural network model size for deploy...",
+          "scores": [
+            -5.067585,
+            -4.00913,
+            -7.03832
+          ],
+          "ranked_order": [
+            1,
+            0,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 1,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "negation",
+          "query": "benefits of using microservices architecture",
+          "scores": [
+            4.427476,
+            2.51404,
+            -9.598644
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "specificity",
+          "query": "how does WAL mode work in SQLite",
+          "scores": [
+            -6.45784,
+            5.307787,
+            -0.918427
+          ],
+          "ranked_order": [
+            1,
+            2,
+            0
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 1,
+          "actual_bottom": 0
+        },
+        {
+          "tag": "homonym",
+          "query": "Python type hints and static type checking with mypy",
+          "scores": [
+            3.736568,
+            -8.418321,
+            -0.055019
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
+        },
+        {
+          "tag": "temporal",
+          "query": "current best practices for React state management",
+          "scores": [
+            -0.005552,
+            0.223598,
+            -10.519961
+          ],
+          "ranked_order": [
+            1,
+            0,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 1,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "conceptual-near-miss",
+          "query": "difference between authentication and authorization",
+          "scores": [
+            6.837499,
+            -3.170875,
+            -5.167596
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "short-query",
+          "query": "mutex",
+          "scores": [
+            7.336679,
+            -10.384733,
+            -8.494324
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
+        },
+        {
+          "tag": "long-query",
+          "query": "I'm building a web application that needs to handle file upl...",
+          "scores": [
+            3.375554,
+            -7.934627,
+            -4.265463
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
         }
       ],
       "scores_ok": true,
@@ -397,11 +1531,12 @@
       "model_id": "jinaai/jina-reranker-v2-base-multilingual",
       "status": "ok",
       "error": null,
-      "load_time_s": 0.86,
-      "rss_delta_mb": -85.5,
+      "load_time_s": 1.15,
+      "rss_delta_mb": 805.1,
       "cases": [
         {
-          "query": "How to configure GPU passthrough in a virtual machine...",
+          "tag": "basic-relevance",
+          "query": "How to configure GPU passthrough in a virtual machine",
           "scores": [
             0.28316,
             -3.457185,
@@ -415,10 +1550,13 @@
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true
+          "order_bottom": true,
+          "actual_top": 2,
+          "actual_bottom": 1
         },
         {
-          "query": "Python async programming with asyncio event loop...",
+          "tag": "topic-boundary",
+          "query": "Python async programming with asyncio event loop",
           "scores": [
             -3.5763,
             1.176165,
@@ -432,10 +1570,13 @@
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true
+          "order_bottom": true,
+          "actual_top": 2,
+          "actual_bottom": 0
         },
         {
-          "query": "Kubernetes pod networking and service discovery...",
+          "tag": "clear-winner",
+          "query": "Kubernetes pod networking and service discovery",
           "scores": [
             1.474553,
             -3.600089,
@@ -449,7 +1590,189 @@
           "finite": true,
           "varying": true,
           "order_top": true,
-          "order_bottom": true
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
+        },
+        {
+          "tag": "lexical-trap",
+          "query": "How to debug memory leaks in a Node.js application",
+          "scores": [
+            1.719705,
+            -2.232933,
+            -3.056697
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "paraphrase",
+          "query": "techniques for reducing neural network model size for deploy...",
+          "scores": [
+            -1.676262,
+            -1.222959,
+            -2.612297
+          ],
+          "ranked_order": [
+            1,
+            0,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 1,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "negation",
+          "query": "benefits of using microservices architecture",
+          "scores": [
+            1.730869,
+            0.954612,
+            -3.171697
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "specificity",
+          "query": "how does WAL mode work in SQLite",
+          "scores": [
+            -1.539278,
+            1.699815,
+            -1.101905
+          ],
+          "ranked_order": [
+            1,
+            2,
+            0
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 1,
+          "actual_bottom": 0
+        },
+        {
+          "tag": "homonym",
+          "query": "Python type hints and static type checking with mypy",
+          "scores": [
+            1.536976,
+            -3.00758,
+            0.312469
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
+        },
+        {
+          "tag": "temporal",
+          "query": "current best practices for React state management",
+          "scores": [
+            1.021956,
+            0.65567,
+            -2.870321
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "conceptual-near-miss",
+          "query": "difference between authentication and authorization",
+          "scores": [
+            1.70989,
+            -1.351172,
+            -2.229376
+          ],
+          "ranked_order": [
+            0,
+            1,
+            2
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 2
+        },
+        {
+          "tag": "short-query",
+          "query": "mutex",
+          "scores": [
+            2.057056,
+            -3.032238,
+            -3.022374
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
+        },
+        {
+          "tag": "long-query",
+          "query": "I'm building a web application that needs to handle file upl...",
+          "scores": [
+            0.263762,
+            -2.310777,
+            -2.185999
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true,
+          "actual_top": 0,
+          "actual_bottom": 1
         }
       ],
       "scores_ok": true,
