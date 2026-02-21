@@ -1,0 +1,459 @@
+{
+  "system_info": {
+    "timestamp": "2026-02-21T01:34:57.960153+00:00",
+    "python_version": "3.11.14",
+    "platform": "Linux-6.19.3-2-cachyos-x86_64-with-glibc2.43",
+    "cpu": "unknown",
+    "onnxruntime_version": "1.25.0.dev20260219001",
+    "ort_available_providers": [
+      "TensorrtExecutionProvider",
+      "CUDAExecutionProvider",
+      "CPUExecutionProvider"
+    ],
+    "cpu_count": 28,
+    "ram_total_gb": 31.1
+  },
+  "results": [
+    {
+      "config_key": "minilm-l6-rerank",
+      "model_id": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+      "status": "ok",
+      "error": null,
+      "load_time_s": 0.5,
+      "rss_delta_mb": 145.1,
+      "cases": [
+        {
+          "query": "How to configure GPU passthrough in a virtual machine...",
+          "scores": [
+            5.148624,
+            -11.267612,
+            4.495625
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true
+        },
+        {
+          "query": "Python async programming with asyncio event loop...",
+          "scores": [
+            -11.363683,
+            5.773821,
+            7.878163
+          ],
+          "ranked_order": [
+            2,
+            1,
+            0
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true
+        },
+        {
+          "query": "Kubernetes pod networking and service discovery...",
+          "scores": [
+            7.254984,
+            -11.432741,
+            -9.602446
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true
+        }
+      ],
+      "scores_ok": true,
+      "order_ok": true
+    },
+    {
+      "config_key": "minilm-l12-rerank",
+      "model_id": "cross-encoder/ms-marco-MiniLM-L-12-v2",
+      "status": "ok",
+      "error": null,
+      "load_time_s": 0.38,
+      "rss_delta_mb": 115.7,
+      "cases": [
+        {
+          "query": "How to configure GPU passthrough in a virtual machine...",
+          "scores": [
+            5.302227,
+            -11.212993,
+            4.51103
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true
+        },
+        {
+          "query": "Python async programming with asyncio event loop...",
+          "scores": [
+            -11.312969,
+            6.290953,
+            8.214362
+          ],
+          "ranked_order": [
+            2,
+            1,
+            0
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true
+        },
+        {
+          "query": "Kubernetes pod networking and service discovery...",
+          "scores": [
+            7.178941,
+            -11.290693,
+            -9.130228
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true
+        }
+      ],
+      "scores_ok": true,
+      "order_ok": true
+    },
+    {
+      "config_key": "bge-reranker-base",
+      "model_id": "BAAI/bge-reranker-base",
+      "status": "ok",
+      "error": null,
+      "load_time_s": 1.42,
+      "rss_delta_mb": 1379.8,
+      "cases": [
+        {
+          "query": "How to configure GPU passthrough in a virtual machine...",
+          "scores": [
+            0.653008,
+            -10.194046,
+            1.383915
+          ],
+          "ranked_order": [
+            2,
+            0,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true
+        },
+        {
+          "query": "Python async programming with asyncio event loop...",
+          "scores": [
+            -10.093337,
+            4.787956,
+            5.854079
+          ],
+          "ranked_order": [
+            2,
+            1,
+            0
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true
+        },
+        {
+          "query": "Kubernetes pod networking and service discovery...",
+          "scores": [
+            4.753787,
+            -10.184785,
+            -6.874599
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true
+        }
+      ],
+      "scores_ok": true,
+      "order_ok": true
+    },
+    {
+      "config_key": "bge-reranker-large",
+      "model_id": "BAAI/bge-reranker-large",
+      "status": "ok",
+      "error": null,
+      "load_time_s": 1.06,
+      "rss_delta_mb": 908.0,
+      "cases": [
+        {
+          "query": "How to configure GPU passthrough in a virtual machine...",
+          "scores": [
+            1.680141,
+            -9.480926,
+            1.288659
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true
+        },
+        {
+          "query": "Python async programming with asyncio event loop...",
+          "scores": [
+            -9.374032,
+            3.150151,
+            4.143442
+          ],
+          "ranked_order": [
+            2,
+            1,
+            0
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true
+        },
+        {
+          "query": "Kubernetes pod networking and service discovery...",
+          "scores": [
+            4.656589,
+            -9.481425,
+            -8.393562
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true
+        }
+      ],
+      "scores_ok": true,
+      "order_ok": true
+    },
+    {
+      "config_key": "gte-reranker",
+      "model_id": "Alibaba-NLP/gte-reranker-modernbert-base",
+      "status": "ok",
+      "error": null,
+      "load_time_s": 0.44,
+      "rss_delta_mb": 0.5,
+      "cases": [
+        {
+          "query": "How to configure GPU passthrough in a virtual machine...",
+          "scores": [
+            3.48435,
+            -3.093599,
+            2.955285
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true
+        },
+        {
+          "query": "Python async programming with asyncio event loop...",
+          "scores": [
+            -1.728664,
+            2.642558,
+            3.045571
+          ],
+          "ranked_order": [
+            2,
+            1,
+            0
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true
+        },
+        {
+          "query": "Kubernetes pod networking and service discovery...",
+          "scores": [
+            3.36906,
+            -1.388905,
+            1.736857
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true
+        }
+      ],
+      "scores_ok": true,
+      "order_ok": true
+    },
+    {
+      "config_key": "bge-reranker-v2-m3",
+      "model_id": "hooman650/bge-reranker-v2-m3-onnx-o4",
+      "status": "ok",
+      "error": null,
+      "load_time_s": 0.84,
+      "rss_delta_mb": 1693.7,
+      "cases": [
+        {
+          "query": "How to configure GPU passthrough in a virtual machine...",
+          "scores": [
+            2.048788,
+            -11.011244,
+            2.110091
+          ],
+          "ranked_order": [
+            2,
+            0,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true
+        },
+        {
+          "query": "Python async programming with asyncio event loop...",
+          "scores": [
+            -8.512163,
+            2.926917,
+            4.042352
+          ],
+          "ranked_order": [
+            2,
+            1,
+            0
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true
+        },
+        {
+          "query": "Kubernetes pod networking and service discovery...",
+          "scores": [
+            4.654775,
+            -10.914123,
+            -8.071304
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true
+        }
+      ],
+      "scores_ok": true,
+      "order_ok": true
+    },
+    {
+      "config_key": "jina-reranker-v2",
+      "model_id": "jinaai/jina-reranker-v2-base-multilingual",
+      "status": "ok",
+      "error": null,
+      "load_time_s": 0.86,
+      "rss_delta_mb": -85.5,
+      "cases": [
+        {
+          "query": "How to configure GPU passthrough in a virtual machine...",
+          "scores": [
+            0.28316,
+            -3.457185,
+            0.876094
+          ],
+          "ranked_order": [
+            2,
+            0,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true
+        },
+        {
+          "query": "Python async programming with asyncio event loop...",
+          "scores": [
+            -3.5763,
+            1.176165,
+            1.698827
+          ],
+          "ranked_order": [
+            2,
+            1,
+            0
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true
+        },
+        {
+          "query": "Kubernetes pod networking and service discovery...",
+          "scores": [
+            1.474553,
+            -3.600089,
+            -2.192834
+          ],
+          "ranked_order": [
+            0,
+            2,
+            1
+          ],
+          "finite": true,
+          "varying": true,
+          "order_top": true,
+          "order_bottom": true
+        }
+      ],
+      "scores_ok": true,
+      "order_ok": true
+    }
+  ]
+}

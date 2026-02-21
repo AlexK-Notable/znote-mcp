@@ -16,7 +16,7 @@ import os
 import resource
 import time as _time
 from pathlib import Path
-from typing import List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -146,14 +146,18 @@ def _resolve_providers(preference: str = "auto") -> List[str]:
 def _cuda_session_options() -> dict:
     """Return provider_options dict for CUDA with arena strategy and VRAM cap.
 
+    The VRAM limit defaults to 12GB but can be overridden via the
+    ``ZETTELKASTEN_GPU_MEM_LIMIT_GB`` environment variable.
+
     Returns:
         Dict mapping provider name to options dict, suitable for passing
         as provider_options to ort.InferenceSession.
     """
+    limit_gb = float(os.environ.get("ZETTELKASTEN_GPU_MEM_LIMIT_GB", "12"))
     return {
         "CUDAExecutionProvider": {
             "arena_extend_strategy": "kSameAsRequested",
-            "gpu_mem_limit": str(4 * 1024 * 1024 * 1024),  # 4GB VRAM cap
+            "gpu_mem_limit": str(int(limit_gb * 1024 * 1024 * 1024)),
         }
     }
 
@@ -195,7 +199,25 @@ class OnnxEmbeddingProvider:
         max_length: Maximum token length for truncation.
         cache_dir: Optional custom cache directory for model files.
         providers: Provider preference string ("auto", "cpu", or comma-separated).
+        output_mode: Pooling strategy. "cls" = take first token (default).
+            "direct" = use model output directly (for models that produce
+            pre-pooled embeddings like embeddinggemma).
+        model_profile: Architecture constants for memory estimation in
+            ``embed_batch_adaptive``. Keys: ``num_heads``, ``hidden_dim``,
+            ``ff_dim``, ``eff_layers``. Falls back to gte-modernbert-base
+            defaults when None.
+        extra_files: Additional filename patterns to download from the
+            HuggingFace repo (e.g. ``["onnx/model.onnx_data"]`` for models
+            with external weight files).
     """
+
+    # Default model profile (gte-modernbert-base architecture)
+    _DEFAULT_PROFILE: Dict[str, int] = {
+        "num_heads": 12,
+        "hidden_dim": 768,
+        "ff_dim": 1152,
+        "eff_layers": 3,
+    }
 
     def __init__(
         self,
@@ -204,15 +226,23 @@ class OnnxEmbeddingProvider:
         max_length: int = 8192,
         cache_dir: Optional[Path] = None,
         providers: str = "auto",
+        output_mode: str = "cls",
+        model_profile: Optional[Dict[str, int]] = None,
+        extra_files: Optional[List[str]] = None,
     ) -> None:
+        if output_mode not in ("cls", "direct"):
+            raise ValueError(f"output_mode must be 'cls' or 'direct', got {output_mode!r}")
         self._model_id = model_id
         self._onnx_filename = onnx_filename
         self._max_length = max_length
         self._cache_dir = cache_dir
         self._providers_pref = providers
+        self._output_mode = output_mode
+        self._profile = model_profile or self._DEFAULT_PROFILE
+        self._extra_files = extra_files or []
         self._session: Optional[object] = None  # ort.InferenceSession
         self._tokenizer: Optional[object] = None  # tokenizers.Tokenizer
-        self._dim: int = 768  # Default for gte-modernbert-base
+        self._dim: int = self._profile.get("hidden_dim", 768)
 
     @property
     def dimension(self) -> int:
@@ -232,9 +262,12 @@ class OnnxEmbeddingProvider:
         )
 
         # Download model files
+        download_patterns = [
+            self._onnx_filename, "tokenizer.json", "tokenizer_config.json",
+        ] + self._extra_files
         model_dir = _download_model_files(
             self._model_id,
-            [self._onnx_filename, "tokenizer.json", "tokenizer_config.json"],
+            download_patterns,
             self._cache_dir,
         )
 
@@ -333,7 +366,15 @@ class OnnxEmbeddingProvider:
         return {"input_ids": input_ids, "attention_mask": attention_mask}
 
     def _forward(self, inputs: dict) -> np.ndarray:
-        """Run ONNX inference and apply CLS pooling + L2 normalization."""
+        """Run ONNX inference and apply pooling + L2 normalization.
+
+        Pooling strategy depends on ``self._output_mode``:
+        - ``"cls"``: Standard CLS pooling — outputs[0][:, 0, :] from a
+          (batch, seq_len, hidden) tensor.
+        - ``"direct"``: Model already produces pooled embeddings as
+          (batch, dim). Used by models like embeddinggemma that handle
+          pooling internally.
+        """
         # Check which inputs the model expects
         input_names = {inp.name for inp in self._session.get_inputs()}
         feed = {}
@@ -346,16 +387,36 @@ class OnnxEmbeddingProvider:
             feed["token_type_ids"] = np.zeros_like(inputs["input_ids"])
 
         outputs = self._session.run(None, feed)
-        # outputs[0] shape: (batch_size, seq_len, hidden_dim)
-        hidden_states = outputs[0]
 
-        # CLS pooling: take the first token's representation
-        cls_embeddings = hidden_states[:, 0, :]
+        if self._output_mode == "direct":
+            # Model produces pre-pooled embeddings alongside hidden states.
+            # Look for a named "sentence_embedding" output first, then fall
+            # back to the first 2D (batch, dim) output, then last resort
+            # CLS pooling on whatever we find.
+            output_names = [o.name for o in self._session.get_outputs()]
+            embeddings = None
+            # Prefer named sentence_embedding output (e.g., embeddinggemma)
+            if "sentence_embedding" in output_names:
+                idx = output_names.index("sentence_embedding")
+                embeddings = outputs[idx]
+            else:
+                # Find first 2D output (batch, dim)
+                for out in outputs:
+                    if out.ndim == 2:
+                        embeddings = out
+                        break
+            if embeddings is None:
+                # All outputs are 3D — fall back to CLS on first output
+                embeddings = outputs[0][:, 0, :]
+        else:
+            # CLS pooling: outputs[0] is (batch, seq_len, hidden_dim)
+            hidden_states = outputs[0]
+            embeddings = hidden_states[:, 0, :]
 
         # L2 normalization
-        norms = np.linalg.norm(cls_embeddings, axis=1, keepdims=True)
+        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
         norms = np.maximum(norms, 1e-12)  # Avoid division by zero
-        normalized = cls_embeddings / norms
+        normalized = embeddings / norms
 
         return normalized
 
@@ -462,19 +523,20 @@ class OnnxEmbeddingProvider:
         cpu_start = _cpu_time()
         rss_start = _get_rss_mb()
 
-        # Model constants for gte-modernbert-base memory estimation.
-        # ONNX Runtime keeps ~3 transformer layers of activations resident
-        # simultaneously during inference. Per-item memory per layer:
+        # Model architecture constants for memory estimation.
+        # Read from self._profile so different models get accurate estimates.
+        # ONNX Runtime keeps ~eff_layers transformer layers of activations
+        # resident simultaneously during inference. Per-item memory per layer:
         #   - Attention scores: heads × seq² × 4 bytes
         #   - Q/K/V projections: 3 × seq × hidden × 4 bytes
         #   - FFN intermediate: seq × ff_dim × 4 bytes
         #   - Output buffer: seq × hidden × 4 bytes
-        _NUM_HEADS = 12
-        _HIDDEN = 768
-        _FF_DIM = 1152
-        _EFF_LAYERS = 3  # conservative; observed ~2.5 from benchmarks
+        _NUM_HEADS = self._profile.get("num_heads", 12)
+        _HIDDEN = self._profile.get("hidden_dim", 768)
+        _FF_DIM = self._profile.get("ff_dim", 1152)
+        _EFF_LAYERS = self._profile.get("eff_layers", 3)
         _MAX_BATCH = 64  # cap per batch to avoid diminishing returns
-        _MAX_SEQ = 8192  # pre-tokenization truncation cap
+        _MAX_SEQ = self._max_length  # pre-tokenization truncation cap
         budget_bytes = memory_budget_gb * 1024**3
 
         def _per_item_cost(seq_len: int) -> float:
@@ -511,11 +573,9 @@ class OnnxEmbeddingProvider:
         # item is never padded beyond 2× its actual length (≤4× compute waste).
         _PAD_RATIO = 1.1
 
+        # Phase 1: Plan all batches (no inference yet).
+        planned_batches: list = []
         i = 0
-        num_batches = 0
-        total_processed = 0
-        batch_sizes: list = []
-
         while i < n:
             min_len = indexed[i][1]
 
@@ -543,33 +603,72 @@ class OnnxEmbeddingProvider:
                     hi = mid - 1  # too large → shrink
             j = lo  # largest feasible end (at minimum j == i → batch of 1)
 
-            batch_size = j - i + 1
             max_len = indexed[j][1]
-            num_batches += 1
-
-            # Set truncation to actual max of this batch — no excess padding
-            self._tokenizer.enable_truncation(max_length=max_len)
-
             batch_indices = [indexed[k][0] for k in range(i, j + 1)]
             batch_texts = [texts[idx] for idx in batch_indices]
+            planned_batches.append((batch_indices, batch_texts, max_len,
+                                     indexed[i][1]))
+            i = j + 1
+
+        # Phase 2: Execute batches longest-first (reduces GPU arena
+        # fragmentation — large blocks allocated first, then reused for
+        # smaller batches).  On CPU this order is neutral.
+        planned_batches.reverse()
+
+        num_batches = len(planned_batches)
+        total_processed = 0
+        batch_sizes: list = []
+
+        for batch_num, (batch_indices, batch_texts, max_len, min_len) in enumerate(
+            planned_batches, 1
+        ):
+            batch_size = len(batch_indices)
 
             logger.debug(
-                f"  batch {num_batches}: {batch_size} texts, "
-                f"seq_len={indexed[i][1]}-{max_len}, "
+                f"  batch {batch_num}: {batch_size} texts, "
+                f"seq_len={min_len}-{max_len}, "
                 f"mem≈{batch_size * _per_item_cost(max_len) / 1024**3:.2f}GB"
             )
 
-            try:
-                inputs = self._tokenize(batch_texts)
-                embeddings = self._forward(inputs)
-                for k, idx in enumerate(batch_indices):
-                    results[idx] = embeddings[k]
-                total_processed += batch_size
-                batch_sizes.append(batch_size)
-            finally:
-                self._tokenizer.enable_truncation(max_length=self._max_length)
-
-            i = j + 1
+            # Process batch with OOM retry: if GPU OOMs, halve and retry.
+            # Max 4 splits (batch/16) before giving up on this batch.
+            sub_batches = [(batch_indices, batch_texts, max_len)]
+            oom_splits = 0
+            _MAX_OOM_SPLITS = 4
+            while sub_batches:
+                s_indices, s_texts, s_max_len = sub_batches.pop(0)
+                try:
+                    self._tokenizer.enable_truncation(max_length=s_max_len)
+                    inputs = self._tokenize(s_texts)
+                    embeddings = self._forward(inputs)
+                    for k, idx in enumerate(s_indices):
+                        results[idx] = embeddings[k]
+                    total_processed += len(s_texts)
+                except Exception as e:
+                    if (
+                        "BFCArena" in str(e)
+                        and len(s_texts) > 1
+                        and oom_splits < _MAX_OOM_SPLITS
+                    ):
+                        mid = len(s_texts) // 2
+                        oom_splits += 1
+                        if oom_splits == 1:
+                            logger.warning(
+                                f"  GPU OOM on batch of {len(s_texts)}, "
+                                f"splitting (attempt {oom_splits}/"
+                                f"{_MAX_OOM_SPLITS})"
+                            )
+                        sub_batches.insert(
+                            0, (s_indices[mid:], s_texts[mid:], s_max_len)
+                        )
+                        sub_batches.insert(
+                            0, (s_indices[:mid], s_texts[:mid], s_max_len)
+                        )
+                    else:
+                        raise
+                finally:
+                    self._tokenizer.enable_truncation(max_length=self._max_length)
+            batch_sizes.append(batch_size)
 
         total_elapsed = _time.perf_counter() - t0_total
         total_cpu = _cpu_time() - cpu_start
@@ -609,6 +708,9 @@ class OnnxRerankerProvider:
         max_length: Maximum token length for query+document pairs.
         cache_dir: Optional custom cache directory.
         providers: Provider preference string ("auto", "cpu", or comma-separated).
+        extra_files: Additional filename patterns to download from the
+            HuggingFace repo (e.g. ``["onnx/model.onnx_data"]`` for models
+            with external weight files).
     """
 
     def __init__(
@@ -618,12 +720,14 @@ class OnnxRerankerProvider:
         max_length: int = 8192,
         cache_dir: Optional[Path] = None,
         providers: str = "auto",
+        extra_files: Optional[List[str]] = None,
     ) -> None:
         self._model_id = model_id
         self._onnx_filename = onnx_filename
         self._max_length = max_length
         self._cache_dir = cache_dir
         self._providers_pref = providers
+        self._extra_files = extra_files or []
         self._session: Optional[object] = None
         self._tokenizer: Optional[object] = None
 
@@ -639,9 +743,12 @@ class OnnxRerankerProvider:
             f"(RSS before load: {rss_before:.0f}MB)"
         )
 
+        download_patterns = [
+            self._onnx_filename, "tokenizer.json", "tokenizer_config.json",
+        ] + self._extra_files
         model_dir = _download_model_files(
             self._model_id,
-            [self._onnx_filename, "tokenizer.json", "tokenizer_config.json"],
+            download_patterns,
             self._cache_dir,
         )
 
