@@ -1,0 +1,32 @@
+{
+  "timestamp": "2026-02-21T18:33:23.584513+00:00",
+  "python_version": "3.11.14",
+  "platform": "Linux-6.19.3-2-cachyos-x86_64-with-glibc2.43",
+  "cpu": "unknown",
+  "onnxruntime_version": "1.25.0.dev20260219001",
+  "ort_available_providers": [
+    "TensorrtExecutionProvider",
+    "CUDAExecutionProvider",
+    "CPUExecutionProvider"
+  ],
+  "device": "gpu",
+  "cpu_count": 28,
+  "ram_total_gb": 31.1,
+  "embedder_dir": "benchmarks/matrix-cpu",
+  "output_dir": "benchmarks/rerank-v2",
+  "pool_size": 30,
+  "strategies": [
+    "title",
+    "link_title",
+    "handcrafted"
+  ],
+  "reranker_keys": [
+    "jina-reranker-v2",
+    "stsb-distilroberta",
+    "stsb-roberta-base",
+    "stsb-roberta-large"
+  ],
+  "embedder_keys": [
+    "gte-modernbert-c8192-fp32"
+  ]
+}

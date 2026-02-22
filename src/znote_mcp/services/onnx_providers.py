@@ -332,6 +332,21 @@ class OnnxEmbeddingProvider:
 
         active = self._session.get_providers()
         rss_after = _get_rss_mb()
+
+        # Detect silent CUDA fallback: CUDA was requested but dropped
+        cuda_requested = "CUDAExecutionProvider" in providers
+        cuda_active = "CUDAExecutionProvider" in active
+        if cuda_requested and not cuda_active:
+            logger.warning(
+                "CUDA was requested but NOT active — ONNX Runtime silently "
+                "fell back to CPU. This typically means CUDA runtime "
+                "libraries (libcublasLt, cuDNN) are missing or version-"
+                "incompatible. Embedding will run on CPU (much slower). "
+                "Requested: %s, Active: %s",
+                providers,
+                active,
+            )
+
         logger.info(
             f"Embedding model loaded: dim={self._dim}, "
             f"max_tokens={self._max_length}, providers={active}, "
@@ -352,6 +367,15 @@ class OnnxEmbeddingProvider:
     @property
     def is_loaded(self) -> bool:
         return self._session is not None
+
+    def get_active_providers(self) -> List[str]:
+        """Return the list of ONNX execution providers active on the loaded session.
+
+        Returns an empty list if the model is not loaded.
+        """
+        if self._session is None:
+            return []
+        return self._session.get_providers()
 
     def _tokenize(self, texts: Sequence[str]) -> dict:
         """Tokenize texts and return numpy arrays for ONNX input."""
@@ -793,6 +817,18 @@ class OnnxRerankerProvider:
 
         active = self._session.get_providers()
         rss_after = _get_rss_mb()
+
+        # Detect silent CUDA fallback
+        cuda_requested = "CUDAExecutionProvider" in providers
+        cuda_active = "CUDAExecutionProvider" in active
+        if cuda_requested and not cuda_active:
+            logger.warning(
+                "CUDA was requested but NOT active for reranker — "
+                "fell back to CPU. Requested: %s, Active: %s",
+                providers,
+                active,
+            )
+
         logger.info(
             f"Reranker model loaded: {self._model_id}, providers={active}, "
             f"RSS: {rss_after:.0f}MB (+{rss_after - rss_before:.0f}MB)"
@@ -812,6 +848,15 @@ class OnnxRerankerProvider:
     @property
     def is_loaded(self) -> bool:
         return self._session is not None
+
+    def get_active_providers(self) -> List[str]:
+        """Return the list of ONNX execution providers active on the loaded session.
+
+        Returns an empty list if the model is not loaded.
+        """
+        if self._session is None:
+            return []
+        return self._session.get_providers()
 
     def _score_pairs(self, query: str, documents: Sequence[str]) -> List[float]:
         """Score query-document pairs via the cross-encoder model."""

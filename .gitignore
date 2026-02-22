@@ -80,3 +80,7 @@ docs/api/
 # Coverage reports
 htmlcov/
 coverage.xml
+
+# Claude Code local files
+.claude/
+.anamnesis/

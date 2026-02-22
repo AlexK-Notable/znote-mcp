@@ -1,0 +1,26 @@
+{
+  "config_key": "bge-small-int8",
+  "model_id": "Qdrant/bge-small-en-v1.5-onnx-Q",
+  "onnx_filename": "model_optimized.onnx",
+  "dim": 384,
+  "max_tokens": 512,
+  "chunk_size": 512,
+  "output_mode": "cls",
+  "status": "ok",
+  "load_time_s": 1.83,
+  "rss_before_load_mb": 1020.0,
+  "rss_after_load_mb": 1150.4,
+  "rss_model_delta_mb": 130.4,
+  "actual_dim": 384,
+  "total_notes": 927,
+  "total_chunks": 8047,
+  "embed_time_s": 340.04,
+  "notes_per_sec": 2.7,
+  "chunks_per_sec": 23.7,
+  "peak_rss_mb": 3619.0,
+  "chunks_per_note": {
+    "min": 1,
+    "max": 42,
+    "avg": 8.68
+  }
+}

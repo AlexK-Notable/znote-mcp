@@ -1,0 +1,26 @@
+{
+  "config_key": "gte-modernbert-c2048-int8",
+  "model_id": "Alibaba-NLP/gte-modernbert-base",
+  "onnx_filename": "onnx/model_int8.onnx",
+  "dim": 768,
+  "max_tokens": 8192,
+  "chunk_size": 2048,
+  "output_mode": "cls",
+  "status": "ok",
+  "load_time_s": 3.85,
+  "rss_before_load_mb": 1367.2,
+  "rss_after_load_mb": 1486.1,
+  "rss_model_delta_mb": 118.9,
+  "actual_dim": 768,
+  "total_notes": 927,
+  "total_chunks": 1917,
+  "embed_time_s": 1234.59,
+  "notes_per_sec": 0.8,
+  "chunks_per_sec": 1.6,
+  "peak_rss_mb": 7843.8,
+  "chunks_per_note": {
+    "min": 1,
+    "max": 8,
+    "avg": 2.07
+  }
+}

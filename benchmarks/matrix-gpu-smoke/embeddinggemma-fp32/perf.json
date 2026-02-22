@@ -1,0 +1,31 @@
+{
+  "config_key": "embeddinggemma-fp32",
+  "model_id": "onnx-community/embeddinggemma-300m-ONNX",
+  "onnx_filename": "onnx/model.onnx",
+  "dim": 768,
+  "max_tokens": 2048,
+  "chunk_size": 2048,
+  "output_mode": "direct",
+  "device": "gpu",
+  "status": "ok",
+  "load_time_s": 1.12,
+  "rss_before_load_mb": 477.8,
+  "rss_after_load_mb": 788.8,
+  "rss_model_delta_mb": 310.9,
+  "actual_dim": 768,
+  "gpu_before_load_mb": 1733.0,
+  "gpu_after_load_mb": 3061.0,
+  "gpu_model_delta_mb": 1328.0,
+  "total_notes": 961,
+  "total_chunks": 1951,
+  "embed_time_s": 55.65,
+  "notes_per_sec": 17.3,
+  "chunks_per_sec": 35.1,
+  "peak_rss_mb": 1554.8,
+  "gpu_peak_mb": 4067.0,
+  "chunks_per_note": {
+    "min": 1,
+    "max": 8,
+    "avg": 2.03
+  }
+}

@@ -148,6 +148,11 @@ class ZettelService:
             self.repository = NoteRepository(use_git=config.git_enabled)
         self._embedding_service = embedding_service
 
+    @property
+    def embedding_service(self) -> "Optional[EmbeddingService]":
+        """Public accessor for the embedding service (read-only)."""
+        return self._embedding_service
+
     # =========================================================================
     # Embedding Helpers (fire-and-forget — never fail the main operation)
     # =========================================================================

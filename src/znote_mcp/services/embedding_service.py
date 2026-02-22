@@ -82,6 +82,30 @@ class EmbeddingService:
         """Whether a reranker provider is configured."""
         return self._reranker is not None
 
+    def get_provider_info(self) -> dict:
+        """Return active ONNX execution providers for embedder and reranker.
+
+        Queries the actual loaded ONNX sessions (not config preferences)
+        to report which providers are in use.
+
+        Returns:
+            Dict with 'embedder_providers' and 'reranker_providers' lists,
+            plus 'embedder_loaded' and 'reranker_loaded' booleans.
+        """
+        info: dict = {
+            "embedder_loaded": self._embedder.is_loaded,
+            "reranker_loaded": self._reranker is not None and self._reranker.is_loaded,
+            "embedder_providers": [],
+            "reranker_providers": [],
+        }
+        if hasattr(self._embedder, "get_active_providers"):
+            info["embedder_providers"] = self._embedder.get_active_providers()
+        if self._reranker is not None and hasattr(
+            self._reranker, "get_active_providers"
+        ):
+            info["reranker_providers"] = self._reranker.get_active_providers()
+        return info
+
     def _ensure_embedder(self) -> None:
         """Load the embedder if not already loaded. Thread-safe."""
         if self._embedder.is_loaded:

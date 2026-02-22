@@ -1,0 +1,2000 @@
+{
+  "status": "ok",
+  "config_key": "arctic-l-c8192-fp32",
+  "link_prediction": {
+    "mrr": 0.2594,
+    "recall_at_5": 0.3915,
+    "recall_at_10": 0.5477,
+    "recall_at_20": 0.684,
+    "num_pairs": 1364,
+    "median_rank": 9,
+    "mean_rank": 44.0,
+    "p95_rank": 251
+  },
+  "tag_coherence": {
+    "mean_ratio": 1.5663,
+    "num_tags_evaluated": 330
+  },
+  "tag_coherence_details": {
+    "hyprland": {
+      "num_notes": 22,
+      "intra_sim": 0.5212,
+      "inter_sim": 0.3305,
+      "ratio": 1.5771
+    },
+    "settings-ui": {
+      "num_notes": 5,
+      "intra_sim": 0.5907,
+      "inter_sim": 0.3266,
+      "ratio": 1.8085
+    },
+    "implementation": {
+      "num_notes": 51,
+      "intra_sim": 0.4825,
+      "inter_sim": 0.4544,
+      "ratio": 1.0618
+    },
+    "pipeline": {
+      "num_notes": 4,
+      "intra_sim": 0.6772,
+      "inter_sim": 0.4997,
+      "ratio": 1.3552
+    },
+    "obsidian-plugin": {
+      "num_notes": 7,
+      "intra_sim": 0.5526,
+      "inter_sim": 0.4121,
+      "ratio": 1.3408
+    },
+    "architecture": {
+      "num_notes": 97,
+      "intra_sim": 0.529,
+      "inter_sim": 0.4762,
+      "ratio": 1.1107
+    },
+    "patterns": {
+      "num_notes": 4,
+      "intra_sim": 0.6148,
+      "inter_sim": 0.4828,
+      "ratio": 1.2735
+    },
+    "lifecycle": {
+      "num_notes": 3,
+      "intra_sim": 0.4187,
+      "inter_sim": 0.4212,
+      "ratio": 0.9939
+    },
+    "bug-fix": {
+      "num_notes": 6,
+      "intra_sim": 0.369,
+      "inter_sim": 0.3921,
+      "ratio": 0.941
+    },
+    "mcp-tools": {
+      "num_notes": 21,
+      "intra_sim": 0.6113,
+      "inter_sim": 0.4796,
+      "ratio": 1.2748
+    },
+    "workflow": {
+      "num_notes": 3,
+      "intra_sim": 0.2669,
+      "inter_sim": 0.3221,
+      "ratio": 0.8286
+    },
+    "settings-ui-v2": {
+      "num_notes": 7,
+      "intra_sim": 0.6875,
+      "inter_sim": 0.3494,
+      "ratio": 1.9678
+    },
+    "tdd": {
+      "num_notes": 6,
+      "intra_sim": 0.6911,
+      "inter_sim": 0.3422,
+      "ratio": 2.0193
+    },
+    "implementation-complete": {
+      "num_notes": 4,
+      "intra_sim": 0.7473,
+      "inter_sim": 0.3262,
+      "ratio": 2.291
+    },
+    "obsidian-ai-tagger": {
+      "num_notes": 9,
+      "intra_sim": 0.5799,
+      "inter_sim": 0.4078,
+      "ratio": 1.4221
+    },
+    "gap-analysis": {
+      "num_notes": 4,
+      "intra_sim": 0.5305,
+      "inter_sim": 0.4853,
+      "ratio": 1.0933
+    },
+    "sub-tabs": {
+      "num_notes": 3,
+      "intra_sim": 0.8191,
+      "inter_sim": 0.402,
+      "ratio": 2.0373
+    },
+    "implementation-plan": {
+      "num_notes": 191,
+      "intra_sim": 0.5629,
+      "inter_sim": 0.4805,
+      "ratio": 1.1715
+    },
+    "ai-tagger-universe": {
+      "num_notes": 3,
+      "intra_sim": 0.6801,
+      "inter_sim": 0.4694,
+      "ratio": 1.4491
+    },
+    "completed": {
+      "num_notes": 6,
+      "intra_sim": 0.5177,
+      "inter_sim": 0.4723,
+      "ratio": 1.096
+    },
+    "quality": {
+      "num_notes": 23,
+      "intra_sim": 0.5911,
+      "inter_sim": 0.5027,
+      "ratio": 1.1758
+    },
+    "refactoring": {
+      "num_notes": 38,
+      "intra_sim": 0.5791,
+      "inter_sim": 0.4975,
+      "ratio": 1.1641
+    },
+    "obsidian": {
+      "num_notes": 10,
+      "intra_sim": 0.7239,
+      "inter_sim": 0.5072,
+      "ratio": 1.4272
+    },
+    "code-quality": {
+      "num_notes": 31,
+      "intra_sim": 0.6575,
+      "inter_sim": 0.5228,
+      "ratio": 1.2577
+    },
+    "audit": {
+      "num_notes": 10,
+      "intra_sim": 0.5094,
+      "inter_sim": 0.4571,
+      "ratio": 1.1144
+    },
+    "typescript": {
+      "num_notes": 10,
+      "intra_sim": 0.5417,
+      "inter_sim": 0.4338,
+      "ratio": 1.2488
+    },
+    "plugin-development": {
+      "num_notes": 5,
+      "intra_sim": 0.4001,
+      "inter_sim": 0.379,
+      "ratio": 1.0556
+    },
+    "variety": {
+      "num_notes": 32,
+      "intra_sim": 0.5616,
+      "inter_sim": 0.4159,
+      "ratio": 1.3501
+    },
+    "python": {
+      "num_notes": 6,
+      "intra_sim": 0.4282,
+      "inter_sim": 0.4215,
+      "ratio": 1.0159
+    },
+    "wallpaper": {
+      "num_notes": 3,
+      "intra_sim": 0.657,
+      "inter_sim": 0.3663,
+      "ratio": 1.7936
+    },
+    "plugins": {
+      "num_notes": 4,
+      "intra_sim": 0.4723,
+      "inter_sim": 0.4257,
+      "ratio": 1.1095
+    },
+    "reference": {
+      "num_notes": 5,
+      "intra_sim": 0.4147,
+      "inter_sim": 0.3949,
+      "ratio": 1.0501
+    },
+    "threading": {
+      "num_notes": 3,
+      "intra_sim": 0.4462,
+      "inter_sim": 0.4413,
+      "ratio": 1.0112
+    },
+    "smart-selection": {
+      "num_notes": 28,
+      "intra_sim": 0.6731,
+      "inter_sim": 0.4424,
+      "ratio": 1.5214
+    },
+    "wallust": {
+      "num_notes": 3,
+      "intra_sim": 0.602,
+      "inter_sim": 0.3997,
+      "ratio": 1.5062
+    },
+    "roadmap": {
+      "num_notes": 14,
+      "intra_sim": 0.5285,
+      "inter_sim": 0.4542,
+      "ratio": 1.1635
+    },
+    "integration": {
+      "num_notes": 14,
+      "intra_sim": 0.5848,
+      "inter_sim": 0.5018,
+      "ratio": 1.1653
+    },
+    "in-memoria": {
+      "num_notes": 67,
+      "intra_sim": 0.5808,
+      "inter_sim": 0.4519,
+      "ratio": 1.2853
+    },
+    "dependencies": {
+      "num_notes": 10,
+      "intra_sim": 0.5212,
+      "inter_sim": 0.4274,
+      "ratio": 1.2192
+    },
+    "rust": {
+      "num_notes": 11,
+      "intra_sim": 0.6292,
+      "inter_sim": 0.4295,
+      "ratio": 1.465
+    },
+    "tree-sitter": {
+      "num_notes": 11,
+      "intra_sim": 0.7081,
+      "inter_sim": 0.4804,
+      "ratio": 1.4742
+    },
+    "async": {
+      "num_notes": 3,
+      "intra_sim": 0.4949,
+      "inter_sim": 0.4729,
+      "ratio": 1.0467
+    },
+    "mcp": {
+      "num_notes": 15,
+      "intra_sim": 0.5493,
+      "inter_sim": 0.4644,
+      "ratio": 1.183
+    },
+    "tools": {
+      "num_notes": 5,
+      "intra_sim": 0.5528,
+      "inter_sim": 0.4748,
+      "ratio": 1.1644
+    },
+    "sqlite": {
+      "num_notes": 14,
+      "intra_sim": 0.6063,
+      "inter_sim": 0.4672,
+      "ratio": 1.2977
+    },
+    "database": {
+      "num_notes": 11,
+      "intra_sim": 0.5145,
+      "inter_sim": 0.4386,
+      "ratio": 1.173
+    },
+    "performance": {
+      "num_notes": 48,
+      "intra_sim": 0.5381,
+      "inter_sim": 0.4609,
+      "ratio": 1.1675
+    },
+    "code-review": {
+      "num_notes": 229,
+      "intra_sim": 0.6228,
+      "inter_sim": 0.4884,
+      "ratio": 1.2753
+    },
+    "phase-5": {
+      "num_notes": 8,
+      "intra_sim": 0.5546,
+      "inter_sim": 0.4825,
+      "ratio": 1.1494
+    },
+    "vector-search": {
+      "num_notes": 7,
+      "intra_sim": 0.721,
+      "inter_sim": 0.4852,
+      "ratio": 1.4861
+    },
+    "optimization": {
+      "num_notes": 16,
+      "intra_sim": 0.5509,
+      "inter_sim": 0.4569,
+      "ratio": 1.2057
+    },
+    "security": {
+      "num_notes": 42,
+      "intra_sim": 0.5929,
+      "inter_sim": 0.476,
+      "ratio": 1.2458
+    },
+    "sql-injection": {
+      "num_notes": 6,
+      "intra_sim": 0.6423,
+      "inter_sim": 0.469,
+      "ratio": 1.3696
+    },
+    "path-traversal": {
+      "num_notes": 7,
+      "intra_sim": 0.7015,
+      "inter_sim": 0.5072,
+      "ratio": 1.383
+    },
+    "vulnerabilities": {
+      "num_notes": 6,
+      "intra_sim": 0.7477,
+      "inter_sim": 0.5027,
+      "ratio": 1.4873
+    },
+    "phase-6": {
+      "num_notes": 7,
+      "intra_sim": 0.5193,
+      "inter_sim": 0.4731,
+      "ratio": 1.0976
+    },
+    "technical-debt": {
+      "num_notes": 35,
+      "intra_sim": 0.5863,
+      "inter_sim": 0.5024,
+      "ratio": 1.167
+    },
+    "testing": {
+      "num_notes": 65,
+      "intra_sim": 0.6412,
+      "inter_sim": 0.4995,
+      "ratio": 1.2836
+    },
+    "type-safety": {
+      "num_notes": 5,
+      "intra_sim": 0.6013,
+      "inter_sim": 0.4662,
+      "ratio": 1.2897
+    },
+    "synthesis": {
+      "num_notes": 78,
+      "intra_sim": 0.6174,
+      "inter_sim": 0.5016,
+      "ratio": 1.2309
+    },
+    "error-handling": {
+      "num_notes": 10,
+      "intra_sim": 0.5723,
+      "inter_sim": 0.4724,
+      "ratio": 1.2115
+    },
+    "api-design": {
+      "num_notes": 17,
+      "intra_sim": 0.6941,
+      "inter_sim": 0.5196,
+      "ratio": 1.336
+    },
+    "validation": {
+      "num_notes": 10,
+      "intra_sim": 0.4865,
+      "inter_sim": 0.454,
+      "ratio": 1.0714
+    },
+    "resilience": {
+      "num_notes": 6,
+      "intra_sim": 0.5981,
+      "inter_sim": 0.4669,
+      "ratio": 1.2811
+    },
+    "circuit-breaker": {
+      "num_notes": 7,
+      "intra_sim": 0.638,
+      "inter_sim": 0.4677,
+      "ratio": 1.3643
+    },
+    "maintainability": {
+      "num_notes": 16,
+      "intra_sim": 0.6527,
+      "inter_sim": 0.5226,
+      "ratio": 1.2489
+    },
+    "remediation": {
+      "num_notes": 58,
+      "intra_sim": 0.575,
+      "inter_sim": 0.4824,
+      "ratio": 1.1919
+    },
+    "phase-0": {
+      "num_notes": 3,
+      "intra_sim": 0.5208,
+      "inter_sim": 0.4278,
+      "ratio": 1.2174
+    },
+    "phase-1": {
+      "num_notes": 8,
+      "intra_sim": 0.4836,
+      "inter_sim": 0.4571,
+      "ratio": 1.058
+    },
+    "data-integrity": {
+      "num_notes": 3,
+      "intra_sim": 0.5941,
+      "inter_sim": 0.4923,
+      "ratio": 1.2069
+    },
+    "phase-2": {
+      "num_notes": 7,
+      "intra_sim": 0.5175,
+      "inter_sim": 0.4749,
+      "ratio": 1.0896
+    },
+    "phase-3": {
+      "num_notes": 7,
+      "intra_sim": 0.5452,
+      "inter_sim": 0.4807,
+      "ratio": 1.1343
+    },
+    "phase-4": {
+      "num_notes": 7,
+      "intra_sim": 0.5394,
+      "inter_sim": 0.4756,
+      "ratio": 1.1342
+    },
+    "refactor": {
+      "num_notes": 3,
+      "intra_sim": 0.5945,
+      "inter_sim": 0.4212,
+      "ratio": 1.4115
+    },
+    "embeddings": {
+      "num_notes": 25,
+      "intra_sim": 0.675,
+      "inter_sim": 0.4853,
+      "ratio": 1.3907
+    },
+    "hub": {
+      "num_notes": 102,
+      "intra_sim": 0.5737,
+      "inter_sim": 0.4864,
+      "ratio": 1.1793
+    },
+    "master-plan": {
+      "num_notes": 3,
+      "intra_sim": 0.563,
+      "inter_sim": 0.4789,
+      "ratio": 1.1758
+    },
+    "orcaslicer": {
+      "num_notes": 11,
+      "intra_sim": 0.5498,
+      "inter_sim": 0.3005,
+      "ratio": 1.8295
+    },
+    "nvidia": {
+      "num_notes": 6,
+      "intra_sim": 0.6004,
+      "inter_sim": 0.3128,
+      "ratio": 1.9193
+    },
+    "wayland": {
+      "num_notes": 8,
+      "intra_sim": 0.5118,
+      "inter_sim": 0.3191,
+      "ratio": 1.6037
+    },
+    "cef": {
+      "num_notes": 7,
+      "intra_sim": 0.6589,
+      "inter_sim": 0.296,
+      "ratio": 2.2259
+    },
+    "migration": {
+      "num_notes": 12,
+      "intra_sim": 0.4502,
+      "inter_sim": 0.4315,
+      "ratio": 1.0433
+    },
+    "api": {
+      "num_notes": 15,
+      "intra_sim": 0.4271,
+      "inter_sim": 0.3783,
+      "ratio": 1.129
+    },
+    "hyprbind": {
+      "num_notes": 7,
+      "intra_sim": 0.6056,
+      "inter_sim": 0.4092,
+      "ratio": 1.4801
+    },
+    "logging": {
+      "num_notes": 6,
+      "intra_sim": 0.5167,
+      "inter_sim": 0.4114,
+      "ratio": 1.2559
+    },
+    "infrastructure": {
+      "num_notes": 38,
+      "intra_sim": 0.6356,
+      "inter_sim": 0.3839,
+      "ratio": 1.6558
+    },
+    "hyprtasking": {
+      "num_notes": 26,
+      "intra_sim": 0.5327,
+      "inter_sim": 0.3195,
+      "ratio": 1.6672
+    },
+    "bugfix": {
+      "num_notes": 11,
+      "intra_sim": 0.4318,
+      "inter_sim": 0.2467,
+      "ratio": 1.7503
+    },
+    "critical": {
+      "num_notes": 13,
+      "intra_sim": 0.3802,
+      "inter_sim": 0.3995,
+      "ratio": 0.9517
+    },
+    "linear-layout": {
+      "num_notes": 3,
+      "intra_sim": 0.6227,
+      "inter_sim": 0.2237,
+      "ratio": 2.783
+    },
+    "important": {
+      "num_notes": 6,
+      "intra_sim": 0.4985,
+      "inter_sim": 0.2333,
+      "ratio": 2.1368
+    },
+    "navigation": {
+      "num_notes": 3,
+      "intra_sim": 0.657,
+      "inter_sim": 0.2463,
+      "ratio": 2.6674
+    },
+    "dispatcher": {
+      "num_notes": 6,
+      "intra_sim": 0.6569,
+      "inter_sim": 0.2916,
+      "ratio": 2.2528
+    },
+    "animation": {
+      "num_notes": 8,
+      "intra_sim": 0.5606,
+      "inter_sim": 0.2801,
+      "ratio": 2.0017
+    },
+    "documentation": {
+      "num_notes": 38,
+      "intra_sim": 0.5334,
+      "inter_sim": 0.4592,
+      "ratio": 1.1617
+    },
+    "config": {
+      "num_notes": 3,
+      "intra_sim": 0.3863,
+      "inter_sim": 0.3558,
+      "ratio": 1.0858
+    },
+    "design-patterns": {
+      "num_notes": 3,
+      "intra_sim": 0.6098,
+      "inter_sim": 0.478,
+      "ratio": 1.2756
+    },
+    "reliability": {
+      "num_notes": 7,
+      "intra_sim": 0.5792,
+      "inter_sim": 0.4496,
+      "ratio": 1.2883
+    },
+    "edge-cases": {
+      "num_notes": 6,
+      "intra_sim": 0.5242,
+      "inter_sim": 0.4799,
+      "ratio": 1.0924
+    },
+    "multi-agent": {
+      "num_notes": 9,
+      "intra_sim": 0.6404,
+      "inter_sim": 0.5069,
+      "ratio": 1.2633
+    },
+    "caching": {
+      "num_notes": 5,
+      "intra_sim": 0.5989,
+      "inter_sim": 0.4626,
+      "ratio": 1.2947
+    },
+    "phase-7": {
+      "num_notes": 3,
+      "intra_sim": 0.4837,
+      "inter_sim": 0.4338,
+      "ratio": 1.115
+    },
+    "hyprtasking-debug": {
+      "num_notes": 13,
+      "intra_sim": 0.8008,
+      "inter_sim": 0.3165,
+      "ratio": 2.5306
+    },
+    "debugging": {
+      "num_notes": 23,
+      "intra_sim": 0.4883,
+      "inter_sim": 0.4015,
+      "ratio": 1.2164
+    },
+    "keybind": {
+      "num_notes": 3,
+      "intra_sim": 0.7853,
+      "inter_sim": 0.3242,
+      "ratio": 2.422
+    },
+    "keyboard": {
+      "num_notes": 4,
+      "intra_sim": 0.7122,
+      "inter_sim": 0.3119,
+      "ratio": 2.2833
+    },
+    "keyboard-input": {
+      "num_notes": 3,
+      "intra_sim": 0.8187,
+      "inter_sim": 0.3284,
+      "ratio": 2.4934
+    },
+    "keybinds": {
+      "num_notes": 8,
+      "intra_sim": 0.7158,
+      "inter_sim": 0.3397,
+      "ratio": 2.1073
+    },
+    "plugin": {
+      "num_notes": 11,
+      "intra_sim": 0.6647,
+      "inter_sim": 0.4706,
+      "ratio": 1.4125
+    },
+    "protocol": {
+      "num_notes": 4,
+      "intra_sim": 0.6527,
+      "inter_sim": 0.5053,
+      "ratio": 1.2919
+    },
+    "ffi": {
+      "num_notes": 4,
+      "intra_sim": 0.695,
+      "inter_sim": 0.432,
+      "ratio": 1.6087
+    },
+    "storage": {
+      "num_notes": 11,
+      "intra_sim": 0.6411,
+      "inter_sim": 0.487,
+      "ratio": 1.3165
+    },
+    "tagitall": {
+      "num_notes": 15,
+      "intra_sim": 0.6832,
+      "inter_sim": 0.4885,
+      "ratio": 1.3984
+    },
+    "semantic-search": {
+      "num_notes": 24,
+      "intra_sim": 0.718,
+      "inter_sim": 0.5181,
+      "ratio": 1.3858
+    },
+    "executive-summary": {
+      "num_notes": 3,
+      "intra_sim": 0.6997,
+      "inter_sim": 0.5265,
+      "ratio": 1.3288
+    },
+    "2026-01": {
+      "num_notes": 5,
+      "intra_sim": 0.7227,
+      "inter_sim": 0.4968,
+      "ratio": 1.4549
+    },
+    "ai-integration": {
+      "num_notes": 3,
+      "intra_sim": 0.7435,
+      "inter_sim": 0.5054,
+      "ratio": 1.4712
+    },
+    "implementation-guide": {
+      "num_notes": 5,
+      "intra_sim": 0.5847,
+      "inter_sim": 0.4724,
+      "ratio": 1.2379
+    },
+    "task": {
+      "num_notes": 11,
+      "intra_sim": 0.6071,
+      "inter_sim": 0.4285,
+      "ratio": 1.4167
+    },
+    "wave-1": {
+      "num_notes": 7,
+      "intra_sim": 0.5859,
+      "inter_sim": 0.4231,
+      "ratio": 1.3849
+    },
+    "p0-critical": {
+      "num_notes": 4,
+      "intra_sim": 0.6529,
+      "inter_sim": 0.4356,
+      "ratio": 1.4988
+    },
+    "p1-high": {
+      "num_notes": 4,
+      "intra_sim": 0.5373,
+      "inter_sim": 0.4073,
+      "ratio": 1.319
+    },
+    "task-specs": {
+      "num_notes": 4,
+      "intra_sim": 0.7511,
+      "inter_sim": 0.4864,
+      "ratio": 1.5441
+    },
+    "wave-2": {
+      "num_notes": 6,
+      "intra_sim": 0.6502,
+      "inter_sim": 0.4555,
+      "ratio": 1.4274
+    },
+    "p2-medium": {
+      "num_notes": 3,
+      "intra_sim": 0.6742,
+      "inter_sim": 0.4523,
+      "ratio": 1.4906
+    },
+    "observability": {
+      "num_notes": 4,
+      "intra_sim": 0.5401,
+      "inter_sim": 0.4713,
+      "ratio": 1.1459
+    },
+    "memory": {
+      "num_notes": 4,
+      "intra_sim": 0.4603,
+      "inter_sim": 0.456,
+      "ratio": 1.0094
+    },
+    "wave-3": {
+      "num_notes": 5,
+      "intra_sim": 0.5472,
+      "inter_sim": 0.4108,
+      "ratio": 1.332
+    },
+    "wave-4": {
+      "num_notes": 4,
+      "intra_sim": 0.5231,
+      "inter_sim": 0.4245,
+      "ratio": 1.2322
+    },
+    "p1": {
+      "num_notes": 4,
+      "intra_sim": 0.5831,
+      "inter_sim": 0.4148,
+      "ratio": 1.4056
+    },
+    "p2": {
+      "num_notes": 3,
+      "intra_sim": 0.5027,
+      "inter_sim": 0.3729,
+      "ratio": 1.348
+    },
+    "cleanup": {
+      "num_notes": 12,
+      "intra_sim": 0.5746,
+      "inter_sim": 0.4584,
+      "ratio": 1.2534
+    },
+    "coverage": {
+      "num_notes": 10,
+      "intra_sim": 0.6933,
+      "inter_sim": 0.527,
+      "ratio": 1.3156
+    },
+    "streaming": {
+      "num_notes": 5,
+      "intra_sim": 0.6062,
+      "inter_sim": 0.3711,
+      "ratio": 1.6336
+    },
+    "review": {
+      "num_notes": 21,
+      "intra_sim": 0.6227,
+      "inter_sim": 0.5093,
+      "ratio": 1.2228
+    },
+    "test-quality": {
+      "num_notes": 7,
+      "intra_sim": 0.7734,
+      "inter_sim": 0.5294,
+      "ratio": 1.4608
+    },
+    "analysis": {
+      "num_notes": 8,
+      "intra_sim": 0.6571,
+      "inter_sim": 0.5218,
+      "ratio": 1.2593
+    },
+    "3d-printing": {
+      "num_notes": 7,
+      "intra_sim": 0.5961,
+      "inter_sim": 0.2999,
+      "ratio": 1.9877
+    },
+    "setup": {
+      "num_notes": 5,
+      "intra_sim": 0.3739,
+      "inter_sim": 0.2466,
+      "ratio": 1.5162
+    },
+    "scripts": {
+      "num_notes": 6,
+      "intra_sim": 0.6376,
+      "inter_sim": 0.4745,
+      "ratio": 1.3439
+    },
+    "qmk": {
+      "num_notes": 7,
+      "intra_sim": 0.6561,
+      "inter_sim": 0.2938,
+      "ratio": 2.2332
+    },
+    "display": {
+      "num_notes": 4,
+      "intra_sim": 0.5315,
+      "inter_sim": 0.2758,
+      "ratio": 1.9272
+    },
+    "zmk": {
+      "num_notes": 16,
+      "intra_sim": 0.5229,
+      "inter_sim": 0.3328,
+      "ratio": 1.5715
+    },
+    "conversion": {
+      "num_notes": 3,
+      "intra_sim": 0.5725,
+      "inter_sim": 0.2872,
+      "ratio": 1.9934
+    },
+    "structure": {
+      "num_notes": 6,
+      "intra_sim": 0.4174,
+      "inter_sim": 0.3283,
+      "ratio": 1.2716
+    },
+    "planning": {
+      "num_notes": 25,
+      "intra_sim": 0.5299,
+      "inter_sim": 0.4769,
+      "ratio": 1.1112
+    },
+    "user-experience": {
+      "num_notes": 3,
+      "intra_sim": 0.4393,
+      "inter_sim": 0.4403,
+      "ratio": 0.9976
+    },
+    "offsetkey": {
+      "num_notes": 8,
+      "intra_sim": 0.6661,
+      "inter_sim": 0.3759,
+      "ratio": 1.7721
+    },
+    "configuration": {
+      "num_notes": 6,
+      "intra_sim": 0.3679,
+      "inter_sim": 0.3095,
+      "ratio": 1.1888
+    },
+    "hardware": {
+      "num_notes": 7,
+      "intra_sim": 0.4149,
+      "inter_sim": 0.2412,
+      "ratio": 1.72
+    },
+    "zettelkasten-mcp": {
+      "num_notes": 14,
+      "intra_sim": 0.6201,
+      "inter_sim": 0.4598,
+      "ratio": 1.3487
+    },
+    "decomposition": {
+      "num_notes": 4,
+      "intra_sim": 0.6983,
+      "inter_sim": 0.5316,
+      "ratio": 1.3136
+    },
+    "fts5": {
+      "num_notes": 5,
+      "intra_sim": 0.6973,
+      "inter_sim": 0.4769,
+      "ratio": 1.4621
+    },
+    "search": {
+      "num_notes": 5,
+      "intra_sim": 0.6095,
+      "inter_sim": 0.4795,
+      "ratio": 1.2712
+    },
+    "critique": {
+      "num_notes": 7,
+      "intra_sim": 0.6942,
+      "inter_sim": 0.5207,
+      "ratio": 1.3332
+    },
+    "design": {
+      "num_notes": 5,
+      "intra_sim": 0.3486,
+      "inter_sim": 0.3788,
+      "ratio": 0.9204
+    },
+    "orphan-test": {
+      "num_notes": 4,
+      "intra_sim": 0.8708,
+      "inter_sim": 0.2057,
+      "ratio": 4.2324
+    },
+    "central-test": {
+      "num_notes": 6,
+      "intra_sim": 0.7773,
+      "inter_sim": 0.2322,
+      "ratio": 3.3469
+    },
+    "mega-tool": {
+      "num_notes": 24,
+      "intra_sim": 0.5396,
+      "inter_sim": 0.4537,
+      "ratio": 1.1892
+    },
+    "reranking": {
+      "num_notes": 5,
+      "intra_sim": 0.7098,
+      "inter_sim": 0.5077,
+      "ratio": 1.398
+    },
+    "integration-candidate": {
+      "num_notes": 8,
+      "intra_sim": 0.627,
+      "inter_sim": 0.4642,
+      "ratio": 1.3509
+    },
+    "mcp-server": {
+      "num_notes": 10,
+      "intra_sim": 0.6391,
+      "inter_sim": 0.5146,
+      "ratio": 1.242
+    },
+    "persistence": {
+      "num_notes": 12,
+      "intra_sim": 0.7452,
+      "inter_sim": 0.5088,
+      "ratio": 1.4647
+    },
+    "research": {
+      "num_notes": 57,
+      "intra_sim": 0.538,
+      "inter_sim": 0.4613,
+      "ratio": 1.1663
+    },
+    "assessment": {
+      "num_notes": 5,
+      "intra_sim": 0.702,
+      "inter_sim": 0.4148,
+      "ratio": 1.6924
+    },
+    "dead-code": {
+      "num_notes": 16,
+      "intra_sim": 0.6877,
+      "inter_sim": 0.5303,
+      "ratio": 1.2967
+    },
+    "serena": {
+      "num_notes": 7,
+      "intra_sim": 0.7588,
+      "inter_sim": 0.4967,
+      "ratio": 1.5279
+    },
+    "comparison": {
+      "num_notes": 7,
+      "intra_sim": 0.6015,
+      "inter_sim": 0.4789,
+      "ratio": 1.2559
+    },
+    "lsp": {
+      "num_notes": 3,
+      "intra_sim": 0.6292,
+      "inter_sim": 0.4858,
+      "ratio": 1.2951
+    },
+    "ralph-loop": {
+      "num_notes": 3,
+      "intra_sim": 0.7564,
+      "inter_sim": 0.4615,
+      "ratio": 1.639
+    },
+    "python-port": {
+      "num_notes": 3,
+      "intra_sim": 0.7564,
+      "inter_sim": 0.4615,
+      "ratio": 1.639
+    },
+    "testing-strategy": {
+      "num_notes": 7,
+      "intra_sim": 0.6467,
+      "inter_sim": 0.4941,
+      "ratio": 1.3089
+    },
+    "anamnesis": {
+      "num_notes": 136,
+      "intra_sim": 0.6445,
+      "inter_sim": 0.4966,
+      "ratio": 1.2978
+    },
+    "work-sessions": {
+      "num_notes": 5,
+      "intra_sim": 0.8096,
+      "inter_sim": 0.4889,
+      "ratio": 1.656
+    },
+    "code-analysis": {
+      "num_notes": 3,
+      "intra_sim": 0.5461,
+      "inter_sim": 0.5143,
+      "ratio": 1.0617
+    },
+    "enhancement": {
+      "num_notes": 3,
+      "intra_sim": 0.6862,
+      "inter_sim": 0.5245,
+      "ratio": 1.3082
+    },
+    "adjusted": {
+      "num_notes": 4,
+      "intra_sim": 0.7086,
+      "inter_sim": 0.5012,
+      "ratio": 1.4137
+    },
+    "checklist": {
+      "num_notes": 3,
+      "intra_sim": 0.4279,
+      "inter_sim": 0.3476,
+      "ratio": 1.2309
+    },
+    "findings": {
+      "num_notes": 7,
+      "intra_sim": 0.6937,
+      "inter_sim": 0.499,
+      "ratio": 1.3902
+    },
+    "best-practices": {
+      "num_notes": 3,
+      "intra_sim": 0.3666,
+      "inter_sim": 0.4095,
+      "ratio": 0.8952
+    },
+    "january-2026": {
+      "num_notes": 6,
+      "intra_sim": 0.7999,
+      "inter_sim": 0.5392,
+      "ratio": 1.4836
+    },
+    "index": {
+      "num_notes": 4,
+      "intra_sim": 0.3923,
+      "inter_sim": 0.4116,
+      "ratio": 0.9532
+    },
+    "completeness": {
+      "num_notes": 24,
+      "intra_sim": 0.6368,
+      "inter_sim": 0.514,
+      "ratio": 1.2387
+    },
+    "zettelkasten": {
+      "num_notes": 21,
+      "intra_sim": 0.7427,
+      "inter_sim": 0.3892,
+      "ratio": 1.9083
+    },
+    "bugs": {
+      "num_notes": 3,
+      "intra_sim": 0.6672,
+      "inter_sim": 0.4882,
+      "ratio": 1.3666
+    },
+    "concurrency": {
+      "num_notes": 4,
+      "intra_sim": 0.7353,
+      "inter_sim": 0.4829,
+      "ratio": 1.5226
+    },
+    "znote-mcp": {
+      "num_notes": 36,
+      "intra_sim": 0.6545,
+      "inter_sim": 0.501,
+      "ratio": 1.3063
+    },
+    "troubleshooting": {
+      "num_notes": 5,
+      "intra_sim": 0.4219,
+      "inter_sim": 0.3252,
+      "ratio": 1.2974
+    },
+    "toon-integration": {
+      "num_notes": 4,
+      "intra_sim": 0.8617,
+      "inter_sim": 0.5043,
+      "ratio": 1.7089
+    },
+    "improvement-analysis": {
+      "num_notes": 12,
+      "intra_sim": 0.6128,
+      "inter_sim": 0.4892,
+      "ratio": 1.2526
+    },
+    "phase-design": {
+      "num_notes": 20,
+      "intra_sim": 0.6043,
+      "inter_sim": 0.5119,
+      "ratio": 1.1806
+    },
+    "test-strategy": {
+      "num_notes": 50,
+      "intra_sim": 0.7203,
+      "inter_sim": 0.5191,
+      "ratio": 1.3877
+    },
+    "quality-assurance": {
+      "num_notes": 16,
+      "intra_sim": 0.6639,
+      "inter_sim": 0.5053,
+      "ratio": 1.3137
+    },
+    "toon-implementation": {
+      "num_notes": 10,
+      "intra_sim": 0.8451,
+      "inter_sim": 0.4903,
+      "ratio": 1.7237
+    },
+    "toon-fixes": {
+      "num_notes": 4,
+      "intra_sim": 0.81,
+      "inter_sim": 0.4993,
+      "ratio": 1.6223
+    },
+    "phase13-fixes": {
+      "num_notes": 5,
+      "intra_sim": 0.842,
+      "inter_sim": 0.4884,
+      "ratio": 1.7241
+    },
+    "post-implementation": {
+      "num_notes": 3,
+      "intra_sim": 0.654,
+      "inter_sim": 0.5171,
+      "ratio": 1.2647
+    },
+    "phase14": {
+      "num_notes": 3,
+      "intra_sim": 0.8409,
+      "inter_sim": 0.5517,
+      "ratio": 1.5241
+    },
+    "investigation": {
+      "num_notes": 14,
+      "intra_sim": 0.4947,
+      "inter_sim": 0.4149,
+      "ratio": 1.1922
+    },
+    "implementation-review": {
+      "num_notes": 4,
+      "intra_sim": 0.79,
+      "inter_sim": 0.4805,
+      "ratio": 1.6442
+    },
+    "wallhaven-manager": {
+      "num_notes": 4,
+      "intra_sim": 0.8153,
+      "inter_sim": 0.4789,
+      "ratio": 1.7025
+    },
+    "bug": {
+      "num_notes": 3,
+      "intra_sim": 0.3311,
+      "inter_sim": 0.3634,
+      "ratio": 0.9111
+    },
+    "znote": {
+      "num_notes": 9,
+      "intra_sim": 0.7182,
+      "inter_sim": 0.4836,
+      "ratio": 1.4851
+    },
+    "ui": {
+      "num_notes": 5,
+      "intra_sim": 0.4958,
+      "inter_sim": 0.2455,
+      "ratio": 2.0194
+    },
+    "wallhaven-table": {
+      "num_notes": 3,
+      "intra_sim": 0.9156,
+      "inter_sim": 0.3735,
+      "ratio": 2.4514
+    },
+    "database-browser": {
+      "num_notes": 4,
+      "intra_sim": 0.7834,
+      "inter_sim": 0.4883,
+      "ratio": 1.6046
+    },
+    "fastapi": {
+      "num_notes": 3,
+      "intra_sim": 0.7999,
+      "inter_sim": 0.4919,
+      "ratio": 1.6262
+    },
+    "wallhaven-tag-resolver": {
+      "num_notes": 4,
+      "intra_sim": 0.8825,
+      "inter_sim": 0.4906,
+      "ratio": 1.7988
+    },
+    "wallhaven-tag-pipeline": {
+      "num_notes": 7,
+      "intra_sim": 0.7967,
+      "inter_sim": 0.4691,
+      "ratio": 1.6986
+    },
+    "firecrawl": {
+      "num_notes": 3,
+      "intra_sim": 0.8386,
+      "inter_sim": 0.4695,
+      "ratio": 1.7861
+    },
+    "pam": {
+      "num_notes": 5,
+      "intra_sim": 0.851,
+      "inter_sim": 0.3328,
+      "ratio": 2.5568
+    },
+    "sudo": {
+      "num_notes": 3,
+      "intra_sim": 0.8535,
+      "inter_sim": 0.3397,
+      "ratio": 2.5127
+    },
+    "ghostty": {
+      "num_notes": 5,
+      "intra_sim": 0.6976,
+      "inter_sim": 0.4186,
+      "ratio": 1.6667
+    },
+    "simplification": {
+      "num_notes": 9,
+      "intra_sim": 0.6743,
+      "inter_sim": 0.5234,
+      "ratio": 1.2882
+    },
+    "verification": {
+      "num_notes": 36,
+      "intra_sim": 0.6551,
+      "inter_sim": 0.5129,
+      "ratio": 1.2771
+    },
+    "round-1": {
+      "num_notes": 6,
+      "intra_sim": 0.7573,
+      "inter_sim": 0.5155,
+      "ratio": 1.469
+    },
+    "code-detective": {
+      "num_notes": 25,
+      "intra_sim": 0.6892,
+      "inter_sim": 0.5246,
+      "ratio": 1.3137
+    },
+    "meta-review": {
+      "num_notes": 7,
+      "intra_sim": 0.813,
+      "inter_sim": 0.5318,
+      "ratio": 1.5289
+    },
+    "round-2": {
+      "num_notes": 6,
+      "intra_sim": 0.8301,
+      "inter_sim": 0.524,
+      "ratio": 1.584
+    },
+    "round-3": {
+      "num_notes": 4,
+      "intra_sim": 0.794,
+      "inter_sim": 0.5249,
+      "ratio": 1.5128
+    },
+    "fix-validation": {
+      "num_notes": 3,
+      "intra_sim": 0.819,
+      "inter_sim": 0.5009,
+      "ratio": 1.6351
+    },
+    "round-4": {
+      "num_notes": 5,
+      "intra_sim": 0.7223,
+      "inter_sim": 0.4668,
+      "ratio": 1.5472
+    },
+    "round-5": {
+      "num_notes": 6,
+      "intra_sim": 0.6534,
+      "inter_sim": 0.4707,
+      "ratio": 1.3881
+    },
+    "round-6": {
+      "num_notes": 9,
+      "intra_sim": 0.7805,
+      "inter_sim": 0.5332,
+      "ratio": 1.4637
+    },
+    "gap-closure": {
+      "num_notes": 9,
+      "intra_sim": 0.7805,
+      "inter_sim": 0.5332,
+      "ratio": 1.4637
+    },
+    "security-review": {
+      "num_notes": 3,
+      "intra_sim": 0.7708,
+      "inter_sim": 0.5274,
+      "ratio": 1.4615
+    },
+    "hooks": {
+      "num_notes": 12,
+      "intra_sim": 0.7714,
+      "inter_sim": 0.5245,
+      "ratio": 1.4708
+    },
+    "toon": {
+      "num_notes": 3,
+      "intra_sim": 0.7066,
+      "inter_sim": 0.5331,
+      "ratio": 1.3256
+    },
+    "agents": {
+      "num_notes": 9,
+      "intra_sim": 0.7787,
+      "inter_sim": 0.5363,
+      "ratio": 1.452
+    },
+    "claude-code": {
+      "num_notes": 6,
+      "intra_sim": 0.6271,
+      "inter_sim": 0.4255,
+      "ratio": 1.4738
+    },
+    "marketplace": {
+      "num_notes": 3,
+      "intra_sim": 0.7458,
+      "inter_sim": 0.546,
+      "ratio": 1.3659
+    },
+    "agent-design": {
+      "num_notes": 5,
+      "intra_sim": 0.8025,
+      "inter_sim": 0.5192,
+      "ratio": 1.5457
+    },
+    "commands": {
+      "num_notes": 9,
+      "intra_sim": 0.6701,
+      "inter_sim": 0.4922,
+      "ratio": 1.3613
+    },
+    "gaming": {
+      "num_notes": 12,
+      "intra_sim": 0.6404,
+      "inter_sim": 0.3543,
+      "ratio": 1.8076
+    },
+    "input-remapping": {
+      "num_notes": 4,
+      "intra_sim": 0.7438,
+      "inter_sim": 0.3563,
+      "ratio": 2.0875
+    },
+    "makima": {
+      "num_notes": 4,
+      "intra_sim": 0.6725,
+      "inter_sim": 0.3473,
+      "ratio": 1.9366
+    },
+    "g604": {
+      "num_notes": 3,
+      "intra_sim": 0.7077,
+      "inter_sim": 0.3443,
+      "ratio": 2.0557
+    },
+    "znote-upgrade": {
+      "num_notes": 5,
+      "intra_sim": 0.8083,
+      "inter_sim": 0.5178,
+      "ratio": 1.5611
+    },
+    "extraction-consolidation": {
+      "num_notes": 4,
+      "intra_sim": 0.8139,
+      "inter_sim": 0.5314,
+      "ratio": 1.5317
+    },
+    "tool-consolidation": {
+      "num_notes": 4,
+      "intra_sim": 0.7774,
+      "inter_sim": 0.5491,
+      "ratio": 1.4157
+    },
+    "mock-theatre": {
+      "num_notes": 3,
+      "intra_sim": 0.8899,
+      "inter_sim": 0.5711,
+      "ratio": 1.5581
+    },
+    "consolidation": {
+      "num_notes": 3,
+      "intra_sim": 0.639,
+      "inter_sim": 0.5011,
+      "ratio": 1.2753
+    },
+    "post-remediation": {
+      "num_notes": 18,
+      "intra_sim": 0.8186,
+      "inter_sim": 0.5654,
+      "ratio": 1.4479
+    },
+    "code-simplifier": {
+      "num_notes": 3,
+      "intra_sim": 0.7715,
+      "inter_sim": 0.5572,
+      "ratio": 1.3846
+    },
+    "completeness-audit": {
+      "num_notes": 5,
+      "intra_sim": 0.6524,
+      "inter_sim": 0.516,
+      "ratio": 1.2642
+    },
+    "2026-02": {
+      "num_notes": 76,
+      "intra_sim": 0.7509,
+      "inter_sim": 0.5407,
+      "ratio": 1.3888
+    },
+    "full-codebase": {
+      "num_notes": 3,
+      "intra_sim": 0.9016,
+      "inter_sim": 0.5848,
+      "ratio": 1.5416
+    },
+    "complexity-reduction": {
+      "num_notes": 3,
+      "intra_sim": 0.8449,
+      "inter_sim": 0.5571,
+      "ratio": 1.5166
+    },
+    "synergy": {
+      "num_notes": 6,
+      "intra_sim": 0.7502,
+      "inter_sim": 0.5327,
+      "ratio": 1.4083
+    },
+    "claude-md": {
+      "num_notes": 8,
+      "intra_sim": 0.607,
+      "inter_sim": 0.4604,
+      "ratio": 1.3184
+    },
+    "project-context": {
+      "num_notes": 3,
+      "intra_sim": 0.4612,
+      "inter_sim": 0.4443,
+      "ratio": 1.0381
+    },
+    "phase": {
+      "num_notes": 10,
+      "intra_sim": 0.5851,
+      "inter_sim": 0.4841,
+      "ratio": 1.2088
+    },
+    "6-agent-review": {
+      "num_notes": 3,
+      "intra_sim": 0.8588,
+      "inter_sim": 0.5699,
+      "ratio": 1.5069
+    },
+    "api-reference": {
+      "num_notes": 3,
+      "intra_sim": 0.5148,
+      "inter_sim": 0.4532,
+      "ratio": 1.136
+    },
+    "nozzle": {
+      "num_notes": 4,
+      "intra_sim": 0.8757,
+      "inter_sim": 0.334,
+      "ratio": 2.622
+    },
+    "slicer-settings": {
+      "num_notes": 4,
+      "intra_sim": 0.8757,
+      "inter_sim": 0.334,
+      "ratio": 2.622
+    },
+    "microswiss": {
+      "num_notes": 3,
+      "intra_sim": 0.8649,
+      "inter_sim": 0.3296,
+      "ratio": 2.6237
+    },
+    "flowtech": {
+      "num_notes": 3,
+      "intra_sim": 0.8649,
+      "inter_sim": 0.3296,
+      "ratio": 2.6237
+    },
+    "0.8mm": {
+      "num_notes": 3,
+      "intra_sim": 0.8649,
+      "inter_sim": 0.3296,
+      "ratio": 2.6237
+    },
+    "k1c": {
+      "num_notes": 35,
+      "intra_sim": 0.5025,
+      "inter_sim": 0.2625,
+      "ratio": 1.9144
+    },
+    "gate": {
+      "num_notes": 25,
+      "intra_sim": 0.7202,
+      "inter_sim": 0.5289,
+      "ratio": 1.3617
+    },
+    "solidlsp": {
+      "num_notes": 10,
+      "intra_sim": 0.802,
+      "inter_sim": 0.5307,
+      "ratio": 1.5113
+    },
+    "vcv-rack": {
+      "num_notes": 30,
+      "intra_sim": 0.5642,
+      "inter_sim": 0.2565,
+      "ratio": 2.1994
+    },
+    "user-guide": {
+      "num_notes": 5,
+      "intra_sim": 0.6593,
+      "inter_sim": 0.2058,
+      "ratio": 3.2036
+    },
+    "polyphony": {
+      "num_notes": 3,
+      "intra_sim": 0.6289,
+      "inter_sim": 0.2771,
+      "ratio": 2.2698
+    },
+    "simd": {
+      "num_notes": 4,
+      "intra_sim": 0.6266,
+      "inter_sim": 0.2851,
+      "ratio": 2.1978
+    },
+    "dsp": {
+      "num_notes": 3,
+      "intra_sim": 0.6367,
+      "inter_sim": 0.3059,
+      "ratio": 2.0816
+    },
+    "community": {
+      "num_notes": 3,
+      "intra_sim": 0.3728,
+      "inter_sim": 0.3638,
+      "ratio": 1.0249
+    },
+    "flag-response": {
+      "num_notes": 6,
+      "intra_sim": 0.5889,
+      "inter_sim": 0.4952,
+      "ratio": 1.1891
+    },
+    "keyboards": {
+      "num_notes": 6,
+      "intra_sim": 0.8297,
+      "inter_sim": 0.3945,
+      "ratio": 2.1033
+    },
+    "accuracy": {
+      "num_notes": 3,
+      "intra_sim": 0.6861,
+      "inter_sim": 0.4568,
+      "ratio": 1.5018
+    },
+    "qa": {
+      "num_notes": 3,
+      "intra_sim": 0.6861,
+      "inter_sim": 0.4568,
+      "ratio": 1.5018
+    },
+    "latency": {
+      "num_notes": 9,
+      "intra_sim": 0.7353,
+      "inter_sim": 0.4019,
+      "ratio": 1.8293
+    },
+    "ble": {
+      "num_notes": 3,
+      "intra_sim": 0.85,
+      "inter_sim": 0.3603,
+      "ratio": 2.3592
+    },
+    "split-keyboard": {
+      "num_notes": 5,
+      "intra_sim": 0.8448,
+      "inter_sim": 0.3794,
+      "ratio": 2.2268
+    },
+    "PMW3610": {
+      "num_notes": 3,
+      "intra_sim": 0.8161,
+      "inter_sim": 0.4111,
+      "ratio": 1.9851
+    },
+    "fact-finding": {
+      "num_notes": 3,
+      "intra_sim": 0.6289,
+      "inter_sim": 0.4593,
+      "ratio": 1.3694
+    },
+    "firmware": {
+      "num_notes": 4,
+      "intra_sim": 0.5809,
+      "inter_sim": 0.2827,
+      "ratio": 2.0546
+    },
+    "production-readiness": {
+      "num_notes": 9,
+      "intra_sim": 0.828,
+      "inter_sim": 0.5742,
+      "ratio": 1.4421
+    },
+    "2026-02-08": {
+      "num_notes": 9,
+      "intra_sim": 0.828,
+      "inter_sim": 0.5742,
+      "ratio": 1.4421
+    },
+    "adoption-review": {
+      "num_notes": 5,
+      "intra_sim": 0.8203,
+      "inter_sim": 0.523,
+      "ratio": 1.5685
+    },
+    "sqlite-vec": {
+      "num_notes": 3,
+      "intra_sim": 0.7958,
+      "inter_sim": 0.5162,
+      "ratio": 1.5418
+    },
+    "fastembed": {
+      "num_notes": 6,
+      "intra_sim": 0.7675,
+      "inter_sim": 0.4887,
+      "ratio": 1.5704
+    },
+    "onnxruntime": {
+      "num_notes": 6,
+      "intra_sim": 0.7195,
+      "inter_sim": 0.4542,
+      "ratio": 1.5841
+    },
+    "onnx": {
+      "num_notes": 5,
+      "intra_sim": 0.7653,
+      "inter_sim": 0.4566,
+      "ratio": 1.6759
+    },
+    "modernbert": {
+      "num_notes": 3,
+      "intra_sim": 0.8107,
+      "inter_sim": 0.454,
+      "ratio": 1.7856
+    },
+    "embedding-models": {
+      "num_notes": 4,
+      "intra_sim": 0.8542,
+      "inter_sim": 0.4446,
+      "ratio": 1.9212
+    },
+    "mteb": {
+      "num_notes": 4,
+      "intra_sim": 0.8542,
+      "inter_sim": 0.4446,
+      "ratio": 1.9212
+    },
+    "ca75bac": {
+      "num_notes": 8,
+      "intra_sim": 0.8219,
+      "inter_sim": 0.5466,
+      "ratio": 1.5035
+    },
+    "permanent": {
+      "num_notes": 7,
+      "intra_sim": 0.6232,
+      "inter_sim": 0.5098,
+      "ratio": 1.2225
+    },
+    "komi-zone": {
+      "num_notes": 24,
+      "intra_sim": 0.6373,
+      "inter_sim": 0.492,
+      "ratio": 1.2954
+    },
+    "helldivers2": {
+      "num_notes": 4,
+      "intra_sim": 0.8799,
+      "inter_sim": 0.3813,
+      "ratio": 2.3074
+    },
+    "input": {
+      "num_notes": 4,
+      "intra_sim": 0.8799,
+      "inter_sim": 0.3813,
+      "ratio": 2.3074
+    },
+    "gameguard": {
+      "num_notes": 3,
+      "intra_sim": 0.8893,
+      "inter_sim": 0.3764,
+      "ratio": 2.3626
+    },
+    "proton": {
+      "num_notes": 3,
+      "intra_sim": 0.8769,
+      "inter_sim": 0.3877,
+      "ratio": 2.2618
+    },
+    "systematic": {
+      "num_notes": 3,
+      "intra_sim": 0.457,
+      "inter_sim": 0.4183,
+      "ratio": 1.0924
+    },
+    "6-phase-remediation": {
+      "num_notes": 7,
+      "intra_sim": 0.815,
+      "inter_sim": 0.5524,
+      "ratio": 1.4753
+    },
+    "boilerplate": {
+      "num_notes": 4,
+      "intra_sim": 0.8513,
+      "inter_sim": 0.523,
+      "ratio": 1.6277
+    },
+    "response": {
+      "num_notes": 9,
+      "intra_sim": 0.6828,
+      "inter_sim": 0.4879,
+      "ratio": 1.3994
+    },
+    "karpathy": {
+      "num_notes": 21,
+      "intra_sim": 0.7994,
+      "inter_sim": 0.5181,
+      "ratio": 1.5429
+    },
+    "llm-coding": {
+      "num_notes": 3,
+      "intra_sim": 0.82,
+      "inter_sim": 0.5024,
+      "ratio": 1.6321
+    },
+    "reflect-integration": {
+      "num_notes": 3,
+      "intra_sim": 0.8766,
+      "inter_sim": 0.5221,
+      "ratio": 1.6789
+    },
+    "gpu": {
+      "num_notes": 9,
+      "intra_sim": 0.7859,
+      "inter_sim": 0.481,
+      "ratio": 1.6338
+    },
+    "chunking": {
+      "num_notes": 9,
+      "intra_sim": 0.7855,
+      "inter_sim": 0.4941,
+      "ratio": 1.5896
+    },
+    "cuda": {
+      "num_notes": 4,
+      "intra_sim": 0.7878,
+      "inter_sim": 0.4621,
+      "ratio": 1.7048
+    },
+    "phase-record": {
+      "num_notes": 3,
+      "intra_sim": 0.4458,
+      "inter_sim": 0.4146,
+      "ratio": 1.0754
+    },
+    "steward": {
+      "num_notes": 34,
+      "intra_sim": 0.674,
+      "inter_sim": 0.3759,
+      "ratio": 1.7932
+    },
+    "maintenance": {
+      "num_notes": 36,
+      "intra_sim": 0.6636,
+      "inter_sim": 0.3785,
+      "ratio": 1.7532
+    },
+    "fleeting": {
+      "num_notes": 8,
+      "intra_sim": 0.7204,
+      "inter_sim": 0.3907,
+      "ratio": 1.8438
+    },
+    "dotfiles": {
+      "num_notes": 9,
+      "intra_sim": 0.5907,
+      "inter_sim": 0.4016,
+      "ratio": 1.4707
+    },
+    "zsh-plugins": {
+      "num_notes": 5,
+      "intra_sim": 0.8202,
+      "inter_sim": 0.4515,
+      "ratio": 1.8166
+    },
+    "theming": {
+      "num_notes": 7,
+      "intra_sim": 0.7759,
+      "inter_sim": 0.4531,
+      "ratio": 1.7124
+    },
+    "sigusr2": {
+      "num_notes": 3,
+      "intra_sim": 0.8314,
+      "inter_sim": 0.4495,
+      "ratio": 1.8497
+    },
+    "variety-variation": {
+      "num_notes": 6,
+      "intra_sim": 0.7594,
+      "inter_sim": 0.4593,
+      "ratio": 1.6533
+    },
+    "reload-pipeline": {
+      "num_notes": 4,
+      "intra_sim": 0.7976,
+      "inter_sim": 0.4815,
+      "ratio": 1.6567
+    },
+    "data-safety": {
+      "num_notes": 6,
+      "intra_sim": 0.7686,
+      "inter_sim": 0.5038,
+      "ratio": 1.5257
+    },
+    "test": {
+      "num_notes": 4,
+      "intra_sim": 0.7725,
+      "inter_sim": 0.2326,
+      "ratio": 3.3212
+    },
+    "sunshine": {
+      "num_notes": 4,
+      "intra_sim": 0.8494,
+      "inter_sim": 0.3394,
+      "ratio": 2.5028
+    },
+    "moonlight": {
+      "num_notes": 4,
+      "intra_sim": 0.8494,
+      "inter_sim": 0.3394,
+      "ratio": 2.5028
+    },
+    "ipad": {
+      "num_notes": 3,
+      "intra_sim": 0.889,
+      "inter_sim": 0.3605,
+      "ratio": 2.4658
+    },
+    "linux-troubleshooting": {
+      "num_notes": 4,
+      "intra_sim": 0.8665,
+      "inter_sim": 0.3385,
+      "ratio": 2.5595
+    },
+    "faillock": {
+      "num_notes": 3,
+      "intra_sim": 0.9011,
+      "inter_sim": 0.3433,
+      "ratio": 2.6249
+    },
+    "reindex": {
+      "num_notes": 3,
+      "intra_sim": 0.7349,
+      "inter_sim": 0.4337,
+      "ratio": 1.6946
+    },
+    "workflow-checkpoint": {
+      "num_notes": 4,
+      "intra_sim": 0.8192,
+      "inter_sim": 0.4955,
+      "ratio": 1.6533
+    },
+    "klipper": {
+      "num_notes": 12,
+      "intra_sim": 0.5127,
+      "inter_sim": 0.2882,
+      "ratio": 1.7789
+    },
+    "manta-m5p": {
+      "num_notes": 3,
+      "intra_sim": 0.7254,
+      "inter_sim": 0.2503,
+      "ratio": 2.8978
+    },
+    "ebb42": {
+      "num_notes": 3,
+      "intra_sim": 0.6592,
+      "inter_sim": 0.2517,
+      "ratio": 2.6195
+    },
+    "can-bus": {
+      "num_notes": 4,
+      "intra_sim": 0.6508,
+      "inter_sim": 0.2389,
+      "ratio": 2.7241
+    },
+    "tmc5160": {
+      "num_notes": 4,
+      "intra_sim": 0.7108,
+      "inter_sim": 0.2835,
+      "ratio": 2.5069
+    },
+    "wiring": {
+      "num_notes": 3,
+      "intra_sim": 0.638,
+      "inter_sim": 0.2312,
+      "ratio": 2.7596
+    }
+  }
+}

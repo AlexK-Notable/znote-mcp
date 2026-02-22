@@ -1,0 +1,31 @@
+{
+  "config_key": "nomic-v1.5-fp32",
+  "model_id": "nomic-ai/nomic-embed-text-v1.5",
+  "onnx_filename": "onnx/model.onnx",
+  "dim": 768,
+  "max_tokens": 2048,
+  "chunk_size": 2048,
+  "output_mode": "cls",
+  "device": "gpu",
+  "status": "ok",
+  "load_time_s": 0.82,
+  "rss_before_load_mb": 477.6,
+  "rss_after_load_mb": 932.3,
+  "rss_model_delta_mb": 454.6,
+  "actual_dim": 768,
+  "gpu_before_load_mb": 4527.0,
+  "gpu_after_load_mb": 5131.0,
+  "gpu_model_delta_mb": 604.0,
+  "total_notes": 961,
+  "total_chunks": 1951,
+  "embed_time_s": 121.01,
+  "notes_per_sec": 7.9,
+  "chunks_per_sec": 16.1,
+  "peak_rss_mb": 1623.4,
+  "gpu_peak_mb": 7241.0,
+  "chunks_per_note": {
+    "min": 1,
+    "max": 8,
+    "avg": 2.03
+  }
+}

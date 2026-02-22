@@ -1,0 +1,22 @@
+{
+  "timestamp": "2026-02-20T22:54:59.796369+00:00",
+  "python_version": "3.11.14",
+  "platform": "Linux-6.19.3-2-cachyos-x86_64-with-glibc2.43",
+  "cpu": "unknown",
+  "onnxruntime_version": "1.25.0.dev20260219001",
+  "ort_available_providers": [
+    "TensorrtExecutionProvider",
+    "CUDAExecutionProvider",
+    "CPUExecutionProvider"
+  ],
+  "device": "cpu",
+  "cpu_count": 28,
+  "ram_total_gb": 31.1,
+  "notes_dir": "/home/komi/.zettelkasten/notes",
+  "output_dir": "benchmarks/matrix-cpu",
+  "memory_budget_gb": 12.0,
+  "num_configs": 1,
+  "config_keys": [
+    "embeddinggemma-fp32"
+  ]
+}

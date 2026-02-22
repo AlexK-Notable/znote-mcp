@@ -1,0 +1,28 @@
+{
+  "config_key": "arctic-l-c2048-fp32",
+  "timestamp": "2026-02-20T18:33:19.515265+00:00",
+  "model_id": "Snowflake/snowflake-arctic-embed-l-v2.0",
+  "onnx_filename": "onnx/model.onnx",
+  "dim": 1024,
+  "max_tokens": 8192,
+  "chunk_size": 2048,
+  "output_mode": "cls",
+  "device": "cpu",
+  "status": "ok",
+  "load_time_s": 1.29,
+  "rss_before_load_mb": 1783.2,
+  "rss_after_load_mb": 2417.9,
+  "rss_model_delta_mb": 634.7,
+  "actual_dim": 1024,
+  "total_notes": 961,
+  "total_chunks": 1951,
+  "embed_time_s": 3182.45,
+  "notes_per_sec": 0.3,
+  "chunks_per_sec": 0.6,
+  "peak_rss_mb": 14431.3,
+  "chunks_per_note": {
+    "min": 1,
+    "max": 8,
+    "avg": 2.03
+  }
+}

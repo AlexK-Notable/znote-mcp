@@ -1,0 +1,26 @@
+{
+  "timestamp": "2026-02-20T23:16:00.919822+00:00",
+  "python_version": "3.11.14",
+  "platform": "Linux-6.19.3-2-cachyos-x86_64-with-glibc2.43",
+  "cpu": "unknown",
+  "onnxruntime_version": "1.25.0.dev20260219001",
+  "ort_available_providers": [
+    "TensorrtExecutionProvider",
+    "CUDAExecutionProvider",
+    "CPUExecutionProvider"
+  ],
+  "device": "gpu",
+  "cpu_count": 28,
+  "ram_total_gb": 31.1,
+  "gpu_name": "NVIDIA GeForce RTX 4070 Ti SUPER",
+  "gpu_vram_mb": 16376,
+  "gpu_driver": "590.48.01",
+  "gpu_compute_cap": "8.9",
+  "notes_dir": "/home/komi/.zettelkasten/notes",
+  "output_dir": "benchmarks/matrix-gpu",
+  "memory_budget_gb": 12.0,
+  "num_configs": 1,
+  "config_keys": [
+    "embeddinggemma-fp32"
+  ]
+}

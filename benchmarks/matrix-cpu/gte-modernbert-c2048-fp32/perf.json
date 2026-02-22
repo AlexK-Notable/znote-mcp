@@ -1,0 +1,28 @@
+{
+  "config_key": "gte-modernbert-c2048-fp32",
+  "timestamp": "2026-02-20T16:22:07.231239+00:00",
+  "model_id": "Alibaba-NLP/gte-modernbert-base",
+  "onnx_filename": "onnx/model.onnx",
+  "dim": 768,
+  "max_tokens": 8192,
+  "chunk_size": 2048,
+  "output_mode": "cls",
+  "device": "cpu",
+  "status": "ok",
+  "load_time_s": 0.69,
+  "rss_before_load_mb": 1146.7,
+  "rss_after_load_mb": 1817.0,
+  "rss_model_delta_mb": 670.3,
+  "actual_dim": 768,
+  "total_notes": 961,
+  "total_chunks": 1951,
+  "embed_time_s": 1432.06,
+  "notes_per_sec": 0.7,
+  "chunks_per_sec": 1.4,
+  "peak_rss_mb": 13018.6,
+  "chunks_per_note": {
+    "min": 1,
+    "max": 8,
+    "avg": 2.03
+  }
+}

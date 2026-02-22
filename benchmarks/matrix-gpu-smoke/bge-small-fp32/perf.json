@@ -1,0 +1,31 @@
+{
+  "config_key": "bge-small-fp32",
+  "model_id": "BAAI/bge-small-en-v1.5",
+  "onnx_filename": "onnx/model.onnx",
+  "dim": 384,
+  "max_tokens": 512,
+  "chunk_size": 512,
+  "output_mode": "cls",
+  "device": "gpu",
+  "status": "ok",
+  "load_time_s": 0.51,
+  "rss_before_load_mb": 477.8,
+  "rss_after_load_mb": 597.0,
+  "rss_model_delta_mb": 119.2,
+  "actual_dim": 384,
+  "gpu_before_load_mb": 3675.0,
+  "gpu_after_load_mb": 3859.0,
+  "gpu_model_delta_mb": 184.0,
+  "total_notes": 961,
+  "total_chunks": 8108,
+  "embed_time_s": 35.05,
+  "notes_per_sec": 27.4,
+  "chunks_per_sec": 231.3,
+  "peak_rss_mb": 1635.6,
+  "gpu_peak_mb": 5997.0,
+  "chunks_per_note": {
+    "min": 1,
+    "max": 42,
+    "avg": 8.44
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "config_key": "mxbai-large-fp32",
+  "timestamp": "2026-02-20T20:48:32.516251+00:00",
+  "model_id": "mixedbread-ai/mxbai-embed-large-v1",
+  "onnx_filename": "onnx/model.onnx",
+  "dim": 1024,
+  "max_tokens": 512,
+  "chunk_size": 512,
+  "output_mode": "cls",
+  "device": "cpu",
+  "status": "ok",
+  "load_time_s": 1.32,
+  "rss_before_load_mb": 2461.6,
+  "rss_after_load_mb": 2653.3,
+  "rss_model_delta_mb": 191.7,
+  "actual_dim": 1024,
+  "total_notes": 961,
+  "total_chunks": 8108,
+  "embed_time_s": 2395.09,
+  "notes_per_sec": 0.4,
+  "chunks_per_sec": 3.4,
+  "peak_rss_mb": 14431.3,
+  "chunks_per_note": {
+    "min": 1,
+    "max": 42,
+    "avg": 8.44
+  }
+}

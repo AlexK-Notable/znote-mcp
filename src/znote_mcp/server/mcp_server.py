@@ -1274,7 +1274,26 @@ class ZettelkastenMcpServer:
                             output += f"**Hardware:** {hw_tuning.device_label}\n"
                             output += f"**Model:** {config.embedding_model}\n"
                             output += f"**Dimension:** {config.embedding_dim}\n"
-                            output += f"**Providers:** {config.onnx_providers}\n"
+                            # Show actual active ONNX providers (not just config preference)
+                            output += f"**Providers (config):** {config.onnx_providers}\n"
+                            embedding_svc = self.zettel_service.embedding_service
+                            if embedding_svc is not None:
+                                pinfo = embedding_svc.get_provider_info()
+                                if pinfo["embedder_loaded"]:
+                                    ep = pinfo["embedder_providers"]
+                                    output += f"**Providers (active):** {', '.join(ep)}\n"
+                                    is_gpu = any("CUDA" in p for p in ep)
+                                    output += f"**Execution:** {'GPU (CUDA)' if is_gpu else 'CPU'}\n"
+                                    # Warn if GPU was expected but we're on CPU
+                                    if not is_gpu and config.onnx_providers in ("auto", "CUDAExecutionProvider"):
+                                        output += (
+                                            "**WARNING:** CUDA was requested but fell back to CPU. "
+                                            "Check CUDA runtime libraries (cuDNN, cuBLAS).\n"
+                                        )
+                                else:
+                                    output += "**Providers (active):** embedder not yet loaded\n"
+                            else:
+                                output += "**Providers (active):** embedding service not initialized\n"
                             repo = self.zettel_service.repository
                             chunk_count = repo.count_embeddings()
                             note_count = repo.count_embedded_notes()
@@ -1478,9 +1497,35 @@ class ZettelkastenMcpServer:
                                     f"zk_system(action='reindex_embeddings', force=True)"
                                 )
                         try:
+                            # Report providers BEFORE reindex starts
+                            embedding_svc = self.zettel_service.embedding_service
+                            provider_line = ""
+                            if embedding_svc is not None:
+                                # Force embedder load so we can report providers
+                                embedding_svc._ensure_embedder()
+                                pinfo = embedding_svc.get_provider_info()
+                                ep = pinfo["embedder_providers"]
+                                is_gpu = any("CUDA" in p for p in ep)
+                                provider_line = (
+                                    f"Providers: {', '.join(ep)}\n"
+                                    f"Execution: {'GPU (CUDA)' if is_gpu else 'CPU'}\n"
+                                )
+                                # Abort if GPU expected but fell back to CPU
+                                if not is_gpu and config.onnx_providers in ("auto", "CUDAExecutionProvider"):
+                                    return (
+                                        f"REINDEX ABORTED: CUDA was requested but ONNX Runtime "
+                                        f"fell back to CPU.\n"
+                                        f"Active providers: {', '.join(ep)}\n\n"
+                                        f"Running a GPU-tier reindex on CPU would consume "
+                                        f"excessive memory and CPU. Fix the CUDA setup first, "
+                                        f"or set ZETTELKASTEN_ONNX_PROVIDERS=cpu to explicitly "
+                                        f"use CPU with appropriate resource limits."
+                                    )
+
                             stats = self.zettel_service.reindex_embeddings()
                             return (
                                 f"Embedding reindex complete.\n"
+                                f"{provider_line}"
                                 f"Total notes: {stats['total']}\n"
                                 f"Embedded: {stats['embedded']}\n"
                                 f"Skipped: {stats['skipped']}\n"

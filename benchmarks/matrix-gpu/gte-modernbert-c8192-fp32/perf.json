@@ -1,0 +1,32 @@
+{
+  "config_key": "gte-modernbert-c8192-fp32",
+  "timestamp": "2026-02-20T21:50:43.282868+00:00",
+  "model_id": "Alibaba-NLP/gte-modernbert-base",
+  "onnx_filename": "onnx/model.onnx",
+  "dim": 768,
+  "max_tokens": 8192,
+  "chunk_size": 8192,
+  "output_mode": "cls",
+  "device": "gpu",
+  "status": "ok",
+  "load_time_s": 0.81,
+  "rss_before_load_mb": 464.5,
+  "rss_after_load_mb": 866.1,
+  "rss_model_delta_mb": 401.6,
+  "actual_dim": 768,
+  "gpu_before_load_mb": 2135.0,
+  "gpu_after_load_mb": 2821.0,
+  "gpu_model_delta_mb": 686.0,
+  "total_notes": 961,
+  "total_chunks": 1008,
+  "embed_time_s": 212.64,
+  "notes_per_sec": 4.5,
+  "chunks_per_sec": 4.7,
+  "peak_rss_mb": 1706.8,
+  "gpu_peak_mb": 11239.0,
+  "chunks_per_note": {
+    "min": 1,
+    "max": 2,
+    "avg": 1.05
+  }
+}
