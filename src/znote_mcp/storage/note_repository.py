@@ -949,7 +949,7 @@ class NoteRepository(Repository[Note]):
             return
 
         # Get ID suffix used in filename
-        id_suffix = note_id[-8:] if len(note_id) >= 8 else note_id
+        id_suffix = note_id[-12:] if len(note_id) >= 12 else note_id
 
         # Determine which directories to search
         search_dirs: List[Path] = []

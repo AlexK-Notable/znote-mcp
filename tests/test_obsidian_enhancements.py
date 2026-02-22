@@ -128,14 +128,14 @@ class TestDatePrefixFilenames:
         result = ObsidianMirror.build_filename(
             "My Test Note", "20260208T120000000000000000", created
         )
-        assert result == "2026-02-08_My-Test-Note_00000000"
+        assert result == "2026-02-08_My-Test-Note_000000000000"
 
     def test_filename_without_date(self):
         """When created_at is None, no date prefix."""
         result = ObsidianMirror.build_filename(
             "My Test Note", "20260208T120000000000000000", None
         )
-        assert result == "My-Test-Note_00000000"
+        assert result == "My-Test-Note_000000000000"
 
     def test_filename_with_special_chars(self):
         created = datetime.datetime(2026, 1, 15, tzinfo=timezone.utc)
@@ -143,7 +143,7 @@ class TestDatePrefixFilenames:
             "Architecture Plan: API Design", "20260115T000000000000000000", created
         )
         assert result.startswith("2026-01-15_Architecture-Plan")
-        assert result.endswith("_00000000")
+        assert result.endswith("_000000000000")
 
     def test_filename_empty_title(self):
         created = datetime.datetime(2026, 3, 1, tzinfo=timezone.utc)

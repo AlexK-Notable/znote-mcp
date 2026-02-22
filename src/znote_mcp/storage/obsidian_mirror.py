@@ -154,7 +154,7 @@ class ObsidianMirror:
         Format: ``YYYY-MM-DD_Sanitized-Title_id_suffix``
         """
         safe_title = sanitize_for_terminal(title)
-        id_suffix = note_id[-8:] if len(note_id) >= 8 else note_id
+        id_suffix = note_id[-12:] if len(note_id) >= 12 else note_id
 
         date_prefix = ""
         if created_at:

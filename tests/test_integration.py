@@ -401,7 +401,7 @@ class TestIntegration:
                 # Format: project/purpose/YYYY-MM-DD_Title-Name_id_suffix.md
                 # Purpose defaults to "general" for notes created without explicit purpose
                 purpose_dir = obsidian_path / "test-project" / "general"
-                id_suffix = note.id[-8:]
+                id_suffix = note.id[-12:]
                 # Glob with wildcard for the date prefix (e.g. "2026-02-10_")
                 matching_files = list(
                     purpose_dir.glob(f"*Obsidian-Test-Note_{id_suffix}.md")
@@ -426,7 +426,7 @@ class TestIntegration:
 
                 # Verify second note mirrored with ID suffix (in purpose subdir)
                 purpose_dir2 = obsidian_path / "another-project" / "general"
-                id_suffix2 = note2.id[-8:]
+                id_suffix2 = note2.id[-12:]
                 matching_files2 = list(
                     purpose_dir2.glob(f"*Second-Obsidian-Note_{id_suffix2}.md")
                 )
@@ -470,8 +470,8 @@ class TestIntegration:
                 purpose_dir = obsidian_path / "collision-test" / "general"
 
                 # Find files for each note by their ID suffix (new format: *_id_suffix.md)
-                id_suffix1 = note1.id[-8:]
-                id_suffix2 = note2.id[-8:]
+                id_suffix1 = note1.id[-12:]
+                id_suffix2 = note2.id[-12:]
 
                 files1 = list(purpose_dir.glob(f"*_{id_suffix1}.md"))
                 files2 = list(purpose_dir.glob(f"*_{id_suffix2}.md"))
@@ -544,7 +544,7 @@ class TestIntegration:
 
                 # Find the source note's Obsidian file
                 purpose_dir = obsidian_path / "link-test" / "general"
-                source_suffix = source_note.id[-8:]
+                source_suffix = source_note.id[-12:]
                 source_files = list(purpose_dir.glob(f"*_{source_suffix}.md"))
                 assert (
                     len(source_files) == 1
@@ -561,7 +561,7 @@ class TestIntegration:
 
                 # The link SHOULD contain the target's title-based format
                 # with date prefix from _build_obsidian_filename
-                target_suffix = target_note.id[-8:]
+                target_suffix = target_note.id[-12:]
                 date_prefix = target_note.created_at.strftime("%Y-%m-%d") + "_"
                 expected_link = (
                     f"[[{date_prefix}Target-Important-Note_{target_suffix}]]"
