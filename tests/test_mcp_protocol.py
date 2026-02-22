@@ -17,15 +17,15 @@ import pytest
 from mcp.types import TextContent
 
 # Import fixtures from conftest_protocol (same pattern as test_e2e.py)
-from tests.conftest_protocol import (
+from tests.conftest_protocol import mcp_client  # noqa: F401 — fixture used by pytest
+from tests.conftest_protocol import mcp_server  # noqa: F401 — fixture used by pytest
+from tests.conftest_protocol import (  # noqa: F401 — fixture used by pytest
     extract_note_id_from_protocol,
     get_text,
-    mcp_client,  # noqa: F401 — fixture used by pytest
-    mcp_server,  # noqa: F401 — fixture used by pytest
-    protocol_config,  # noqa: F401 — fixture used by pytest
-    semantic_mcp_client,  # noqa: F401 — fixture used by pytest
-    semantic_mcp_server,  # noqa: F401 — fixture used by pytest
-    semantic_protocol_config,  # noqa: F401 — fixture used by pytest
+    protocol_config,
+    semantic_mcp_client,
+    semantic_mcp_server,
+    semantic_protocol_config,
 )
 
 # All 22 tools that should be registered on the server
@@ -84,9 +84,7 @@ class TestMCPProtocolConnection:
     async def test_tool_schemas_have_required_fields(self, mcp_client):
         """zk_create_note schema declares title and content as required."""
         tools_result = await mcp_client.list_tools()
-        create_tool = next(
-            t for t in tools_result.tools if t.name == "zk_create_note"
-        )
+        create_tool = next(t for t in tools_result.tools if t.name == "zk_create_note")
         schema = create_tool.inputSchema
         required = schema.get("required", [])
         assert "title" in required, "title should be required"
@@ -133,9 +131,7 @@ class TestMCPProtocolCRUD:
         )
         note_id = extract_note_id_from_protocol(create_result)
 
-        get_result = await mcp_client.call_tool(
-            "zk_get_note", {"identifier": note_id}
-        )
+        get_result = await mcp_client.call_tool("zk_get_note", {"identifier": note_id})
         text = get_text(get_result)
 
         assert "Round Trip Note" in text
@@ -170,9 +166,7 @@ class TestMCPProtocolCRUD:
         assert "successfully" in update_text.lower()
 
         # Verify
-        get_result = await mcp_client.call_tool(
-            "zk_get_note", {"identifier": note_id}
-        )
+        get_result = await mcp_client.call_tool("zk_get_note", {"identifier": note_id})
         text = get_text(get_result)
         assert "Updated Title" in text
         assert "Updated content after protocol call" in text
@@ -199,9 +193,7 @@ class TestMCPProtocolCRUD:
         assert "deleted" in delete_text.lower() or "successfully" in delete_text.lower()
 
         # Verify gone
-        get_result = await mcp_client.call_tool(
-            "zk_get_note", {"identifier": note_id}
-        )
+        get_result = await mcp_client.call_tool("zk_get_note", {"identifier": note_id})
         text = get_text(get_result)
         assert "not found" in text.lower()
 
@@ -439,9 +431,7 @@ class TestMCPProtocolBatch:
         assert "ephemeral-tag" in add_text
 
         # Verify tag is present
-        get_result = await mcp_client.call_tool(
-            "zk_get_note", {"identifier": note_id}
-        )
+        get_result = await mcp_client.call_tool("zk_get_note", {"identifier": note_id})
         assert "ephemeral-tag" in get_text(get_result)
 
         # Remove tag
@@ -452,9 +442,7 @@ class TestMCPProtocolBatch:
         assert "ephemeral-tag" in remove_text
 
         # Verify tag is gone
-        get_result2 = await mcp_client.call_tool(
-            "zk_get_note", {"identifier": note_id}
-        )
+        get_result2 = await mcp_client.call_tool("zk_get_note", {"identifier": note_id})
         get_text2 = get_text(get_result2)
         # After removal, the tag should not appear in the tags line
         # (it may still appear in title/content, so check the Tags: line specifically)
@@ -486,9 +474,7 @@ class TestMCPProtocolAdmin:
             },
         )
 
-        result = await mcp_client.call_tool(
-            "zk_status", {"sections": "all"}
-        )
+        result = await mcp_client.call_tool("zk_status", {"sections": "all"})
         text = get_text(result)
         assert "Zettelkasten Status" in text
         assert "Summary" in text or "Total Notes" in text
@@ -506,9 +492,7 @@ class TestMCPProtocolAdmin:
             },
         )
 
-        result = await mcp_client.call_tool(
-            "zk_system", {"action": "rebuild"}
-        )
+        result = await mcp_client.call_tool("zk_system", {"action": "rebuild"})
         text = get_text(result)
         assert "rebuilt" in text.lower() or "successfully" in text.lower()
 
@@ -599,9 +583,7 @@ class TestMCPProtocolErrorHandling:
     @pytest.mark.anyio
     async def test_call_unknown_tool(self, mcp_client):
         """Calling a nonexistent tool returns an error result (isError=True)."""
-        result = await mcp_client.call_tool(
-            "zk_nonexistent_tool", {"arg": "value"}
-        )
+        result = await mcp_client.call_tool("zk_nonexistent_tool", {"arg": "value"})
         assert result.isError
         text = get_text(result)
         assert "unknown" in text.lower() or "not found" in text.lower()

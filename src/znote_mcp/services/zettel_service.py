@@ -143,9 +143,7 @@ class ZettelService:
         if repository is not None:
             self.repository = repository
         elif engine is not None:
-            self.repository = NoteRepository(
-                engine=engine, use_git=config.git_enabled
-            )
+            self.repository = NoteRepository(engine=engine, use_git=config.git_enabled)
         else:
             self.repository = NoteRepository(use_git=config.git_enabled)
         self._embedding_service = embedding_service
@@ -308,9 +306,7 @@ class ZettelService:
         # Clear existing embeddings
         cleared = self.repository.clear_all_embeddings()
         rss_now = _get_rss_mb()
-        logger.info(
-            f"Cleared {cleared} existing embeddings, RSS: {rss_now:.0f}MB"
-        )
+        logger.info(f"Cleared {cleared} existing embeddings, RSS: {rss_now:.0f}MB")
 
         # Get all notes
         all_notes = self.repository.get_all()
@@ -338,9 +334,7 @@ class ZettelService:
             else:
                 long_notes.append((note, chunks))
 
-        total_chunks_expected = len(short_notes) + sum(
-            len(ch) for _, ch in long_notes
-        )
+        total_chunks_expected = len(short_notes) + sum(len(ch) for _, ch in long_notes)
         logger.info(
             f"Reindex: {stats['total']} notes total — "
             f"{len(short_notes)} short (single vector), "
@@ -351,9 +345,7 @@ class ZettelService:
         # Batch embed short notes — use adaptive batching if available
         if short_texts:
             try:
-                use_adaptive = hasattr(
-                    self._embedding_service, "embed_batch_adaptive"
-                )
+                use_adaptive = hasattr(self._embedding_service, "embed_batch_adaptive")
                 if use_adaptive:
                     budget = config.embedding_memory_budget_gb
                     logger.info(
@@ -431,14 +423,10 @@ class ZettelService:
                 vec_cursor = 0
                 for note_idx, (note, chunks) in enumerate(long_notes):
                     try:
-                        content_hash = self._content_hash(
-                            note.title, note.content
-                        )
+                        content_hash = self._content_hash(note.title, note.content)
                         chunk_data = []
                         for chunk in chunks:
-                            chunk_data.append(
-                                (chunk.index, all_vectors[vec_cursor])
-                            )
+                            chunk_data.append((chunk.index, all_vectors[vec_cursor]))
                             vec_cursor += 1
 
                         self.repository.store_chunk_embeddings(
@@ -451,8 +439,7 @@ class ZettelService:
                         stats["chunks"] += len(chunks)
                     except Exception as e:
                         logger.warning(
-                            f"Failed to store embeddings for note "
-                            f"{note.id}: {e}"
+                            f"Failed to store embeddings for note " f"{note.id}: {e}"
                         )
                         stats["failed"] += 1
                         vec_cursor += len(chunks)  # skip vectors
@@ -466,9 +453,7 @@ class ZettelService:
                     f"chunks/sec), RSS: {rss_now:.0f}MB"
                 )
             except Exception as e:
-                logger.error(
-                    f"Adaptive batch embedding failed for chunked notes: {e}"
-                )
+                logger.error(f"Adaptive batch embedding failed for chunked notes: {e}")
                 stats["failed"] += len(long_notes)
 
         total_elapsed = _time.perf_counter() - t0_reindex
@@ -1349,7 +1334,9 @@ class ZettelService:
         if plan_id is not None:
             note.plan_id = plan_id if plan_id else None  # Empty string clears
         if obsidian_path is not None:
-            note.obsidian_path = obsidian_path if obsidian_path else None  # Empty string clears
+            note.obsidian_path = (
+                obsidian_path if obsidian_path else None
+            )  # Empty string clears
         if metadata is not None:
             note.metadata = metadata
 

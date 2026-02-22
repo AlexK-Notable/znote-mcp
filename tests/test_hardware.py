@@ -306,10 +306,14 @@ class TestDetectHardware:
 
     def test_detect_hardware_nvidia_parse_success(self):
         """Successful nvidia-smi output is parsed correctly."""
-        mock_result = type("Result", (), {
-            "returncode": 0,
-            "stdout": "NVIDIA GeForce RTX 4090, 24564\n",
-        })()
+        mock_result = type(
+            "Result",
+            (),
+            {
+                "returncode": 0,
+                "stdout": "NVIDIA GeForce RTX 4090, 24564\n",
+            },
+        )()
         with patch("znote_mcp.hardware.subprocess.run", return_value=mock_result):
             profile = detect_hardware()
         assert profile.gpu_name == "NVIDIA GeForce RTX 4090"

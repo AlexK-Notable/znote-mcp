@@ -69,6 +69,7 @@ def _cpu_time() -> float:
     t = os.times()
     return t.user + t.system
 
+
 # Lazy imports — these are optional dependencies
 # These are populated by _ensure_imports()
 _ort = None
@@ -231,7 +232,9 @@ class OnnxEmbeddingProvider:
         extra_files: Optional[List[str]] = None,
     ) -> None:
         if output_mode not in ("cls", "direct"):
-            raise ValueError(f"output_mode must be 'cls' or 'direct', got {output_mode!r}")
+            raise ValueError(
+                f"output_mode must be 'cls' or 'direct', got {output_mode!r}"
+            )
         self._model_id = model_id
         self._onnx_filename = onnx_filename
         self._max_length = max_length
@@ -263,7 +266,9 @@ class OnnxEmbeddingProvider:
 
         # Download model files
         download_patterns = [
-            self._onnx_filename, "tokenizer.json", "tokenizer_config.json",
+            self._onnx_filename,
+            "tokenizer.json",
+            "tokenizer_config.json",
         ] + self._extra_files
         model_dir = _download_model_files(
             self._model_id,
@@ -583,10 +588,7 @@ class OnnxEmbeddingProvider:
             # find largest j where indexed[j][1] ≤ min_len × _PAD_RATIO
             max_allowed = max(int(min_len * _PAD_RATIO), min_len + 1)
             ratio_limit = i
-            while (
-                ratio_limit + 1 < n
-                and indexed[ratio_limit + 1][1] <= max_allowed
-            ):
+            while ratio_limit + 1 < n and indexed[ratio_limit + 1][1] <= max_allowed:
                 ratio_limit += 1
 
             # Binary search within [i, min(ratio_limit, i+MAX_BATCH-1)]
@@ -606,8 +608,7 @@ class OnnxEmbeddingProvider:
             max_len = indexed[j][1]
             batch_indices = [indexed[k][0] for k in range(i, j + 1)]
             batch_texts = [texts[idx] for idx in batch_indices]
-            planned_batches.append((batch_indices, batch_texts, max_len,
-                                     indexed[i][1]))
+            planned_batches.append((batch_indices, batch_texts, max_len, indexed[i][1]))
             i = j + 1
 
         # Phase 2: Execute batches longest-first (reduces GPU arena
@@ -744,7 +745,9 @@ class OnnxRerankerProvider:
         )
 
         download_patterns = [
-            self._onnx_filename, "tokenizer.json", "tokenizer_config.json",
+            self._onnx_filename,
+            "tokenizer.json",
+            "tokenizer_config.json",
         ] + self._extra_files
         model_dir = _download_model_files(
             self._model_id,

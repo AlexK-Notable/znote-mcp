@@ -138,9 +138,7 @@ class ZettelkastenConfig(BaseModel):
         )
     )
     embedding_batch_size: int = Field(
-        default_factory=lambda: int(
-            os.getenv("ZETTELKASTEN_EMBEDDING_BATCH_SIZE", "8")
-        )
+        default_factory=lambda: int(os.getenv("ZETTELKASTEN_EMBEDDING_BATCH_SIZE", "8"))
     )
     embedding_model_cache_dir: Optional[Path] = Field(
         default_factory=lambda: (

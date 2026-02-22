@@ -25,7 +25,6 @@ from znote_mcp.services.text_chunker import TextChunker
 from znote_mcp.services.zettel_service import ZettelService
 from znote_mcp.storage.note_repository import NoteRepository
 
-
 # =============================================================================
 # Fixtures and Helpers
 # =============================================================================
@@ -79,9 +78,12 @@ def _long_content(sentences: int = 20) -> str:
     With chunk_size=50 tokens (~200 chars), 20 sentences of ~40 chars each
     produces ~800 chars (~200 tokens), yielding multiple chunks.
     """
-    return ". ".join(
-        f"This is sentence number {i} about topic {i % 5}" for i in range(sentences)
-    ) + "."
+    return (
+        ". ".join(
+            f"This is sentence number {i} about topic {i % 5}" for i in range(sentences)
+        )
+        + "."
+    )
 
 
 def _short_content() -> str:
@@ -128,9 +130,10 @@ class TestTextChunkerUnit:
         """parse_chunk_id(make_chunk_id(nid, idx)) must return (nid, idx)."""
         cases = [("abc", 0), ("note-123", 7), ("x::chunk_5", 2)]
         for nid, idx in cases:
-            assert TextChunker.parse_chunk_id(
-                TextChunker.make_chunk_id(nid, idx)
-            ) == (nid, idx)
+            assert TextChunker.parse_chunk_id(TextChunker.make_chunk_id(nid, idx)) == (
+                nid,
+                idx,
+            )
 
     def test_short_text_single_chunk(self):
         """Text shorter than chunk_size should produce a single chunk."""
@@ -153,9 +156,7 @@ class TestTextChunkerUnit:
     def test_overlap_exists_between_chunks(self):
         """Consecutive chunks should share overlapping content."""
         chunker = TextChunker(chunk_size=50, chunk_overlap=10)
-        long_text = ". ".join(
-            f"Sentence {i} about unique topic {i}" for i in range(20)
-        )
+        long_text = ". ".join(f"Sentence {i} about unique topic {i}" for i in range(20))
         chunks = chunker.chunk(long_text)
         assert len(chunks) >= 2, "Need at least 2 chunks to test overlap"
         # Verify overlapping content between consecutive chunks
@@ -163,7 +164,9 @@ class TestTextChunkerUnit:
             words_i = chunks[i].text.split()
             words_next = chunks[i + 1].text.split()
             tail_words = set(words_i[-5:]) if len(words_i) >= 5 else set(words_i)
-            head_words = set(words_next[:5]) if len(words_next) >= 5 else set(words_next)
+            head_words = (
+                set(words_next[:5]) if len(words_next) >= 5 else set(words_next)
+            )
             overlap = tail_words & head_words
             assert len(overlap) > 0, f"No overlap between chunk {i} and {i + 1}"
 
@@ -393,19 +396,15 @@ class TestChunkedSearchPath:
             )
         results = search_service.semantic_search("topic", limit=10)
         result_ids = [r.note.id for r in results]
-        assert len(result_ids) == len(set(result_ids)), (
-            "Duplicate note_ids in search results"
-        )
+        assert len(result_ids) == len(
+            set(result_ids)
+        ), "Duplicate note_ids in search results"
 
     def test_find_related_works_with_chunked_note(self, search_service, service):
         """find_related should work with a chunked seed note."""
-        seed = service.create_note(
-            title="Seed", content=_long_content(sentences=20)
-        )
+        seed = service.create_note(title="Seed", content=_long_content(sentences=20))
         for i in range(3):
-            service.create_note(
-                title=f"Other {i}", content=_long_content(sentences=15)
-            )
+            service.create_note(title=f"Other {i}", content=_long_content(sentences=15))
         results = search_service.find_related(seed.id, limit=5)
         result_ids = {r.note.id for r in results}
         # Seed note should be excluded from results
@@ -463,9 +462,7 @@ class TestFullChunkedPipeline:
             title="Advanced Quantum Computing Algorithms",
             content=_long_content(sentences=25),
         )
-        results = search_service.semantic_search(
-            "Advanced Quantum Computing", limit=5
-        )
+        results = search_service.semantic_search("Advanced Quantum Computing", limit=5)
         assert len(results) > 0
         found_ids = {r.note.id for r in results}
         assert note.id in found_ids

@@ -9,12 +9,12 @@ Verifies:
 from pathlib import Path
 from unittest.mock import patch
 
+from tests.conftest_e2e import e2e_mcp_server  # noqa: F401 (pytest fixture)
+from tests.conftest_e2e import e2e_session_id  # noqa: F401 (pytest fixture)
+from tests.conftest_e2e import e2e_zettel_service  # noqa: F401 (pytest fixture)
+from tests.conftest_e2e import isolated_env  # noqa: F401 (pytest fixture)
 from tests.conftest_e2e import (
-    e2e_mcp_server,  # noqa: F401 (pytest fixture)
-    e2e_session_id,  # noqa: F401 (pytest fixture)
-    e2e_zettel_service,  # noqa: F401 (pytest fixture)
     get_mcp_tool,
-    isolated_env,  # noqa: F401 (pytest fixture)
 )
 
 
@@ -108,15 +108,11 @@ class TestZkStatusConfigSection:
         assert ".zettelkasten/.env" in result
 
     @patch("znote_mcp.server.mcp_server._USER_ENV")
-    def test_config_section_when_user_env_missing(
-        self, mock_user_env, e2e_mcp_server
-    ):
+    def test_config_section_when_user_env_missing(self, mock_user_env, e2e_mcp_server):
         """When user .env doesn't exist, status shows 'not found' with guidance."""
         mock_user_env.exists.return_value = False
         mock_user_env.__str__ = lambda _: "~/.zettelkasten/.env"
-        mock_user_env.__fspath__ = lambda _: str(
-            Path.home() / ".zettelkasten" / ".env"
-        )
+        mock_user_env.__fspath__ = lambda _: str(Path.home() / ".zettelkasten" / ".env")
 
         status = get_mcp_tool(e2e_mcp_server, "zk_status")
         result = status(sections="config")
