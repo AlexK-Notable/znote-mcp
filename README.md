@@ -2,7 +2,7 @@
 
 A Zettelkasten knowledge management server for the [Model Context Protocol](https://modelcontextprotocol.io). Create, link, search, and synthesize atomic notes through Claude and other MCP-compatible clients.
 
-> **Fork notice**: This project is a fork of [entanglr/zettelkasten-mcp](https://github.com/entanglr/zettelkasten-mcp), renamed to znote-mcp.
+> **Origin**: This project began as a fork of [entanglr/zettelkasten-mcp](https://github.com/entanglr/zettelkasten-mcp) by [Peter J. Herrel](https://github.com/diggy) and has since diverged substantially.
 
 ## What It Does
 
