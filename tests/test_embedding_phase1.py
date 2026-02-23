@@ -4,7 +4,7 @@ Tests cover:
 - FakeEmbeddingProvider correctness (determinism, normalization, dimension)
 - FakeRerankerProvider correctness (keyword overlap scoring, ranking)
 - EmbeddingService lifecycle (lazy load, shutdown, error propagation)
-- EmbeddingService reranker idle timeout
+- EmbeddingService embedder and reranker idle timeouts
 - Config embedding fields
 - Error code ranges
 
@@ -413,6 +413,91 @@ class TestRerankerIdleTimeout:
 
 
 # =============================================================================
+# Embedder Idle Timeout Tests
+# =============================================================================
+
+
+class TestEmbedderIdleTimeout:
+    """Test that the embedder unloads after idle timeout."""
+
+    def test_embedder_unloads_after_timeout(self):
+        """Embedder should be unloaded after the idle timeout expires."""
+        embedder = FakeEmbeddingProvider()
+        service = EmbeddingService(
+            embedder=embedder,
+            embedder_idle_timeout=1,
+        )
+        service.embed("hello")
+        assert service.embedder_loaded
+
+        time.sleep(1.5)
+        assert not service.embedder_loaded
+        assert embedder.unload_count == 1
+        service.shutdown()
+
+    def test_embedder_timeout_resets_on_use(self):
+        """Using the embedder should reset the idle timer."""
+        embedder = FakeEmbeddingProvider()
+        service = EmbeddingService(
+            embedder=embedder,
+            embedder_idle_timeout=1,
+        )
+        service.embed("hello")
+
+        time.sleep(0.5)
+        service.embed("again")
+
+        time.sleep(0.7)
+        assert service.embedder_loaded
+
+        time.sleep(0.5)
+        assert not service.embedder_loaded
+        service.shutdown()
+
+    def test_embedder_reloads_after_idle_unload(self):
+        """After idle unload, embedder should reload on next use."""
+        embedder = FakeEmbeddingProvider()
+        service = EmbeddingService(
+            embedder=embedder,
+            embedder_idle_timeout=1,
+        )
+        service.embed("first")
+        time.sleep(1.5)
+        assert not service.embedder_loaded
+
+        service.embed("second")
+        assert service.embedder_loaded
+        assert embedder.load_count == 2
+        service.shutdown()
+
+    def test_no_timeout_when_disabled(self):
+        """With timeout=0, embedder should stay loaded."""
+        embedder = FakeEmbeddingProvider()
+        service = EmbeddingService(
+            embedder=embedder,
+            embedder_idle_timeout=0,
+        )
+        service.embed("hello")
+        time.sleep(0.5)
+        assert service.embedder_loaded
+        service.shutdown()
+
+    def test_batch_resets_timer(self):
+        """embed_batch should also reset the idle timer."""
+        embedder = FakeEmbeddingProvider()
+        service = EmbeddingService(
+            embedder=embedder,
+            embedder_idle_timeout=1,
+        )
+        service.embed_batch(["a", "b", "c"])
+        assert service.embedder_loaded
+
+        time.sleep(1.5)
+        assert not service.embedder_loaded
+        service.shutdown()
+
+
+# =============================================================================
 # Config Tests
 # =============================================================================
 
@@ -426,6 +511,7 @@ class TestEmbeddingConfig:
         monkeypatch.delenv("ZETTELKASTEN_EMBEDDING_MAX_TOKENS", raising=False)
         monkeypatch.delenv("ZETTELKASTEN_EMBEDDING_BATCH_SIZE", raising=False)
         monkeypatch.delenv("ZETTELKASTEN_RERANKER_IDLE_TIMEOUT", raising=False)
+        monkeypatch.delenv("ZETTELKASTEN_EMBEDDER_IDLE_TIMEOUT", raising=False)
         cfg = ZettelkastenConfig()
         # Default is False (safe for users without semantic deps);
         # main.py auto-enables when ensure_semantic_deps() succeeds.
@@ -434,7 +520,8 @@ class TestEmbeddingConfig:
         assert cfg.reranker_model == "Alibaba-NLP/gte-reranker-modernbert-base"
         assert cfg.embedding_dim == 768
         assert cfg.embedding_max_tokens == 2048
-        assert cfg.reranker_idle_timeout == 600
+        assert cfg.reranker_idle_timeout == 120
+        assert cfg.embedder_idle_timeout == 120
         assert cfg.embedding_batch_size == 8
         assert cfg.embedding_model_cache_dir is None
 
@@ -444,11 +531,13 @@ class TestEmbeddingConfig:
             embedding_dim=384,
             embedding_batch_size=16,
             reranker_idle_timeout=300,
+            embedder_idle_timeout=60,
         )
         assert cfg.embeddings_enabled is True
         assert cfg.embedding_dim == 384
         assert cfg.embedding_batch_size == 16
         assert cfg.reranker_idle_timeout == 300
+        assert cfg.embedder_idle_timeout == 60
 
 
 # =============================================================================

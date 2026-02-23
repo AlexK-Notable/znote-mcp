@@ -134,7 +134,12 @@ class ZettelkastenConfig(BaseModel):
     )
     reranker_idle_timeout: int = Field(
         default_factory=lambda: int(
-            os.getenv("ZETTELKASTEN_RERANKER_IDLE_TIMEOUT", "600")
+            os.getenv("ZETTELKASTEN_RERANKER_IDLE_TIMEOUT", "120")
+        )
+    )
+    embedder_idle_timeout: int = Field(
+        default_factory=lambda: int(
+            os.getenv("ZETTELKASTEN_EMBEDDER_IDLE_TIMEOUT", "120")
         )
     )
     embedding_batch_size: int = Field(

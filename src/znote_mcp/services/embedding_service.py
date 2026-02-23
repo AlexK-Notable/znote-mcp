@@ -1,11 +1,11 @@
 """Embedding service for semantic search.
 
 Orchestrates embedding and reranking providers with lazy loading,
-thread-safe model management, and idle timeout for the reranker.
+thread-safe model management, and idle timeouts.
 
-The embedder is loaded on first use and kept warm (no timeout).
-The reranker is loaded lazily and unloaded after an idle period
-to conserve memory when not actively searching.
+Both embedder and reranker are loaded lazily on first use and
+unloaded after their respective idle periods to free VRAM/RAM
+when not actively used.
 
 Usage:
     service = EmbeddingService(embedder=embedder, reranker=reranker)
@@ -32,17 +32,18 @@ logger = logging.getLogger(__name__)
 
 
 class EmbeddingService:
-    """Manages embedding and reranking with lazy loading and idle timeout.
+    """Manages embedding and reranking with lazy loading and idle timeouts.
 
     Thread-safe: all model load/unload operations are guarded by locks.
-    The embedder is loaded eagerly on first embed() call and kept warm.
-    The reranker is loaded lazily on first rerank() call and unloaded
-    after `reranker_idle_timeout` seconds of inactivity.
+    Both embedder and reranker are loaded lazily on first use and
+    unloaded after their respective idle timeouts to free VRAM/RAM.
 
     Args:
         embedder: An EmbeddingProvider implementation.
         reranker: An optional RerankerProvider implementation.
         reranker_idle_timeout: Seconds before idle reranker is unloaded.
+            Set to 0 to disable idle unloading.
+        embedder_idle_timeout: Seconds before idle embedder is unloaded.
             Set to 0 to disable idle unloading.
     """
 
@@ -50,16 +51,19 @@ class EmbeddingService:
         self,
         embedder: EmbeddingProvider,
         reranker: Optional[RerankerProvider] = None,
-        reranker_idle_timeout: int = 600,
+        reranker_idle_timeout: int = 120,
+        embedder_idle_timeout: int = 120,
     ) -> None:
         self._embedder = embedder
         self._reranker = reranker
         self._reranker_idle_timeout = reranker_idle_timeout
+        self._embedder_idle_timeout = embedder_idle_timeout
 
         # Thread safety
         self._embedder_lock = threading.Lock()
         self._reranker_lock = threading.Lock()
-        self._idle_timer: Optional[threading.Timer] = None
+        self._embedder_idle_timer: Optional[threading.Timer] = None
+        self._reranker_idle_timer: Optional[threading.Timer] = None
         self._shutdown = False
 
     @property
@@ -109,13 +113,16 @@ class EmbeddingService:
     def _ensure_embedder(self) -> None:
         """Load the embedder if not already loaded. Thread-safe."""
         if self._embedder.is_loaded:
+            self._reset_embedder_idle_timer()
             return
         with self._embedder_lock:
             if self._embedder.is_loaded:
+                self._reset_embedder_idle_timer()
                 return  # Double-check after acquiring lock
             try:
                 self._embedder.load()
                 logger.info("Embedding model loaded")
+                self._reset_embedder_idle_timer()
             except Exception as e:
                 raise EmbeddingError(
                     f"Failed to load embedding model: {e}",
@@ -133,16 +140,16 @@ class EmbeddingService:
                 operation="reranker_load",
             )
         if self._reranker.is_loaded:
-            self._reset_idle_timer()
+            self._reset_reranker_idle_timer()
             return
         with self._reranker_lock:
             if self._reranker.is_loaded:
-                self._reset_idle_timer()
+                self._reset_reranker_idle_timer()
                 return
             try:
                 self._reranker.load()
                 logger.info("Reranker model loaded")
-                self._reset_idle_timer()
+                self._reset_reranker_idle_timer()
             except Exception as e:
                 raise EmbeddingError(
                     f"Failed to load reranker model: {e}",
@@ -151,20 +158,44 @@ class EmbeddingService:
                     original_error=e,
                 )
 
-    def _reset_idle_timer(self) -> None:
+    def _reset_embedder_idle_timer(self) -> None:
+        """Reset (or start) the embedder idle unload timer."""
+        if self._embedder_idle_timeout <= 0:
+            return
+
+        if self._embedder_idle_timer is not None:
+            self._embedder_idle_timer.cancel()
+
+        self._embedder_idle_timer = threading.Timer(
+            self._embedder_idle_timeout, self._idle_unload_embedder
+        )
+        self._embedder_idle_timer.daemon = True
+        self._embedder_idle_timer.start()
+
+    def _idle_unload_embedder(self) -> None:
+        """Called by timer to unload idle embedder."""
+        if self._shutdown:
+            return
+        with self._embedder_lock:
+            if self._embedder.is_loaded:
+                self._embedder.unload()
+                logger.info(
+                    f"Embedder unloaded after {self._embedder_idle_timeout}s idle"
+                )
+
+    def _reset_reranker_idle_timer(self) -> None:
         """Reset (or start) the reranker idle unload timer."""
         if self._reranker_idle_timeout <= 0:
             return
 
-        # Cancel any existing timer
-        if self._idle_timer is not None:
-            self._idle_timer.cancel()
+        if self._reranker_idle_timer is not None:
+            self._reranker_idle_timer.cancel()
 
-        self._idle_timer = threading.Timer(
+        self._reranker_idle_timer = threading.Timer(
             self._reranker_idle_timeout, self._idle_unload_reranker
         )
-        self._idle_timer.daemon = True  # Don't block process exit
-        self._idle_timer.start()
+        self._reranker_idle_timer.daemon = True
+        self._reranker_idle_timer.start()
 
     def _idle_unload_reranker(self) -> None:
         """Called by timer to unload idle reranker."""
@@ -307,10 +338,13 @@ class EmbeddingService:
         """
         self._shutdown = True
 
-        # Cancel idle timer
-        if self._idle_timer is not None:
-            self._idle_timer.cancel()
-            self._idle_timer = None
+        # Cancel idle timers
+        if self._embedder_idle_timer is not None:
+            self._embedder_idle_timer.cancel()
+            self._embedder_idle_timer = None
+        if self._reranker_idle_timer is not None:
+            self._reranker_idle_timer.cancel()
+            self._reranker_idle_timer = None
 
         # Unload models
         with self._embedder_lock:
