@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "znote-mcp"
-version = "1.5.1"
+version = "1.5.2"
 description = "A Zettelkasten knowledge management system as an MCP server"
 authors = [
     {name = "Peter J. Herrel", email = "peterherrel@protonmail.com"},

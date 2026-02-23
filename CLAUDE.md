@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-znote-mcp is an MCP (Model Context Protocol) server implementing Zettelkasten knowledge management. It provides 22 tools for creating, linking, searching, and synthesizing atomic notes through Claude and other MCP-compatible clients. Version 1.5.0 adds hardware-aware auto-configuration, adaptive batching, INT8 quantization support, and benchmarked model selection alongside the semantic search system introduced in 1.4.0.
+znote-mcp is an MCP (Model Context Protocol) server implementing Zettelkasten knowledge management. It provides 22 tools for creating, linking, searching, and synthesizing atomic notes through Claude and other MCP-compatible clients. Version 1.5.2 adds idle timeouts for both embedder and reranker models (default 2 min) to free VRAM/RAM when not in use, building on 1.5.0's hardware-aware auto-configuration, adaptive batching, INT8 quantization, and benchmarked model selection.
 
 ## Common Commands
 
@@ -96,7 +96,7 @@ When `[semantic]` deps are installed, embeddings auto-enable on startup:
 3. **Providers** (`onnx_providers.py`): Direct ONNX Runtime embedding (gte-modernbert-base, 768-dim) and reranking (gte-reranker-modernbert-base) with lazy loading
 4. **Types** (`embedding_types.py`): Protocol interfaces for `EmbeddingProvider` and `RerankerProvider` (structural subtyping, no inheritance required)
 5. **Chunking** (`text_chunker.py`): Splits long notes into overlapping token-aware chunks respecting sentence boundaries
-6. **Service** (`embedding_service.py`): Thread-safe orchestrator with idle timeout for reranker, warm-loaded embedder; adaptive greedy batching based on memory budget
+6. **Service** (`embedding_service.py`): Thread-safe orchestrator with idle timeouts for both embedder and reranker (default 120s); adaptive greedy batching based on memory budget
 7. **Storage**: sqlite-vec `vec0` virtual table for KNN vector search; chunked embeddings stored with note-level and chunk-level granularity
 8. **Integration**: `zettel_service.py` embeds on create/update, `search_service.py` uses vector KNN + optional reranking for `mode="semantic"`
 
@@ -152,7 +152,8 @@ ZETTELKASTEN_EMBEDDING_CACHE_DIR=              # Custom model cache dir (default
 ZETTELKASTEN_ONNX_PROVIDERS=auto               # "auto", "cpu", or explicit provider list
 ZETTELKASTEN_ONNX_QUANTIZED=false              # Use INT8 quantized ONNX models (~4x smaller, ~97% quality)
 ZETTELKASTEN_RERANKER_MAX_TOKENS=2048          # Max input tokens for reranker model
-ZETTELKASTEN_RERANKER_IDLE_TIMEOUT=600         # Seconds before idle reranker unloads (0 = never)
+ZETTELKASTEN_EMBEDDER_IDLE_TIMEOUT=120         # Seconds before idle embedder unloads (0 = never)
+ZETTELKASTEN_RERANKER_IDLE_TIMEOUT=120         # Seconds before idle reranker unloads (0 = never)
 ZETTELKASTEN_EMBEDDING_MEMORY_BUDGET_GB=6.0    # Memory budget for adaptive batching
 ```
 
