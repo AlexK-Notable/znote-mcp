@@ -53,6 +53,10 @@ class DBNote(Base):
     project = Column(String(255), default="general", nullable=False, index=True)
     plan_id = Column(String(255), nullable=True, index=True)
     obsidian_path = Column(String(500), nullable=True)
+    is_imported = Column(
+        String(5), default="false", nullable=False, index=True, server_default="false"
+    )
+    source_user = Column(String(255), nullable=True, index=True)
 
     # Relationships
     tags = relationship("DBTag", secondary=note_tags, back_populates="notes")
@@ -223,6 +227,7 @@ def init_db(in_memory: bool = False) -> None:
         _migrate_add_project_column(engine)
         _migrate_add_note_purpose_columns(engine)
         _migrate_add_obsidian_path_column(engine)
+        _migrate_add_import_columns(engine)
 
     # Create FTS5 virtual table for full-text search
     # (works for both in-memory and persistent)
@@ -302,6 +307,32 @@ def _migrate_add_obsidian_path_column(engine) -> None:
                 text("ALTER TABLE notes ADD COLUMN obsidian_path VARCHAR(500)")
             )
             conn.commit()
+
+
+def _migrate_add_import_columns(engine) -> None:
+    """Migration: Add is_imported and source_user columns to existing databases.
+
+    These columns support the remote sync import feature.
+    is_imported defaults to 'false' for existing notes.
+    """
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    columns = [col["name"] for col in inspector.get_columns("notes")]
+
+    with engine.connect() as conn:
+        if "is_imported" not in columns:
+            conn.execute(
+                text(
+                    "ALTER TABLE notes ADD COLUMN is_imported VARCHAR(5) "
+                    "NOT NULL DEFAULT 'false'"
+                )
+            )
+
+        if "source_user" not in columns:
+            conn.execute(text("ALTER TABLE notes ADD COLUMN source_user VARCHAR(255)"))
+
+        conn.commit()
 
 
 def init_fts5(engine) -> None:

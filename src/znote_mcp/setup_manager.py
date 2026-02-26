@@ -151,7 +151,9 @@ def _has_cuda_provider() -> bool:
             Y = helper.make_tensor_value_info("Y", TensorProto.FLOAT, [1])
             node = helper.make_node("Identity", ["X"], ["Y"])
             graph = helper.make_graph([node], "test", [X], [Y])
-            model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
+            model = helper.make_model(
+                graph, opset_imports=[helper.make_opsetid("", 13)]
+            )
             model_bytes = model.SerializeToString()
 
             sess = onnxruntime.InferenceSession(
@@ -195,12 +197,14 @@ def _run_install() -> bool:
                 "CUDA 12.x; installing nightly with CUDA 13 support",
                 ".".join(str(v) for v in cuda_ver),
             )
-            cmd.extend([
-                "--prerelease=allow",
-                "--extra-index-url",
-                "https://aiinfra.pkgs.visualstudio.com/PublicPackages/"
-                "_packaging/onnxruntime-cuda-13/pypi/simple/",
-            ])
+            cmd.extend(
+                [
+                    "--prerelease=allow",
+                    "--extra-index-url",
+                    "https://aiinfra.pkgs.visualstudio.com/PublicPackages/"
+                    "_packaging/onnxruntime-cuda-13/pypi/simple/",
+                ]
+            )
 
     logger.info("Installing semantic dependencies: %s", " ".join(packages))
     try:

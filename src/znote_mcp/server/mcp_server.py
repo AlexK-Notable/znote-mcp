@@ -53,15 +53,17 @@ def _validate_input_lengths(
 class ZettelkastenMcpServer:
     """MCP server for Zettelkasten."""
 
-    def __init__(self, engine=None):
+    def __init__(self, engine=None, sync_service=None):
         """Initialize the MCP server.
 
         Args:
             engine: Pre-configured SQLAlchemy engine. When provided, all
                     repositories share this single engine. When None, each
                     repository creates its own (legacy behavior).
+            sync_service: Optional GitSyncService for remote push/pull.
         """
         self.mcp = FastMCP(config.server_name, version=config.server_version)
+        self.sync_service = sync_service
         # Conditionally create embedding service
         embedding_service = self._create_embedding_service()
 
@@ -69,6 +71,7 @@ class ZettelkastenMcpServer:
         self.zettel_service = ZettelService(
             embedding_service=embedding_service,
             engine=engine,
+            sync_service=sync_service,
         )
         self.search_service = SearchService(
             self.zettel_service,
@@ -287,6 +290,8 @@ class ZettelkastenMcpServer:
                     result += f"Type: {note.note_type.value}\n"
                     result += f"Project: {note.project}\n"
                     result += f"Purpose: {note.note_purpose.value if note.note_purpose else 'general'}\n"
+                    if note.source_user:
+                        result += f"Source: {note.source_user} (imported)\n"
                     if note.obsidian_path:
                         result += f"Obsidian Path: {note.obsidian_path}\n"
                     if note.plan_id:
@@ -646,6 +651,8 @@ class ZettelkastenMcpServer:
                             if result.reranked:
                                 output += " (reranked)"
                             output += "\n"
+                            if note.source_user:
+                                output += f"   Source: {note.source_user}\n"
                             if note.tags:
                                 output += f"   Tags: {', '.join(tag.name for tag in note.tags)}\n"
                             content_preview = note.content[:150].replace("\n", " ")
@@ -684,6 +691,8 @@ class ZettelkastenMcpServer:
                         for i, result in enumerate(results, 1):
                             note = result.note
                             output += f"{i}. {note.title} (ID: {note.id})\n"
+                            if note.source_user:
+                                output += f"   Source: {note.source_user}\n"
                             if note.tags:
                                 output += f"   Tags: {', '.join(tag.name for tag in note.tags)}\n"
                             output += (
@@ -745,11 +754,20 @@ class ZettelkastenMcpServer:
                     else:
                         op["search_mode"] = "fts5"
 
+                    # Batch-fetch source_user for imported notes
+                    fts_ids = [r["id"] for r in results]
+                    source_map = (
+                        self.zettel_service.get_source_users(fts_ids) if fts_ids else {}
+                    )
+
                     # Format results
                     output = f"{fallback_warning}Found {len(results)} notes matching '{query}':\n\n"
                     for i, result in enumerate(results, 1):
                         output += f"{i}. {result['title']} (ID: {result['id']})\n"
                         output += f"   Relevance: {abs(result['rank']):.2f}\n"
+                        src_user = source_map.get(result["id"])
+                        if src_user:
+                            output += f"   Source: {src_user}\n"
                         if highlight and "snippet" in result:
                             snippet = result["snippet"].replace("\n", " ")
                             output += f"   Match: {snippet}\n"
@@ -1178,6 +1196,7 @@ class ZettelkastenMcpServer:
                     - "tags": All tags with usage counts
                     - "health": Database integrity status
                     - "embeddings": Embedding system status
+                    - "sync": Remote sync status
                     - "metrics": Server performance metrics
                     - "config": Current configuration and env file status
                     - "all": Include all sections (default)
@@ -1276,17 +1295,24 @@ class ZettelkastenMcpServer:
                             output += f"**Model:** {config.embedding_model}\n"
                             output += f"**Dimension:** {config.embedding_dim}\n"
                             # Show actual active ONNX providers (not just config preference)
-                            output += f"**Providers (config):** {config.onnx_providers}\n"
+                            output += (
+                                f"**Providers (config):** {config.onnx_providers}\n"
+                            )
                             embedding_svc = self.zettel_service.embedding_service
                             if embedding_svc is not None:
                                 pinfo = embedding_svc.get_provider_info()
                                 if pinfo["embedder_loaded"]:
                                     ep = pinfo["embedder_providers"]
-                                    output += f"**Providers (active):** {', '.join(ep)}\n"
+                                    output += (
+                                        f"**Providers (active):** {', '.join(ep)}\n"
+                                    )
                                     is_gpu = any("CUDA" in p for p in ep)
                                     output += f"**Execution:** {'GPU (CUDA)' if is_gpu else 'CPU'}\n"
                                     # Warn if GPU was expected but we're on CPU
-                                    if not is_gpu and config.onnx_providers in ("auto", "CUDAExecutionProvider"):
+                                    if not is_gpu and config.onnx_providers in (
+                                        "auto",
+                                        "CUDAExecutionProvider",
+                                    ):
                                         output += (
                                             "**WARNING:** CUDA was requested but fell back to CPU. "
                                             "Check CUDA runtime libraries (cuDNN, cuBLAS).\n"
@@ -1332,6 +1358,45 @@ class ZettelkastenMcpServer:
                                 )
                             else:
                                 output += f"**Est. Peak Memory:** ~{peak_gb:.1f}GB per reindex batch\n"
+                        output += "\n"
+
+                    # Sync section
+                    if include_all or "sync" in requested:
+                        output += "## Sync\n"
+                        if self.sync_service is not None:
+                            sync_status = self.sync_service.get_status()
+                            output += f"**Enabled:** Yes\n"
+                            output += f"**User:** {sync_status['user_id']}\n"
+                            output += f"**Branch:** {sync_status['branch']}\n"
+                            output += f"**Setup:** {'Yes' if sync_status['is_setup'] else 'No'}\n"
+                            output += (
+                                f"**Pending Writes:** {sync_status['pending_writes']}\n"
+                            )
+                            last_push = sync_status.get("last_push_time")
+                            output += f"**Last Push:** {last_push or 'never'}\n"
+                            if sync_status.get("import_users"):
+                                output += f"**Import Users:** {', '.join(sync_status['import_users'])}\n"
+                            # Import freshness
+                            last_import = sync_status.get("last_import_time")
+                            if last_import:
+                                from datetime import timezone
+
+                                last_import_dt = datetime.fromisoformat(last_import)
+                                age_hours = (
+                                    datetime.now(timezone.utc) - last_import_dt
+                                ).total_seconds() / 3600
+                                import_freshness = (
+                                    "fresh" if age_hours < 24 else "stale"
+                                )
+                                output += f"**Last Import:** {last_import}\n"
+                                output += (
+                                    f"**Import Freshness:** {import_freshness} "
+                                    f"({age_hours:.1f} hours ago)\n"
+                                )
+                            else:
+                                output += "**Last Import:** never\n"
+                        else:
+                            output += "**Enabled:** No\n"
                         output += "\n"
 
                     # Config section
@@ -1394,6 +1459,7 @@ class ZettelkastenMcpServer:
             action: str,
             backup_label: Optional[str] = None,
             force: bool = False,
+            target: Optional[str] = None,
         ) -> str:
             """System administration operations.
 
@@ -1406,8 +1472,15 @@ class ZettelkastenMcpServer:
                     - "reset_fts": Reset FTS5 availability after manual repair
                     - "reindex_embeddings": Rebuild all note embeddings from scratch
                       (use after model changes or to fix inconsistencies)
+                    - "git_push": Force-push notes to remote sync repository
+                    - "pull_imports": Fetch and index notes from import users
+                    - "setup_sync": Run setup wizard to validate and initialize sync
+                    - "generate_sync_templates": Generate CODEOWNERS and CI guard templates
+                    - "remove_user": Remove an imported user (requires target param)
                 backup_label: Optional label for backup (e.g., "pre-migration")
                 force: Skip memory safety check for reindex_embeddings
+                target: Target identifier for actions that need it (e.g., username
+                    for remove_user)
             """
             with timed_operation("zk_system", action=action) as op:
                 try:
@@ -1512,7 +1585,10 @@ class ZettelkastenMcpServer:
                                     f"Execution: {'GPU (CUDA)' if is_gpu else 'CPU'}\n"
                                 )
                                 # Abort if GPU expected but fell back to CPU
-                                if not is_gpu and config.onnx_providers in ("auto", "CUDAExecutionProvider"):
+                                if not is_gpu and config.onnx_providers in (
+                                    "auto",
+                                    "CUDAExecutionProvider",
+                                ):
                                     return (
                                         f"REINDEX ABORTED: CUDA was requested but ONNX Runtime "
                                         f"fell back to CPU.\n"
@@ -1535,11 +1611,79 @@ class ZettelkastenMcpServer:
                         except Exception as reindex_err:
                             return f"Reindex failed: {reindex_err}"
 
+                    elif action == "git_push":
+                        if self.sync_service is None:
+                            return (
+                                "Remote sync is not configured. "
+                                "Set ZETTELKASTEN_SYNC_ENABLED=true"
+                            )
+                        result = self.sync_service.flush_push()
+                        return f"Push {'succeeded' if result else 'failed'}"
+
+                    elif action == "pull_imports":
+                        if self.sync_service is None:
+                            return (
+                                "Remote sync is not configured. "
+                                "Set ZETTELKASTEN_SYNC_ENABLED=true"
+                            )
+                        pull_result = self.sync_service.pull_imports()
+                        # Index the imported notes
+                        import_result = self.zettel_service.import_remote_notes(
+                            imports_dir=config.sync_imports_dir,
+                            import_users=config.get_import_users(),
+                        )
+                        # Format output
+                        lines = ["Pulled and indexed imports:"]
+                        for user, stats in import_result.items():
+                            pulled = pull_result.get(user, 0)
+                            lines.append(
+                                f"  {user}: {pulled} files found, "
+                                f"{stats['created']} created, "
+                                f"{stats['updated']} updated, "
+                                f"{stats['deleted']} removed"
+                            )
+                        return "\n".join(lines)
+
+                    elif action == "setup_sync":
+                        return self._setup_sync_wizard()
+
+                    elif action == "generate_sync_templates":
+                        if self.sync_service is None:
+                            return (
+                                "Remote sync is not configured. "
+                                "Set ZETTELKASTEN_SYNC_ENABLED=true"
+                            )
+                        return self._generate_sync_templates()
+
+                    elif action == "remove_user":
+                        if self.sync_service is None:
+                            return (
+                                "Remote sync is not configured. "
+                                "Set ZETTELKASTEN_SYNC_ENABLED=true"
+                            )
+                        if not target:
+                            return (
+                                "remove_user requires a target parameter "
+                                "with the username to remove."
+                            )
+                        remove_stats = self.sync_service.remove_user(target)
+                        lines = [f"Removed user '{target}':"]
+                        lines.append(
+                            f"  Symlink removed: {remove_stats['symlink_removed']}"
+                        )
+                        lines.append(
+                            f"  Sparse checkout updated: "
+                            f"{remove_stats['sparse_updated']}"
+                        )
+                        return "\n".join(lines)
+
                     else:
                         return (
                             f"Invalid action: '{action}'. Valid actions: "
                             "rebuild, sync, backup, list_backups, "
-                            "reset_fts, reindex_embeddings"
+                            "reset_fts, reindex_embeddings, git_push, "
+                            "pull_imports, setup_sync, "
+                            "generate_sync_templates, remove_user"
                         )
 
                 except Exception as e:
@@ -1749,6 +1893,146 @@ class ZettelkastenMcpServer:
                     return f"Error: {e.message}"
                 except Exception as e:
                     return self.format_error_response(e)
+
+    def _setup_sync_wizard(self) -> str:
+        """Run the sync setup wizard. Validates prerequisites and initializes.
+
+        Returns:
+            Formatted status message with setup results.
+        """
+        if self.sync_service is None:
+            lines = [
+                "Remote sync is not configured. Set these environment variables:",
+                "",
+                "  ZETTELKASTEN_SYNC_ENABLED=true",
+                "  ZETTELKASTEN_SYNC_USER_ID=<your-username>",
+                "  ZETTELKASTEN_SYNC_REPO=<repo-url>",
+                "",
+                "Optional:",
+                "  ZETTELKASTEN_SYNC_BRANCH=<branch>  (default: {user_id}/notes)",
+                "  ZETTELKASTEN_GIT_PUSH_DELAY=120     (seconds before auto-push)",
+                "  ZETTELKASTEN_GIT_PUSH_EXTEND=60     (extend window on new writes)",
+                "  ZETTELKASTEN_IMPORT_USERS=alice,bob  (comma-separated usernames)",
+                "  ZETTELKASTEN_IMPORT_ON_STARTUP=true  (auto-pull on startup)",
+            ]
+            return "\n".join(lines)
+
+        # Config is present, validate prerequisites
+        checks = self.sync_service.check_prerequisites()
+        lines = ["Sync Setup Wizard", ""]
+
+        # Git check
+        if checks["git_installed"]:
+            lines.append(f"[OK] Git installed: {checks.get('git_version', 'unknown')}")
+        else:
+            lines.append("[FAIL] Git is not installed or not in PATH")
+            return "\n".join(lines)
+
+        # Repo reachability
+        if checks["repo_reachable"]:
+            lines.append("[OK] Repository is reachable")
+        else:
+            error = checks.get("repo_error", "unknown error")
+            lines.append(f"[FAIL] Repository not reachable: {error}")
+            return "\n".join(lines)
+
+        # Already set up?
+        if checks["already_setup"]:
+            lines.append("[OK] Sparse checkout already initialized")
+            return "\n".join(lines)
+
+        # All checks pass, run setup
+        try:
+            self.sync_service.setup()
+            lines.append("[OK] Sparse checkout initialized")
+        except Exception as e:
+            lines.append(f"[FAIL] Setup failed: {e}")
+
+        return "\n".join(lines)
+
+    def _generate_sync_templates(self) -> str:
+        """Generate CODEOWNERS and CI guard templates.
+
+        Returns:
+            Formatted string with both templates.
+        """
+        import_users = config.get_import_users()
+        all_users = [config.sync_user_id] if config.sync_user_id else []
+        all_users.extend(import_users)
+
+        codeowners = self._generate_codeowners(all_users)
+        ci_guard = self._generate_ci_guard()
+
+        lines = [
+            "# Generated Sync Templates",
+            "",
+            "## CODEOWNERS",
+            "```",
+            codeowners,
+            "```",
+            "",
+            "## CI Guard (GitHub Actions)",
+            "```yaml",
+            ci_guard,
+            "```",
+        ]
+        return "\n".join(lines)
+
+    @staticmethod
+    def _generate_codeowners(users: "list[str]") -> str:
+        """Generate a CODEOWNERS file template.
+
+        Args:
+            users: List of usernames.
+
+        Returns:
+            CODEOWNERS file content.
+        """
+        lines = ["# Auto-generated by znote-mcp sync"]
+        lines.append("# Each user owns their own notes directory")
+        for user in users:
+            lines.append(f"/notes/{user}/       @{user}")
+        return "\n".join(lines) + "\n"
+
+    @staticmethod
+    def _generate_ci_guard() -> str:
+        """Generate a CI ownership guard template (GitHub Actions).
+
+        Uses env: blocks to avoid shell injection from expression interpolation.
+
+        Returns:
+            GitHub Actions workflow YAML content.
+        """
+        return (
+            "name: Notes ownership guard\n"
+            "on:\n"
+            "  pull_request:\n"
+            "    paths:\n"
+            "      - 'notes/**'\n"
+            "\n"
+            "jobs:\n"
+            "  check-ownership:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - uses: actions/checkout@v4\n"
+            "        with:\n"
+            "          fetch-depth: 0\n"
+            "      - name: Verify PR only modifies author's directory\n"
+            "        env:\n"
+            "          PR_AUTHOR: ${{ github.event.pull_request.user.login }}\n"
+            "        run: |\n"
+            "          CHANGED_OWNERS=$(git diff --name-only origin/main...HEAD \\\n"
+            "            | grep '^notes/' \\\n"
+            "            | cut -d/ -f2 \\\n"
+            "            | sort -u)\n"
+            "          for owner in $CHANGED_OWNERS; do\n"
+            '            if [ "$owner" != "$PR_AUTHOR" ]; then\n'
+            '              echo "ERROR: $PR_AUTHOR modified notes/$owner/"\n'
+            "              exit 1\n"
+            "            fi\n"
+            "          done\n"
+            '          echo "OK: all changes are within notes/$PR_AUTHOR/"\n'
+        )
 
     def _register_resources(self) -> None:
         """Register MCP resources."""

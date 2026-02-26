@@ -128,6 +128,7 @@ class ZettelService:
         repository: Optional[NoteRepository] = None,
         embedding_service: Optional["EmbeddingService"] = None,
         engine: Optional[Any] = None,
+        sync_service: Optional[Any] = None,
     ):
         """Initialize the service.
 
@@ -139,6 +140,7 @@ class ZettelService:
                 are cleaned up on delete.
             engine: Pre-configured SQLAlchemy engine to pass to NoteRepository.
                 Only used when repository is None.
+            sync_service: Optional GitSyncService for remote push on writes.
         """
         if repository is not None:
             self.repository = repository
@@ -147,6 +149,7 @@ class ZettelService:
         else:
             self.repository = NoteRepository(use_git=config.git_enabled)
         self._embedding_service = embedding_service
+        self._sync_service = sync_service
 
     @property
     def embedding_service(self) -> "Optional[EmbeddingService]":
@@ -275,8 +278,62 @@ class ZettelService:
         except Exception as e:
             logger.warning(f"Failed to delete embedding for note {note_id}: {e}")
 
+    # =========================================================================
+    # Sync Helper (fire-and-forget — mirrors _embed_note pattern)
+    # =========================================================================
+
+    def _signal_sync(self) -> None:
+        """Signal sync service that a write occurred (fire-and-forget)."""
+        if self._sync_service is not None:
+            try:
+                self._sync_service.signal_write()
+            except Exception as e:
+                logger.warning("Sync signal failed: %s", e)
+
+    def get_source_users(self, note_ids: List[str]) -> Dict[str, str]:
+        """Get source_user for a batch of note IDs.
+
+        Returns a dict mapping note_id to source_user for imported notes only.
+        Notes without a source_user are excluded.
+        """
+        return self.repository.get_source_users(note_ids)
+
+    def import_remote_notes(
+        self,
+        imports_dir: "Path",
+        import_users: "List[str]",
+    ) -> Dict[str, Dict[str, int]]:
+        """Index imported notes from the imports directory.
+
+        Delegates to NoteRepository.import_notes_from_directory for each user.
+
+        Args:
+            imports_dir: Base imports directory (contains per-user subdirectories).
+            import_users: List of usernames to import.
+
+        Returns:
+            Dict mapping username to import stats dict.
+        """
+        from pathlib import Path
+
+        results: Dict[str, Dict[str, int]] = {}
+        for user in import_users:
+            user_dir = Path(imports_dir) / user
+            try:
+                stats = self.repository.import_notes_from_directory(user_dir, user)
+                results[user] = stats
+            except Exception as e:
+                logger.warning("Failed to import notes for user %s: %s", user, e)
+                results[user] = {"created": 0, "updated": 0, "deleted": 0, "total": 0}
+        return results
+
     def shutdown(self) -> None:
         """Shut down the service and release resources."""
+        if self._sync_service is not None:
+            try:
+                self._sync_service.shutdown()
+            except Exception as e:
+                logger.warning("Sync service shutdown failed: %s", e)
         if self._embedding_service is not None:
             self._embedding_service.shutdown()
             logger.info("Embedding service shut down")
@@ -540,6 +597,9 @@ class ZettelService:
         # Auto-embed (fire-and-forget)
         self._embed_note(created)
 
+        # Signal remote sync (fire-and-forget)
+        self._signal_sync()
+
         return created
 
     def get_note(self, note_id: str) -> Optional[Note]:
@@ -608,12 +668,16 @@ class ZettelService:
         # Re-embed if content changed (fire-and-forget)
         self._embed_note(updated)
 
+        # Signal remote sync (fire-and-forget)
+        self._signal_sync()
+
         return updated
 
     def delete_note(self, note_id: str) -> None:
         """Delete a note."""
         self.repository.delete(note_id)
         self._delete_embedding(note_id)
+        self._signal_sync()
 
     def get_all_notes(self, limit: Optional[int] = None, offset: int = 0) -> List[Note]:
         """Get all notes with optional pagination.
@@ -1083,6 +1147,10 @@ class ZettelService:
         # Auto-embed all created notes (fire-and-forget per note)
         for note in created:
             self._embed_note(note)
+
+        # Signal remote sync once for the whole batch (fire-and-forget)
+        if created:
+            self._signal_sync()
 
         return created
 
