@@ -1,9 +1,9 @@
 """Data models for the Zettelkasten MCP server."""
 
 import datetime
-import os
 import re
-import threading
+import secrets
+import string
 from dataclasses import dataclass
 from datetime import timezone
 from enum import Enum
@@ -132,54 +132,30 @@ def ensure_timezone_aware(dt_value: datetime.datetime) -> datetime.datetime:
     return dt_value
 
 
-# Thread-safe counter for uniqueness (seeded from PID for cross-process safety)
-_id_lock = threading.Lock()
-_last_timestamp = 0
-_counter = (
-    os.getpid() * 7
-) % 1_000_000  # PID-based seed prevents multiprocess collisions
+# NanoID alphabet: 64 characters = 6 bits/char, 21 chars = 126 bits entropy
+_NANOID_ALPHABET = string.ascii_letters + string.digits + "_-"
+# First character excludes '-' to avoid CLI flag confusion (e.g. git add -xyz.md)
+_NANOID_FIRST_CHAR = string.ascii_letters + string.digits + "_"
 
 
-def generate_id() -> str:
-    """Generate an ISO 8601 compliant timestamp-based ID with guaranteed uniqueness.
+def generate_id(size: int = 21) -> str:
+    """Generate a NanoID for note identification.
+
+    Returns a 21-character string from [a-zA-Z0-9_-] alphabet,
+    providing ~125.9 bits of entropy. The first character excludes '-'
+    to prevent filenames like ``-xyz.md`` from being misinterpreted
+    as CLI flags by git and shell tools.
+    Thread-safe via secrets module (uses OS entropy source).
+
+    Args:
+        size: Length of the generated ID (default 21).
 
     Returns:
-        A string in format "YYYYMMDDTHHMMSSsssssscccccc" where:
-        - YYYYMMDD is the date
-        - T is the ISO 8601 date/time separator
-        - HHMMSS is the time (hours, minutes, seconds)
-        - ssssss is the 6-digit microsecond component
-        - cccccc is a 6-digit counter for cross-process and same-microsecond uniqueness
-
-    The counter is seeded from the process ID so that separate processes
-    (e.g. multiprocessing.Pool workers) produce different IDs even when
-    they call generate_id() at the exact same microsecond.
+        A URL-safe, filesystem-safe random identifier.
     """
-    global _last_timestamp, _counter
-
-    with _id_lock:
-        # Get current timestamp with microsecond precision (UTC for consistency)
-        now = utc_now()
-        # Create a timestamp in microseconds
-        current_timestamp = int(now.timestamp() * 1_000_000)
-
-        # If multiple IDs generated in same microsecond, increment counter
-        if current_timestamp == _last_timestamp:
-            _counter += 1
-        else:
-            _last_timestamp = current_timestamp
-            _counter = (
-                os.getpid() * 7
-            ) % 1_000_000  # Re-seed from PID on new microsecond
-
-        # Ensure counter doesn't overflow our 6 digits (supports 1M IDs/microsecond)
-        _counter %= 1_000_000
-
-        # Format as ISO 8601 basic format with microseconds and counter
-        date_time = now.strftime("%Y%m%dT%H%M%S")
-        microseconds = now.microsecond
-
-        return f"{date_time}{microseconds:06d}{_counter:06d}"
+    first = secrets.choice(_NANOID_FIRST_CHAR)
+    rest = "".join(secrets.choice(_NANOID_ALPHABET) for _ in range(size - 1))
+    return first + rest
 
 
 class LinkType(str, Enum):
@@ -380,6 +356,14 @@ class Note(BaseModel):
     )
     metadata: Dict[str, Any] = Field(
         default_factory=dict, description="Additional metadata for the note"
+    )
+    is_imported: bool = Field(
+        default=False,
+        description="Whether this note was imported from another user",
+    )
+    source_user: Optional[str] = Field(
+        default=None,
+        description="Username of the note's owner (set for imported notes)",
     )
 
     model_config = {"validate_assignment": True, "extra": "forbid"}

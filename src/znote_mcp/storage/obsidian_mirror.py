@@ -170,7 +170,10 @@ class ObsidianMirror:
 
     def rewrite_links(self, markdown: str) -> str:
         """Rewrite ID-based ``[[id]]`` wikilinks to Obsidian-compatible names."""
-        id_pattern = re.compile(r"\[\[(20\d{6}T\d{9,}|20\d{17,})\]\]")
+        # Match old timestamp IDs (20YYMMDDTHHMMSS...) and NanoID (21 chars from [a-zA-Z0-9_-])
+        id_pattern = re.compile(
+            r"\[\[(20\d{6}T\d{9,}|20\d{17,}|[a-zA-Z0-9_][a-zA-Z0-9_-]{20})\]\]"
+        )
 
         def _replace(match: re.Match) -> str:
             nid = match.group(1)

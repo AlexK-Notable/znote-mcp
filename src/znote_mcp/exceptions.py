@@ -52,6 +52,15 @@ class ErrorCode(Enum):
     EMBEDDING_INFERENCE_FAILED = 8003
     RERANKER_FAILED = 8005
 
+    # Sync errors (9xxx)
+    SYNC_NOT_CONFIGURED = 9001
+    SYNC_REMOTE_FAILED = 9002
+    SYNC_PUSH_FAILED = 9003
+    SYNC_PULL_FAILED = 9004
+    SYNC_SPARSE_CHECKOUT_FAILED = 9005
+    SYNC_IMPORT_FAILED = 9006
+    SYNC_WRITE_REJECTED = 9007
+
 
 class ZettelkastenError(Exception):
     """Base exception for all Zettelkasten errors.
@@ -350,6 +359,27 @@ class EmbeddingError(ZettelkastenError):
         message: str,
         code: ErrorCode = ErrorCode.EMBEDDING_UNAVAILABLE,
         operation: Optional[str] = None,
+        original_error: Optional[Exception] = None,
+    ):
+        details: Dict[str, Any] = {}
+        if operation:
+            details["operation"] = operation
+        if original_error:
+            details["original_error"] = str(original_error)[:200]
+
+        super().__init__(message, code=code, details=details)
+        self.operation = operation
+        self.original_error = original_error
+
+
+class SyncError(ZettelkastenError):
+    """Raised for remote sync errors."""
+
+    def __init__(
+        self,
+        message: str,
+        operation: Optional[str] = None,
+        code: ErrorCode = ErrorCode.SYNC_REMOTE_FAILED,
         original_error: Optional[Exception] = None,
     ):
         details: Dict[str, Any] = {}

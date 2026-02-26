@@ -3,12 +3,13 @@
 import logging
 import os
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, model_validator
 
 from znote_mcp import __version__
+from znote_mcp.models.schema import SAFE_ID_PATTERN
 
 # Load environment variables from the project root .env file.
 # Anchored to __file__ so it works regardless of the process CWD
@@ -185,6 +186,38 @@ class ZettelkastenConfig(BaseModel):
         )
     )
 
+    # Remote sync configuration
+    sync_enabled: bool = Field(
+        default_factory=lambda: os.getenv("ZETTELKASTEN_SYNC_ENABLED", "false").lower()
+        in ("true", "1", "yes")
+    )
+    sync_user_id: Optional[str] = Field(
+        default_factory=lambda: os.getenv("ZETTELKASTEN_SYNC_USER_ID")
+        or os.getenv("ZETTELKASTEN_USER_ID")
+        or None
+    )
+    sync_repo_url: Optional[str] = Field(
+        default_factory=lambda: os.getenv("ZETTELKASTEN_SYNC_REPO") or None
+    )
+    sync_branch: Optional[str] = Field(
+        default_factory=lambda: os.getenv("ZETTELKASTEN_SYNC_BRANCH") or None
+    )
+    sync_push_delay: int = Field(
+        default_factory=lambda: int(os.getenv("ZETTELKASTEN_GIT_PUSH_DELAY", "120"))
+    )
+    sync_push_extend: int = Field(
+        default_factory=lambda: int(os.getenv("ZETTELKASTEN_GIT_PUSH_EXTEND", "60"))
+    )
+    sync_import_users: Optional[str] = Field(
+        default_factory=lambda: os.getenv("ZETTELKASTEN_IMPORT_USERS") or None
+    )
+    sync_import_on_startup: bool = Field(
+        default_factory=lambda: os.getenv(
+            "ZETTELKASTEN_IMPORT_ON_STARTUP", "true"
+        ).lower()
+        in ("true", "1", "yes")
+    )
+
     # Default note template
     default_note_template: str = Field(
         default=(
@@ -225,6 +258,35 @@ class ZettelkastenConfig(BaseModel):
                 )
         return self
 
+    @model_validator(mode="after")
+    def _validate_sync_config(self) -> "ZettelkastenConfig":
+        """Validate sync settings: require user_id and repo_url when enabled."""
+        if self.sync_enabled:
+            if not self.sync_user_id:
+                raise ValueError(
+                    "sync_user_id is required when sync_enabled=True. "
+                    "Set ZETTELKASTEN_SYNC_USER_ID or ZETTELKASTEN_USER_ID."
+                )
+            if not SAFE_ID_PATTERN.match(self.sync_user_id):
+                raise ValueError(
+                    f"sync_user_id '{self.sync_user_id}' contains invalid characters. "
+                    "Only alphanumeric, underscore, hyphen, and T are allowed."
+                )
+            if not self.sync_repo_url:
+                raise ValueError(
+                    "sync_repo_url is required when sync_enabled=True. "
+                    "Set ZETTELKASTEN_SYNC_REPO."
+                )
+            # Auto-derive branch if not explicitly set
+            if not self.sync_branch:
+                self.sync_branch = f"{self.sync_user_id}/notes"
+        elif self.sync_user_id and not SAFE_ID_PATTERN.match(self.sync_user_id):
+            raise ValueError(
+                f"sync_user_id '{self.sync_user_id}' contains invalid characters. "
+                "Only alphanumeric, underscore, hyphen, and T are allowed."
+            )
+        return self
+
     def get_absolute_path(self, path: Path) -> Path:
         """Convert a relative path to an absolute path based on base_dir."""
         if path.is_absolute():
@@ -247,6 +309,22 @@ class ZettelkastenConfig(BaseModel):
         vault_path = self.get_absolute_path(self.obsidian_vault_path)
         vault_path.mkdir(parents=True, exist_ok=True)
         return vault_path
+
+    @property
+    def sync_remote_dir(self) -> Path:
+        """Path to the sparse checkout directory for the shared remote repo."""
+        return self.get_absolute_path(self.notes_dir).parent / ".remote"
+
+    @property
+    def sync_imports_dir(self) -> Path:
+        """Path to the imports directory for symlinked remote user notes."""
+        return self.get_absolute_path(self.notes_dir).parent / "imports"
+
+    def get_import_users(self) -> List[str]:
+        """Parse comma-separated sync_import_users into a list of user IDs."""
+        if not self.sync_import_users:
+            return []
+        return [u.strip() for u in self.sync_import_users.split(",") if u.strip()]
 
 
 # Create a global config instance

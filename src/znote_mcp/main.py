@@ -128,10 +128,33 @@ def main():
         logger.error(f"Failed to initialize database: {e}")
         sys.exit(1)
 
+    # Create sync service if enabled
+    sync_service = None
+    if config.sync_enabled:
+        from znote_mcp.services.git_sync_service import GitSyncService
+
+        sync_service = GitSyncService(
+            user_id=config.sync_user_id,
+            repo_url=config.sync_repo_url,
+            branch=config.sync_branch or f"{config.sync_user_id}/notes",
+            remote_dir=config.sync_remote_dir,
+            notes_dir=config.get_absolute_path(config.notes_dir),
+            imports_dir=config.sync_imports_dir,
+            push_delay=config.sync_push_delay,
+            push_extend=config.sync_push_extend,
+            import_users=config.get_import_users(),
+        )
+        try:
+            sync_service.setup()
+            logger.info("Remote sync enabled for user '%s'", config.sync_user_id)
+        except Exception as e:
+            logger.warning("Remote sync setup failed, continuing without sync: %s", e)
+            sync_service = None
+
     # Create and run the MCP server with shared engine
     try:
         logger.info("Starting Zettelkasten MCP server")
-        server = ZettelkastenMcpServer(engine=engine)
+        server = ZettelkastenMcpServer(engine=engine, sync_service=sync_service)
         server.run()
     except Exception as e:
         logger.error(f"Error running server: {e}")

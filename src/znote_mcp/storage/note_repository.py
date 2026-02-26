@@ -690,6 +690,130 @@ class NoteRepository(Repository[Note]):
         fts_count = self.rebuild_fts()
         logger.info(f"Rebuilt FTS5 index with {fts_count} notes")
 
+    def import_notes_from_directory(
+        self, import_dir: Path, source_user: str
+    ) -> Dict[str, int]:
+        """Index imported notes from a directory into the database.
+
+        Does NOT create files in notes_dir (notes stay in their import directory).
+        Does NOT trigger git commits.
+        Sets is_imported=True and source_user on all imported notes.
+
+        Args:
+            import_dir: Directory containing .md files to import.
+            source_user: Username of the note's owner.
+
+        Returns:
+            Dict with keys: created, updated, deleted, total.
+
+        Raises:
+            ValidationError: If source_user fails SAFE_PROJECT_SEGMENT_PATTERN validation.
+        """
+        from znote_mcp.models.schema import SAFE_PROJECT_SEGMENT_PATTERN
+
+        if not SAFE_PROJECT_SEGMENT_PATTERN.match(source_user):
+            raise ValidationError(
+                f"Invalid source_user '{source_user}': "
+                "only alphanumeric, underscore, and hyphen allowed",
+                code=ErrorCode.SYNC_IMPORT_FAILED,
+            )
+
+        stats = {"created": 0, "updated": 0, "deleted": 0, "total": 0}
+
+        if not import_dir.exists():
+            logger.info("Import directory does not exist: %s", import_dir)
+            return stats
+
+        # Collect .md files from import directory
+        md_files = list(import_dir.rglob("*.md"))
+        stats["total"] = len(md_files)
+
+        # Track which imported IDs we see (for deletion of removed notes)
+        seen_ids = set()
+
+        with self.session_factory() as session:
+            for file_path in md_files:
+                try:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        content = f.read()
+                    note = self._parse_note_from_markdown(content)
+
+                    # Namespace the ID to avoid collisions
+                    prefix = f"{source_user}__"
+                    if not note.id.startswith(prefix):
+                        note.id = f"{prefix}{note.id}"
+
+                    # Mark as imported
+                    note.is_imported = True
+                    note.source_user = source_user
+
+                    # Strip untrusted metadata fields
+                    note.plan_id = None
+                    note.obsidian_path = None
+
+                    seen_ids.add(note.id)
+
+                    # Check if already exists in DB
+                    existing = session.scalar(
+                        select(DBNote).where(DBNote.id == note.id)
+                    )
+                    if existing:
+                        stats["updated"] += 1
+                    else:
+                        stats["created"] += 1
+
+                    self._sync_note_to_db(session, note)
+
+                except Exception as e:
+                    logger.warning(
+                        "Failed to import %s from %s: %s",
+                        file_path.name,
+                        source_user,
+                        e,
+                    )
+
+            # Remove DB entries for notes no longer in the import directory
+            prefix = f"{source_user}__"
+            existing_imported = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        "SELECT id FROM notes "
+                        "WHERE is_imported = 'true' AND source_user = :user"
+                    ),
+                    {"user": source_user},
+                )
+            }
+            stale_ids = existing_imported - seen_ids
+            for stale_id in stale_ids:
+                session.execute(
+                    text(
+                        "DELETE FROM links " "WHERE source_id = :id OR target_id = :id"
+                    ),
+                    {"id": stale_id},
+                )
+                session.execute(
+                    text("DELETE FROM note_tags WHERE note_id = :id"),
+                    {"id": stale_id},
+                )
+                session.execute(
+                    text("DELETE FROM notes WHERE id = :id"),
+                    {"id": stale_id},
+                )
+                stats["deleted"] += 1
+
+            session.commit()
+
+        logger.info(
+            "Imported notes from %s: created=%d, updated=%d, deleted=%d, total=%d",
+            source_user,
+            stats["created"],
+            stats["updated"],
+            stats["deleted"],
+            stats["total"],
+        )
+        return stats
+
     def _sync_note_to_db(self, session: Session, note: Note) -> None:
         """Synchronise a Note model into the database within an existing session.
 
@@ -716,6 +840,8 @@ class NoteRepository(Repository[Note]):
             db_note.obsidian_path = note.obsidian_path
             db_note.updated_at = note.updated_at
             db_note.project = note.project
+            db_note.is_imported = "true" if note.is_imported else "false"
+            db_note.source_user = note.source_user
         else:
             db_note = DBNote(
                 id=note.id,
@@ -730,6 +856,8 @@ class NoteRepository(Repository[Note]):
                 created_at=note.created_at,
                 updated_at=note.updated_at,
                 project=note.project,
+                is_imported="true" if note.is_imported else "false",
+                source_user=note.source_user,
             )
             session.add(db_note)
 
@@ -861,6 +989,8 @@ class NoteRepository(Repository[Note]):
                 else utc_now()
             ),
             metadata={},
+            is_imported=getattr(db_note, "is_imported", "false") == "true",
+            source_user=getattr(db_note, "source_user", None),
         )
 
     def _get_obsidian_mirror(self) -> Optional[ObsidianMirror]:
@@ -1191,6 +1321,23 @@ class NoteRepository(Repository[Note]):
             result = session.execute(select(func.count(DBNote.id)))
             return result.scalar() or 0
 
+    def get_source_users(self, note_ids: List[str]) -> Dict[str, str]:
+        """Get source_user for a batch of note IDs.
+
+        Returns a dict mapping note_id to source_user for imported notes only.
+        Notes without a source_user are excluded from the result.
+        """
+        if not note_ids:
+            return {}
+        with self.session_factory() as session:
+            rows = session.execute(
+                select(DBNote.id, DBNote.source_user).where(
+                    DBNote.id.in_(note_ids),
+                    DBNote.source_user.isnot(None),
+                )
+            ).all()
+            return {row[0]: row[1] for row in rows}
+
     def count_notes_by_type(self) -> Dict[str, int]:
         """Get note counts grouped by note_type using SQL GROUP BY.
 
@@ -1304,6 +1451,14 @@ class NoteRepository(Repository[Note]):
             if not existing_note:
                 raise NoteNotFoundError(note.id)
 
+            # Check if note is imported (read-only)
+            if existing_note.is_imported:
+                raise ValidationError(
+                    f"Cannot modify imported note '{note.id}' "
+                    f"(owned by {existing_note.source_user})",
+                    code=ErrorCode.SYNC_WRITE_REJECTED,
+                )
+
             # If title, project, purpose, or obsidian_path changed, delete old Obsidian mirror (will be recreated)
             if (
                 existing_note.title != note.title
@@ -1372,6 +1527,15 @@ class NoteRepository(Repository[Note]):
         """
         # Validate ID to prevent path traversal attacks
         validate_safe_path_component(id, "Note ID")
+
+        # Check if note is imported (read-only)
+        existing = self.get(id)
+        if existing and existing.is_imported:
+            raise ValidationError(
+                f"Cannot delete imported note '{id}' "
+                f"(owned by {existing.source_user})",
+                code=ErrorCode.SYNC_WRITE_REJECTED,
+            )
 
         # Acquire per-note lock to prevent race with update
         note_lock = self._get_note_lock(id)
