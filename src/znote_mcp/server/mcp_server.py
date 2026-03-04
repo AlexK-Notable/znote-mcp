@@ -254,7 +254,8 @@ class ZettelkastenMcpServer:
             Args:
                 identifier: The ID or title of the note
                 format: Output format:
-                    - "summary" (default): Structured overview with metadata
+                    - "summary" (default): Structured overview with metadata and content
+                    - "metadata": Metadata only (no content body) — compact for bulk lookups
                     - "markdown": Raw markdown with YAML frontmatter (for export/backup)
             Returns:
                 Note content with version hash (use version in zk_update_note/zk_delete_note
@@ -283,7 +284,7 @@ class ZettelkastenMcpServer:
                     if format == "markdown":
                         return self.zettel_service.export_note(note.id, "markdown")
 
-                    # Default summary format
+                    # Build metadata header (shared by summary and metadata formats)
                     result = f"# {note.title}\n"
                     result += f"ID: {note.id}\n"
                     result += f"Version: {version.commit_hash}\n"
@@ -300,7 +301,14 @@ class ZettelkastenMcpServer:
                     result += f"Updated: {note.updated_at.isoformat()}\n"
                     if note.tags:
                         result += f"Tags: {', '.join(tag.name for tag in note.tags)}\n"
-                    # Add note content, including the Links section added by _note_to_markdown()
+
+                    # Metadata-only format — no content body
+                    if format == "metadata":
+                        if note.links:
+                            result += f"Links: {len(note.links)} outgoing\n"
+                        return result
+
+                    # Default summary format — include content
                     result += f"\n{note.content}\n"
                     return result
                 except Exception as e:
@@ -588,6 +596,7 @@ class ZettelkastenMcpServer:
             note_type: Optional[str] = None,
             mode: str = "auto",
             limit: int = 10,
+            output: str = "full",
         ) -> str:
             """Search for notes by text, tags, or type.
             Args:
@@ -603,7 +612,11 @@ class ZettelkastenMcpServer:
                       Does not support tag/type filtering.
                     - "text": Keyword matching in titles/content with tag/type filters.
                 limit: Maximum number of results to return
+                output: Output verbosity:
+                    - "full" (default): Include content preview for each result
+                    - "compact": Omit content preview — just titles, IDs, tags, dates
             """
+            compact = output == "compact"
             with timed_operation(
                 "zk_search_notes", query=query[:30] if query else None, mode=mode
             ) as op:
@@ -643,23 +656,25 @@ class ZettelkastenMcpServer:
                         if not results:
                             return "No semantically similar notes found."
 
-                        output = f"Found {len(results)} semantically similar notes:\n\n"
+                        result_text = f"Found {len(results)} semantically similar notes:\n\n"
                         for i, result in enumerate(results, 1):
                             note = result.note
-                            output += f"{i}. {note.title} (ID: {note.id})\n"
-                            output += f"   Score: {result.score:.3f}"
+                            result_text += f"{i}. {note.title} (ID: {note.id})\n"
+                            result_text += f"   Score: {result.score:.3f}"
                             if result.reranked:
-                                output += " (reranked)"
-                            output += "\n"
+                                result_text += " (reranked)"
+                            result_text += "\n"
                             if note.source_user:
-                                output += f"   Source: {note.source_user}\n"
+                                result_text += f"   Source: {note.source_user}\n"
                             if note.tags:
-                                output += f"   Tags: {', '.join(tag.name for tag in note.tags)}\n"
-                            content_preview = note.content[:150].replace("\n", " ")
-                            if len(note.content) > 150:
-                                content_preview += "..."
-                            output += f"   Preview: {content_preview}\n\n"
-                        return output
+                                result_text += f"   Tags: {', '.join(tag.name for tag in note.tags)}\n"
+                            if not compact:
+                                content_preview = note.content[:150].replace("\n", " ")
+                                if len(note.content) > 150:
+                                    content_preview += "..."
+                                result_text += f"   Preview: {content_preview}\n"
+                            result_text += "\n"
+                        return result_text
 
                     elif mode == "text":
                         # Convert tags string to list if provided
@@ -687,23 +702,24 @@ class ZettelkastenMcpServer:
                             return "No matching notes found."
 
                         # Format results
-                        output = f"Found {len(results)} matching notes:\n\n"
+                        result_text = f"Found {len(results)} matching notes:\n\n"
                         for i, result in enumerate(results, 1):
                             note = result.note
-                            output += f"{i}. {note.title} (ID: {note.id})\n"
+                            result_text += f"{i}. {note.title} (ID: {note.id})\n"
                             if note.source_user:
-                                output += f"   Source: {note.source_user}\n"
+                                result_text += f"   Source: {note.source_user}\n"
                             if note.tags:
-                                output += f"   Tags: {', '.join(tag.name for tag in note.tags)}\n"
-                            output += (
+                                result_text += f"   Tags: {', '.join(tag.name for tag in note.tags)}\n"
+                            result_text += (
                                 f"   Created: {note.created_at.strftime('%Y-%m-%d')}\n"
                             )
-                            # Add a snippet of content (first 150 chars)
-                            content_preview = note.content[:150].replace("\n", " ")
-                            if len(note.content) > 150:
-                                content_preview += "..."
-                            output += f"   Preview: {content_preview}\n\n"
-                        return output
+                            if not compact:
+                                content_preview = note.content[:150].replace("\n", " ")
+                                if len(note.content) > 150:
+                                    content_preview += "..."
+                                result_text += f"   Preview: {content_preview}\n"
+                            result_text += "\n"
+                        return result_text
 
                     else:
                         return (
