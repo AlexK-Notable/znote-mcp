@@ -522,71 +522,69 @@ class ZettelkastenMcpServer:
             except Exception as e:
                 return self.format_error_response(e)
 
-        # Add a link between notes
-        @self.mcp.tool(name="zk_create_link")
-        def zk_create_link(
-            source_id: str,
-            target_id: str,
+        # Link management (consolidated)
+        @self.mcp.tool(name="zk_manage_links")
+        def zk_manage_links(
+            action: str = "create",
+            source_id: str = "",
+            target_id: str = "",
             link_type: str = "reference",
             description: Optional[str] = None,
             bidirectional: bool = False,
         ) -> str:
-            """Create a link between two notes.
+            """Manage links between notes — create or remove.
+
+            Use action="create" to create a link between two notes.
+            Use action="remove" to remove a link between two notes.
+
             Args:
+                action: "create" or "remove"
                 source_id: ID of the source note
                 target_id: ID of the target note
                 link_type: Type of link (reference, extends, refines, contradicts, questions, supports, related)
-                description: Optional description of the link
-                bidirectional: Whether to create a link in both directions
+                description: Optional description of the link (for action="create")
+                bidirectional: Whether to create/remove link in both directions
             """
-            try:
-                # Convert link_type string to enum
+            if action == "create":
+                if not source_id or not target_id:
+                    return "Error: source_id and target_id are required"
                 try:
-                    link_type_enum = LinkType(link_type.lower())
-                except ValueError:
-                    return f"Invalid link type: {link_type}. Valid types are: {', '.join(t.value for t in LinkType)}"
-
-                # Create the link
-                source_note, target_note = self.zettel_service.create_link(
-                    source_id=source_id,
-                    target_id=target_id,
-                    link_type=link_type_enum,
-                    description=description,
-                    bidirectional=bidirectional,
-                )
-                if bidirectional:
-                    return f"Bidirectional link created between {source_id} and {target_id}"
-                else:
-                    return f"Link created from {source_id} to {target_id}"
-            except Exception as e:
-                if "UNIQUE constraint failed" in str(e):
-                    return f"A link of this type already exists between these notes. Try a different link type."
-                return self.format_error_response(e)
-
-        # Remove a link between notes
-        @self.mcp.tool(name="zk_remove_link")
-        def zk_remove_link(
-            source_id: str, target_id: str, bidirectional: bool = False
-        ) -> str:
-            """Remove a link between two notes.
-            Args:
-                source_id: ID of the source note
-                target_id: ID of the target note
-                bidirectional: Whether to remove the link in both directions
-            """
-            try:
-                # Remove the link
-                source_note, target_note = self.zettel_service.remove_link(
-                    source_id=str(source_id),
-                    target_id=str(target_id),
-                    bidirectional=bidirectional,
-                )
-                if bidirectional:
-                    return f"Bidirectional link removed between {source_id} and {target_id}"
-                else:
-                    return f"Link removed from {source_id} to {target_id}"
-            except Exception as e:
-                return self.format_error_response(e)
+                    try:
+                        link_type_enum = LinkType(link_type.lower())
+                    except ValueError:
+                        return f"Invalid link type: {link_type}. Valid types are: {', '.join(t.value for t in LinkType)}"
+                    source_note, target_note = self.zettel_service.create_link(
+                        source_id=source_id,
+                        target_id=target_id,
+                        link_type=link_type_enum,
+                        description=description,
+                        bidirectional=bidirectional,
+                    )
+                    if bidirectional:
+                        return f"Bidirectional link created between {source_id} and {target_id}"
+                    else:
+                        return f"Link created from {source_id} to {target_id}"
+                except Exception as e:
+                    if "UNIQUE constraint failed" in str(e):
+                        return "A link of this type already exists between these notes. Try a different link type."
+                    return self.format_error_response(e)
+            elif action == "remove":
+                if not source_id or not target_id:
+                    return "Error: source_id and target_id are required"
+                try:
+                    source_note, target_note = self.zettel_service.remove_link(
+                        source_id=str(source_id),
+                        target_id=str(target_id),
+                        bidirectional=bidirectional,
+                    )
+                    if bidirectional:
+                        return f"Bidirectional link removed between {source_id} and {target_id}"
+                    else:
+                        return f"Link removed from {source_id} to {target_id}"
+                except Exception as e:
+                    return self.format_error_response(e)
+            else:
+                return f"Unknown action '{action}'. Choose from: create, remove"
 
         # Search for notes
         @self.mcp.tool(name="zk_search_notes")
@@ -793,18 +791,30 @@ class ZettelkastenMcpServer:
                 except Exception as e:
                     return self.format_error_response(e)
 
-        # Add tags to notes (supports batch mode with comma-separated values)
-        @self.mcp.tool(name="zk_add_tag")
-        def zk_add_tag(note_id: str, tag: str) -> str:
-            """Add one or more tags to one or more notes.
+        # Tag management (consolidated)
+        @self.mcp.tool(name="zk_manage_tags")
+        def zk_manage_tags(
+            action: str = "add",
+            note_id: str = "",
+            tag: str = "",
+        ) -> str:
+            """Manage tags on notes — add or remove.
 
             Supports batch mode: pass comma-separated note IDs and/or
             comma-separated tags to operate on multiple items at once.
 
             Args:
+                action: "add" or "remove"
                 note_id: The ID of the note, or comma-separated IDs for batch mode
-                tag: The tag to add, or comma-separated tags for batch mode
+                tag: The tag to add/remove, or comma-separated tags for batch mode
             """
+            if action not in ("add", "remove"):
+                return f"Unknown action '{action}'. Choose from: add, remove"
+            if not note_id:
+                return "Error: note_id is required"
+            if not tag:
+                return "Error: tag is required"
+
             try:
                 ids = [id.strip() for id in note_id.split(",") if id.strip()]
                 tags = [t.strip() for t in tag.split(",") if t.strip()]
@@ -814,48 +824,20 @@ class ZettelkastenMcpServer:
                 if not tags:
                     return "Error: Tag cannot be empty"
 
-                # Batch mode: multiple IDs or multiple tags
-                if len(ids) > 1 or len(tags) > 1:
-                    updated = self.zettel_service.bulk_add_tags(ids, tags)
-                    return f"Added tags [{', '.join(tags)}] to {updated} notes."
-
-                # Single mode: existing behavior
-                note = self.zettel_service.add_tag_to_note(str(ids[0]), tags[0])
-                return f"Tag '{tags[0]}' added to note '{note.title}' (ID: {note.id})"
-            except Exception as e:
-                return self.format_error_response(e)
-
-        # Remove tags from notes (supports batch mode with comma-separated values)
-        @self.mcp.tool(name="zk_remove_tag")
-        def zk_remove_tag(note_id: str, tag: str) -> str:
-            """Remove one or more tags from one or more notes.
-
-            Supports batch mode: pass comma-separated note IDs and/or
-            comma-separated tags to operate on multiple items at once.
-
-            Args:
-                note_id: The ID of the note, or comma-separated IDs for batch mode
-                tag: The tag to remove, or comma-separated tags for batch mode
-            """
-            try:
-                ids = [id.strip() for id in note_id.split(",") if id.strip()]
-                tags = [t.strip() for t in tag.split(",") if t.strip()]
-
-                if not ids:
-                    return "Error: No note IDs provided."
-                if not tags:
-                    return "Error: Tag cannot be empty"
-
-                # Batch mode: multiple IDs or multiple tags
-                if len(ids) > 1 or len(tags) > 1:
-                    updated = self.zettel_service.bulk_remove_tags(ids, tags)
-                    return f"Removed tags [{', '.join(tags)}] from {updated} notes."
-
-                # Single mode: existing behavior
-                note = self.zettel_service.remove_tag_from_note(str(ids[0]), tags[0])
-                return (
-                    f"Tag '{tags[0]}' removed from note '{note.title}' (ID: {note.id})"
-                )
+                if action == "add":
+                    if len(ids) > 1 or len(tags) > 1:
+                        updated = self.zettel_service.bulk_add_tags(ids, tags)
+                        return f"Added tags [{', '.join(tags)}] to {updated} notes."
+                    note = self.zettel_service.add_tag_to_note(str(ids[0]), tags[0])
+                    return f"Tag '{tags[0]}' added to note '{note.title}' (ID: {note.id})"
+                else:  # remove
+                    if len(ids) > 1 or len(tags) > 1:
+                        updated = self.zettel_service.bulk_remove_tags(ids, tags)
+                        return f"Removed tags [{', '.join(tags)}] from {updated} notes."
+                    note = self.zettel_service.remove_tag_from_note(str(ids[0]), tags[0])
+                    return (
+                        f"Tag '{tags[0]}' removed from note '{note.title}' (ID: {note.id})"
+                    )
             except Exception as e:
                 return self.format_error_response(e)
 
@@ -1754,160 +1736,152 @@ class ZettelkastenMcpServer:
                 except Exception as e:
                     return self.format_error_response(e)
 
-        # ========== Project Management Tools ==========
+        # ========== Project Management (consolidated) ==========
 
-        @self.mcp.tool(name="zk_create_project")
-        def zk_create_project(
-            project_id: str,
-            name: str,
+        @self.mcp.tool(name="zk_manage_projects")
+        def zk_manage_projects(
+            action: str = "list",
+            project_id: str = "",
+            name: str = "",
             description: Optional[str] = None,
             parent_id: Optional[str] = None,
             path: Optional[str] = None,
+            include_note_counts: bool = True,
+            confirm: bool = False,
         ) -> str:
-            """Create a new project in the registry.
+            """Manage projects — create, list, get details, or delete.
 
-            Projects organize notes and can be hierarchical (sub-projects).
-            Use '/' in project_id for hierarchy: "monorepo/frontend".
-
-            Args:
-                project_id: Unique project ID (use '/' for sub-projects, e.g., "monorepo/frontend")
-                name: Human-readable display name
-                description: Brief description for LLM context (helps route notes correctly)
-                parent_id: Parent project ID for sub-projects (optional)
-                path: Filesystem path associated with project (optional)
-            """
-            with timed_operation("zk_create_project", project_id=project_id) as op:
-                try:
-                    project = Project(
-                        id=project_id,
-                        name=name,
-                        description=description,
-                        parent_id=parent_id,
-                        path=path,
-                    )
-                    created = self.project_repository.create(project)
-                    op["created"] = True
-                    return (
-                        f"Project created: {created.id}\n"
-                        f"   Name: {created.name}\n"
-                        f"   Description: {created.description or '(none)'}\n"
-                        f"   Parent: {created.parent_id or '(root project)'}"
-                    )
-                except ValidationError as e:
-                    return f"Error: {e.message}"
-                except Exception as e:
-                    return self.format_error_response(e)
-
-        @self.mcp.tool(name="zk_list_projects")
-        def zk_list_projects(include_note_counts: bool = True) -> str:
-            """List all projects in the registry.
-
-            Use this to see available projects before creating notes.
+            Use action="create" to create a new project (requires project_id, name).
+            Use action="list" to list all projects in the registry.
+            Use action="get" to get details of a specific project (requires project_id).
+            Use action="delete" to delete a project (requires project_id, confirm=True).
 
             Args:
-                include_note_counts: Include count of notes per project
+                action: "create", "list", "get", or "delete"
+                project_id: Unique project ID (for create/get/delete)
+                name: Human-readable display name (for action="create")
+                description: Brief description (for action="create")
+                parent_id: Parent project ID for sub-projects (for action="create")
+                path: Filesystem path associated with project (for action="create")
+                include_note_counts: Include note counts (for action="list")
+                confirm: Must be True to proceed with delete (for action="delete")
             """
-            with timed_operation("zk_list_projects") as op:
-                try:
-                    projects = self.project_repository.get_all()
-                    op["count"] = len(projects)
-
-                    if not projects:
+            if action == "create":
+                if not project_id:
+                    return "Error: project_id is required when action='create'"
+                if not name:
+                    return "Error: name is required when action='create'"
+                with timed_operation("zk_manage_projects_create", project_id=project_id) as op:
+                    try:
+                        project = Project(
+                            id=project_id,
+                            name=name,
+                            description=description,
+                            parent_id=parent_id,
+                            path=path,
+                        )
+                        created = self.project_repository.create(project)
+                        op["created"] = True
                         return (
-                            "No projects registered yet.\n\n"
-                            "Use zk_create_project to create one."
+                            f"Project created: {created.id}\n"
+                            f"   Name: {created.name}\n"
+                            f"   Description: {created.description or '(none)'}\n"
+                            f"   Parent: {created.parent_id or '(root project)'}"
                         )
+                    except ValidationError as e:
+                        return f"Error: {e.message}"
+                    except Exception as e:
+                        return self.format_error_response(e)
+            elif action == "list":
+                with timed_operation("zk_manage_projects_list") as op:
+                    try:
+                        projects = self.project_repository.get_all()
+                        op["count"] = len(projects)
 
-                    output = f"Projects ({len(projects)}):\n\n"
-                    for p in projects:
-                        indent = "  " * p.id.count("/")
-                        note_count = ""
-                        if include_note_counts:
-                            count = self.project_repository.get_note_count(p.id)
-                            note_count = f" ({count} notes)"
+                        if not projects:
+                            return (
+                                "No projects registered yet.\n\n"
+                                "Use zk_manage_projects(action='create', ...) to create one."
+                            )
 
-                        output += f"{indent}* {p.id}{note_count}\n"
-                        output += f"{indent}  Name: {p.name}\n"
-                        if p.description:
-                            output += f"{indent}  Description: {p.description}\n"
-                        output += "\n"
+                        output = f"Projects ({len(projects)}):\n\n"
+                        for p in projects:
+                            indent = "  " * p.id.count("/")
+                            note_count = ""
+                            if include_note_counts:
+                                count = self.project_repository.get_note_count(p.id)
+                                note_count = f" ({count} notes)"
 
-                    return output.rstrip()
-                except Exception as e:
-                    return self.format_error_response(e)
+                            output += f"{indent}* {p.id}{note_count}\n"
+                            output += f"{indent}  Name: {p.name}\n"
+                            if p.description:
+                                output += f"{indent}  Description: {p.description}\n"
+                            output += "\n"
 
-        @self.mcp.tool(name="zk_get_project")
-        def zk_get_project(project_id: str) -> str:
-            """Get details of a specific project.
+                        return output.rstrip()
+                    except Exception as e:
+                        return self.format_error_response(e)
+            elif action == "get":
+                if not project_id:
+                    return "Error: project_id is required when action='get'"
+                with timed_operation("zk_manage_projects_get", project_id=project_id) as op:
+                    try:
+                        project = self.project_repository.get(project_id)
+                        if not project:
+                            return f"Project '{project_id}' not found."
 
-            Args:
-                project_id: The project ID to look up
-            """
-            with timed_operation("zk_get_project", project_id=project_id) as op:
-                try:
-                    project = self.project_repository.get(project_id)
-                    if not project:
-                        return f"Project '{project_id}' not found."
-
-                    note_count = self.project_repository.get_note_count(project_id)
-                    children = self.project_repository.search(parent_id=project_id)
-
-                    output = f"Project: {project.id}\n\n"
-                    output += f"Name: {project.name}\n"
-                    output += f"Description: {project.description or '(none)'}\n"
-                    output += f"Parent: {project.parent_id or '(root project)'}\n"
-                    output += f"Path: {project.path or '(not set)'}\n"
-                    output += f"Notes: {note_count}\n"
-                    output += f"Created: {project.created_at.isoformat()}\n"
-
-                    if children:
-                        output += f"\nSub-projects ({len(children)}):\n"
-                        for child in children:
-                            output += f"  * {child.id}\n"
-
-                    if project.metadata:
-                        output += (
-                            f"\nMetadata: {json.dumps(project.metadata, indent=2)}\n"
-                        )
-
-                    return output
-                except Exception as e:
-                    return self.format_error_response(e)
-
-        @self.mcp.tool(name="zk_delete_project")
-        def zk_delete_project(project_id: str, confirm: bool = False) -> str:
-            """Delete a project from the registry.
-
-            Cannot delete projects that have notes or sub-projects.
-            Move or delete notes first, then delete child projects.
-
-            Args:
-                project_id: The project ID to delete
-                confirm: Must be True to proceed (safety check)
-            """
-            with timed_operation("zk_delete_project", project_id=project_id) as op:
-                try:
-                    project = self.project_repository.get(project_id)
-                    if not project:
-                        return f"Project '{project_id}' not found."
-
-                    if not confirm:
                         note_count = self.project_repository.get_note_count(project_id)
                         children = self.project_repository.search(parent_id=project_id)
-                        return (
-                            f"Delete project '{project_id}'?\n\n"
-                            f"Notes in project: {note_count}\n"
-                            f"Sub-projects: {len(children)}\n\n"
-                            "To proceed, call again with confirm=True"
-                        )
 
-                    self.project_repository.delete(project_id)
-                    op["deleted"] = True
-                    return f"Project '{project_id}' deleted."
-                except ValidationError as e:
-                    return f"Error: {e.message}"
-                except Exception as e:
-                    return self.format_error_response(e)
+                        output = f"Project: {project.id}\n\n"
+                        output += f"Name: {project.name}\n"
+                        output += f"Description: {project.description or '(none)'}\n"
+                        output += f"Parent: {project.parent_id or '(root project)'}\n"
+                        output += f"Path: {project.path or '(not set)'}\n"
+                        output += f"Notes: {note_count}\n"
+                        output += f"Created: {project.created_at.isoformat()}\n"
+
+                        if children:
+                            output += f"\nSub-projects ({len(children)}):\n"
+                            for child in children:
+                                output += f"  * {child.id}\n"
+
+                        if project.metadata:
+                            output += (
+                                f"\nMetadata: {json.dumps(project.metadata, indent=2)}\n"
+                            )
+
+                        return output
+                    except Exception as e:
+                        return self.format_error_response(e)
+            elif action == "delete":
+                if not project_id:
+                    return "Error: project_id is required when action='delete'"
+                with timed_operation("zk_manage_projects_delete", project_id=project_id) as op:
+                    try:
+                        project = self.project_repository.get(project_id)
+                        if not project:
+                            return f"Project '{project_id}' not found."
+
+                        if not confirm:
+                            note_count = self.project_repository.get_note_count(project_id)
+                            children = self.project_repository.search(parent_id=project_id)
+                            return (
+                                f"Delete project '{project_id}'?\n\n"
+                                f"Notes in project: {note_count}\n"
+                                f"Sub-projects: {len(children)}\n\n"
+                                "To proceed, call again with confirm=True"
+                            )
+
+                        self.project_repository.delete(project_id)
+                        op["deleted"] = True
+                        return f"Project '{project_id}' deleted."
+                    except ValidationError as e:
+                        return f"Error: {e.message}"
+                    except Exception as e:
+                        return self.format_error_response(e)
+            else:
+                return f"Unknown action '{action}'. Choose from: create, list, get, delete"
 
     def _setup_sync_wizard(self) -> str:
         """Run the sync setup wizard. Validates prerequisites and initializes.

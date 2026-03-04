@@ -671,7 +671,7 @@ Test content for parsing links from markdown.
         assert "Testing extends relationship" in result
 
     def test_mcp_create_link_tool(self, zettel_service):
-        """Test that zk_create_link correctly creates links with semantic types."""
+        """Test that zk_manage_links correctly creates links with semantic types."""
         # Create test notes
         source_note = zettel_service.create_note(
             title="MCP Create Link Source",
@@ -690,12 +690,13 @@ Test content for parsing links from markdown.
         server = ZettelkastenMcpServer()
         server.zettel_service = zettel_service
 
-        # Access the zk_create_link tool through the tool manager
-        tool = server.mcp._tool_manager.get_tool("zk_create_link")
-        assert tool is not None, "zk_create_link tool not found"
-        create_link_func = tool.fn
+        # Access the zk_manage_links tool through the tool manager
+        tool = server.mcp._tool_manager.get_tool("zk_manage_links")
+        assert tool is not None, "zk_manage_links tool not found"
+        manage_links_func = tool.fn
 
-        result = create_link_func(
+        result = manage_links_func(
+            action="create",
             source_id=source_note.id,
             target_id=target_note.id,
             link_type="supports",

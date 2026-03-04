@@ -171,8 +171,8 @@ class TestMCPIntegration:
         target_id = extract_note_id(result2)
 
         # Create a link
-        link_result = tools["zk_create_link"](
-            source_id=source_id, target_id=target_id, link_type="reference"
+        link_result = tools["zk_manage_links"](
+            action="create", source_id=source_id, target_id=target_id, link_type="reference"
         )
 
         assert "created" in link_result.lower() or "link" in link_result.lower()
@@ -190,7 +190,7 @@ class TestMCPIntegration:
         note_id = extract_note_id(result)
 
         # Add a tag
-        add_result = tools["zk_add_tag"](note_id, "new-tag")
+        add_result = tools["zk_manage_tags"](action="add", note_id=note_id, tag="new-tag")
         assert "added" in add_result.lower() or "new-tag" in add_result
 
         # Verify tag is present
@@ -198,7 +198,7 @@ class TestMCPIntegration:
         assert "new-tag" in get_result
 
         # Remove the tag
-        remove_result = tools["zk_remove_tag"](note_id, "new-tag")
+        remove_result = tools["zk_manage_tags"](action="remove", note_id=note_id, tag="new-tag")
         assert "removed" in remove_result.lower()
 
     def test_bulk_operations_integration(self, mcp_server):
@@ -294,8 +294,8 @@ class TestMCPIntegration:
         server, tools = mcp_server
 
         # Try to create link with non-existent notes
-        result = tools["zk_create_link"](
-            source_id="nonexistent-1", target_id="nonexistent-2", link_type="reference"
+        result = tools["zk_manage_links"](
+            action="create", source_id="nonexistent-1", target_id="nonexistent-2", link_type="reference"
         )
         assert "error" in result.lower() or "not found" in result.lower()
 

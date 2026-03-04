@@ -1,6 +1,6 @@
 """Protocol integration tests for the Zettelkasten MCP server.
 
-These tests exercise all 22 MCP tools through the full JSON-RPC protocol
+These tests exercise all 17 MCP tools through the full JSON-RPC protocol
 using a real ClientSession connected to a real FastMCP server. No mocking
 of transport, server, or session internals.
 
@@ -28,18 +28,16 @@ from tests.conftest_protocol import (  # noqa: F401 — fixture used by pytest
     semantic_protocol_config,
 )
 
-# All 22 tools that should be registered on the server
+# All 17 tools that should be registered on the server
 ALL_TOOL_NAMES = {
     "zk_create_note",
     "zk_get_note",
     "zk_update_note",
     "zk_delete_note",
-    "zk_create_link",
-    "zk_remove_link",
+    "zk_manage_links",
     "zk_search_notes",
     "zk_fts_search",
-    "zk_add_tag",
-    "zk_remove_tag",
+    "zk_manage_tags",
     "zk_cleanup_tags",
     "zk_bulk_create_notes",
     "zk_list_notes",
@@ -47,10 +45,7 @@ ALL_TOOL_NAMES = {
     "zk_status",
     "zk_system",
     "zk_restore",
-    "zk_create_project",
-    "zk_list_projects",
-    "zk_get_project",
-    "zk_delete_project",
+    "zk_manage_projects",
     "zk_note_history",
 }
 
@@ -71,8 +66,8 @@ class TestMCPProtocolConnection:
         assert len(tools_result.tools) > 0
 
     @pytest.mark.anyio
-    async def test_list_tools_returns_all_22_tools(self, mcp_client):
-        """All 22 registered tools are discoverable via the protocol."""
+    async def test_list_tools_returns_all_17_tools(self, mcp_client):
+        """All 17 registered tools are discoverable via the protocol."""
         tools_result = await mcp_client.list_tools()
         tool_names = {t.name for t in tools_result.tools}
         assert tool_names == ALL_TOOL_NAMES, (
@@ -321,8 +316,9 @@ class TestMCPProtocolLinks:
         target_id = extract_note_id_from_protocol(r2)
 
         link_result = await mcp_client.call_tool(
-            "zk_create_link",
+            "zk_manage_links",
             {
+                "action": "create",
                 "source_id": source_id,
                 "target_id": target_id,
                 "link_type": "reference",
@@ -354,8 +350,9 @@ class TestMCPProtocolLinks:
         sat_id = extract_note_id_from_protocol(r2)
 
         await mcp_client.call_tool(
-            "zk_create_link",
+            "zk_manage_links",
             {
+                "action": "create",
                 "source_id": hub_id,
                 "target_id": sat_id,
                 "link_type": "extends",
@@ -425,7 +422,8 @@ class TestMCPProtocolBatch:
 
         # Add tag
         add_result = await mcp_client.call_tool(
-            "zk_add_tag", {"note_id": note_id, "tag": "ephemeral-tag"}
+            "zk_manage_tags",
+            {"action": "add", "note_id": note_id, "tag": "ephemeral-tag"},
         )
         add_text = get_text(add_result)
         assert "ephemeral-tag" in add_text
@@ -436,7 +434,8 @@ class TestMCPProtocolBatch:
 
         # Remove tag
         remove_result = await mcp_client.call_tool(
-            "zk_remove_tag", {"note_id": note_id, "tag": "ephemeral-tag"}
+            "zk_manage_tags",
+            {"action": "remove", "note_id": note_id, "tag": "ephemeral-tag"},
         )
         remove_text = get_text(remove_result)
         assert "ephemeral-tag" in remove_text
@@ -601,8 +600,9 @@ class TestMCPProtocolErrorHandling:
     async def test_create_link_nonexistent_notes(self, mcp_client):
         """Linking bogus note IDs returns an error response."""
         result = await mcp_client.call_tool(
-            "zk_create_link",
+            "zk_manage_links",
             {
+                "action": "create",
                 "source_id": "nonexistent-source-id",
                 "target_id": "nonexistent-target-id",
                 "link_type": "reference",
