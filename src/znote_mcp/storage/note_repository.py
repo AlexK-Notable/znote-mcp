@@ -1408,11 +1408,14 @@ class NoteRepository(Repository[Note]):
 
         return [self._db_note_to_model(n) for n in db_notes]
 
-    def get_by_project(self, project: str) -> List[Note]:
-        """Get all notes for a specific project using SQL-level filtering.
+    def get_by_project(
+        self, project: str, limit: Optional[int] = None
+    ) -> List[Note]:
+        """Get notes for a specific project using SQL-level filtering.
 
         Args:
             project: The project name to filter by.
+            limit: Maximum number of notes to return.
 
         Returns:
             List of Note objects belonging to the specified project.
@@ -1421,12 +1424,15 @@ class NoteRepository(Repository[Note]):
             query = (
                 select(DBNote)
                 .where(DBNote.project == project)
+                .order_by(DBNote.updated_at.desc())
                 .options(
                     joinedload(DBNote.tags),
                     joinedload(DBNote.outgoing_links),
                     joinedload(DBNote.incoming_links),
                 )
             )
+            if limit is not None:
+                query = query.limit(limit)
             db_notes = session.execute(query).unique().scalars().all()
 
         notes = []
@@ -1436,6 +1442,21 @@ class NoteRepository(Repository[Note]):
             except Exception as e:
                 logger.error(f"Error converting note {db_note.id}: {e}")
         return notes
+
+    def count_notes_in_project(self, project: str) -> int:
+        """Count notes in a specific project.
+
+        Args:
+            project: The project name to count notes for.
+
+        Returns:
+            Number of notes in the project.
+        """
+        with self.session_factory() as session:
+            result = session.execute(
+                select(func.count(DBNote.id)).where(DBNote.project == project)
+            )
+            return result.scalar() or 0
 
     def update(self, note: Note) -> Note:
         """Update a note.
@@ -1908,13 +1929,15 @@ class NoteRepository(Repository[Note]):
         """Rebuild the FTS5 index from the notes table (delegates to FtsIndex)."""
         return self._fts.rebuild()
 
-    def find_by_tag(self, tag: Union[str, Tag]) -> List[Note]:
+    def find_by_tag(
+        self, tag: Union[str, Tag], limit: Optional[int] = None
+    ) -> List[Note]:
         """Find notes by tag."""
         tag_name = tag.name if isinstance(tag, Tag) else tag
-        return self.search(tag=tag_name)
+        return self.search(tag=tag_name, limit=limit)
 
     def find_linked_notes(
-        self, note_id: str, direction: str = "outgoing"
+        self, note_id: str, direction: str = "outgoing", limit: Optional[int] = None
     ) -> List[Note]:
         """Find notes linked to/from this note."""
         with self.session_factory() as session:
@@ -1970,13 +1993,18 @@ class NoteRepository(Repository[Note]):
                     f"Invalid direction: {direction}. Use 'outgoing', 'incoming', or 'both'"
                 )
 
+            if limit is not None:
+                query = query.limit(limit)
+
             result = session.execute(query)
             # Apply unique() to handle the duplicate rows from eager loading
             db_notes = result.unique().scalars().all()
 
         return [self._db_note_to_model(db) for db in db_notes]
 
-    def find_similarity_candidates(self, note_id: str) -> List[Note]:
+    def find_similarity_candidates(
+        self, note_id: str, limit: Optional[int] = None
+    ) -> List[Note]:
         """Find candidate notes for similarity comparison using SQL filtering.
 
         Returns notes that share at least one tag with the given note OR have
@@ -2071,6 +2099,8 @@ class NoteRepository(Repository[Note]):
             except Exception as e:
                 logger.warning(f"Failed to convert candidate note {db_note.id}: {e}")
 
+        if limit is not None:
+            candidates = candidates[:limit]
         return candidates
 
     def get_all_tags(self) -> List[Tag]:
@@ -2119,8 +2149,13 @@ class NoteRepository(Repository[Note]):
             session.commit()
             return count
 
-    def find_orphaned_note_ids(self) -> List[str]:
+    def find_orphaned_note_ids(
+        self, limit: Optional[int] = None
+    ) -> List[str]:
         """Find note IDs that have no incoming or outgoing links.
+
+        Args:
+            limit: Maximum number of orphaned note IDs to return.
 
         Returns:
             List of note IDs for orphaned notes.
@@ -2138,9 +2173,36 @@ class NoteRepository(Repository[Note]):
             )
 
             # Query for orphaned note IDs only (lightweight)
-            query = select(DBNote.id).where(DBNote.id.not_in(select(notes_with_links)))
+            query = (
+                select(DBNote.id)
+                .where(DBNote.id.not_in(select(notes_with_links)))
+                .order_by(DBNote.updated_at.desc())
+            )
+            if limit is not None:
+                query = query.limit(limit)
 
             return list(session.scalars(query).all())
+
+    def count_orphaned_notes(self) -> int:
+        """Count notes with no incoming or outgoing links.
+
+        Returns:
+            Number of orphaned notes.
+        """
+        with self.session_factory() as session:
+            notes_with_links = (
+                select(DBNote.id)
+                .outerjoin(
+                    DBLink,
+                    or_(DBNote.id == DBLink.source_id, DBNote.id == DBLink.target_id),
+                )
+                .where(or_(DBLink.source_id != None, DBLink.target_id != None))
+                .subquery()
+            )
+            query = select(func.count(DBNote.id)).where(
+                DBNote.id.not_in(select(notes_with_links))
+            )
+            return session.execute(query).scalar() or 0
 
     def find_central_note_ids_with_counts(
         self, limit: int = 10

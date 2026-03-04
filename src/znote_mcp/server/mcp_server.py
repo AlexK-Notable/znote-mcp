@@ -715,7 +715,7 @@ class ZettelkastenMcpServer:
 
         # Full-text search with FTS5
         @self.mcp.tool(name="zk_fts_search")
-        def zk_fts_search(query: str, limit: int = 20, highlight: bool = True) -> str:
+        def zk_fts_search(query: str, limit: int = 10, highlight: bool = True) -> str:
             """Full-text search using FTS5 with advanced query syntax.
             Args:
                 query: Search query. Supports:
@@ -987,7 +987,8 @@ class ZettelkastenMcpServer:
                             start_date=start_datetime,
                             end_date=end_datetime,
                             use_updated=use_updated,
-                        )[:limit]
+                            limit=limit,
+                        )
                         op["result_count"] = len(notes)
 
                         if not notes:
@@ -1004,15 +1005,14 @@ class ZettelkastenMcpServer:
                     elif mode == "by_project":
                         if not project:
                             return "Error: 'project' parameter is required for mode='by_project'"
-                        notes = self.zettel_service.get_notes_by_project(project)
-                        op["result_count"] = len(notes)
-
-                        if not notes:
+                        total_in_project = self.zettel_service.count_notes_in_project(project)
+                        if total_in_project == 0:
                             return f"No notes found in project '{project}'."
 
-                        output = (
-                            f"Notes in project '{project}' ({len(notes)} results):\n\n"
-                        )
+                        notes = self.zettel_service.get_notes_by_project(project, limit=limit)
+                        op["result_count"] = len(notes)
+
+                        output = f"Notes in project '{project}' (showing {len(notes)} of {total_in_project}):\n\n"
                         for i, note in enumerate(notes, 1):
                             output += f"{i}. {note.title} (ID: {note.id})\n"
                             output += f"   Type: {note.note_type.value}\n"
@@ -1038,17 +1038,16 @@ class ZettelkastenMcpServer:
                         return output
 
                     elif mode == "orphans":
-                        orphans = self.search_service.find_orphaned_notes()
-                        op["result_count"] = len(orphans)
-
-                        if not orphans:
+                        total_orphans = self.search_service.count_orphaned_notes()
+                        if total_orphans == 0:
                             return (
                                 "No orphaned notes found. All notes have connections!"
                             )
 
-                        output = (
-                            f"Orphaned notes ({len(orphans)} with no connections):\n\n"
-                        )
+                        orphans = self.search_service.find_orphaned_notes(limit=limit)
+                        op["result_count"] = len(orphans)
+
+                        output = f"Orphaned notes (showing {len(orphans)} of {total_orphans} with no connections):\n\n"
                         for i, note in enumerate(orphans, 1):
                             output += f"{i}. {note.title} (ID: {note.id})\n"
                             output += f"   Type: {note.note_type.value} | Project: {note.project}\n"
@@ -1102,7 +1101,7 @@ class ZettelkastenMcpServer:
                             return f"Invalid direction: '{direction}'. Use: outgoing, incoming, both"
 
                         linked_notes = self.zettel_service.get_linked_notes(
-                            note_id, direction
+                            note_id, direction, limit=limit
                         )
                         op["result_count"] = len(linked_notes)
 
@@ -1236,8 +1235,8 @@ class ZettelkastenMcpServer:
 
                         # Link stats
                         central = self.search_service.find_central_notes(5)
-                        orphans = self.search_service.find_orphaned_notes()
-                        output += f"**Connections:** {len(central)} notes with links, {len(orphans)} orphans\n\n"
+                        orphan_count = self.search_service.count_orphaned_notes()
+                        output += f"**Connections:** {len(central)} notes with links, {orphan_count} orphans\n\n"
 
                     # Tags section
                     if include_all or "tags" in requested:

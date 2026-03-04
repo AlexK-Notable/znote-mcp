@@ -701,16 +701,23 @@ class ZettelService:
         """
         return self.repository.count_notes()
 
-    def get_notes_by_project(self, project: str) -> List[Note]:
-        """Get all notes for a specific project using SQL-level filtering.
+    def get_notes_by_project(
+        self, project: str, limit: Optional[int] = None
+    ) -> List[Note]:
+        """Get notes for a specific project using SQL-level filtering.
 
         Args:
             project: The project name to filter by.
+            limit: Maximum number of notes to return.
 
         Returns:
             List of Note objects belonging to the specified project.
         """
-        return self.repository.get_by_project(project)
+        return self.repository.get_by_project(project, limit=limit)
+
+    def count_notes_in_project(self, project: str) -> int:
+        """Count notes in a specific project."""
+        return self.repository.count_notes_in_project(project)
 
     def search_notes(self, **kwargs: Any) -> List[Note]:
         """Search for notes based on criteria."""
@@ -729,9 +736,9 @@ class ZettelService:
         """
         return self.repository.count_search_results(**kwargs)
 
-    def get_notes_by_tag(self, tag: str) -> List[Note]:
+    def get_notes_by_tag(self, tag: str, limit: Optional[int] = None) -> List[Note]:
         """Get notes by tag."""
-        return self.repository.find_by_tag(tag)
+        return self.repository.find_by_tag(tag, limit=limit)
 
     def add_tag_to_note(self, note_id: str, tag: str) -> Note:
         """Add a tag to a note."""
@@ -890,12 +897,14 @@ class ZettelService:
 
         return source_note, reverse_note
 
-    def get_linked_notes(self, note_id: str, direction: str = "outgoing") -> List[Note]:
+    def get_linked_notes(
+        self, note_id: str, direction: str = "outgoing", limit: Optional[int] = None
+    ) -> List[Note]:
         """Get notes linked to/from a note."""
         note = self.repository.get(note_id)
         if not note:
             raise NoteNotFoundError(note_id)
-        return self.repository.find_linked_notes(note_id, direction)
+        return self.repository.find_linked_notes(note_id, direction, limit=limit)
 
     def rebuild_index(self) -> None:
         """Rebuild the database index from files."""
@@ -948,9 +957,13 @@ class ZettelService:
         """Retrieve multiple notes by their IDs in a batch."""
         return self.repository.get_by_ids(ids)
 
-    def find_orphaned_note_ids(self) -> List[str]:
+    def find_orphaned_note_ids(self, limit: Optional[int] = None) -> List[str]:
         """Find IDs of notes with no incoming or outgoing links."""
-        return self.repository.find_orphaned_note_ids()
+        return self.repository.find_orphaned_note_ids(limit=limit)
+
+    def count_orphaned_notes(self) -> int:
+        """Count notes with no incoming or outgoing links."""
+        return self.repository.count_orphaned_notes()
 
     def find_central_note_ids_with_counts(
         self, limit: int = 10

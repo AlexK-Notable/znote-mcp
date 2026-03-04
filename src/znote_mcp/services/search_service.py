@@ -70,10 +70,14 @@ class SearchService:
         """Whether semantic search is available (embedding service configured and enabled)."""
         return self._embedding_service is not None and config.embeddings_enabled
 
-    def find_orphaned_notes(self) -> List[Note]:
+    def find_orphaned_notes(self, limit: Optional[int] = None) -> List[Note]:
         """Find notes with no incoming or outgoing links."""
-        orphaned_ids = self.zettel_service.find_orphaned_note_ids()
+        orphaned_ids = self.zettel_service.find_orphaned_note_ids(limit=limit)
         return self.zettel_service.get_notes_by_ids(orphaned_ids)
+
+    def count_orphaned_notes(self) -> int:
+        """Count notes with no incoming or outgoing links."""
+        return self.zettel_service.count_orphaned_notes()
 
     def find_central_notes(self, limit: int = 10) -> List[Tuple[Note, int]]:
         """Find notes with the most connections (incoming + outgoing links)."""
@@ -400,7 +404,7 @@ class SearchService:
             ]
 
         results.sort(key=lambda x: x.score, reverse=True)
-        return results
+        return results[:limit]
 
     def _fts_combined_search(
         self,
