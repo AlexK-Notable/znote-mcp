@@ -301,3 +301,112 @@ class TestRerankerBatchedInference:
             pass
         assert svc.resilience.reranker_level.value >= 1
         svc.shutdown()
+
+
+class TestCpuFallback:
+    """Tests for runtime GPU→CPU provider switching."""
+
+    def test_embedder_cpu_switch_flag_detected(self):
+        """After advancing to CPU_FALLBACK, needs_cpu_switch should be True."""
+        provider = FakeEmbeddingProvider()
+        svc = EmbeddingService(embedder=provider)
+        # Force to level 3 (CPU_FALLBACK)
+        svc.resilience._embedder_level = DegradationLevel.CPU_FALLBACK
+        assert svc.resilience.embedder_needs_cpu_switch is True
+        svc.shutdown()
+
+    def test_disabled_embedder_raises_error(self):
+        """At DISABLED level, embed calls should raise EmbeddingError."""
+        provider = FakeEmbeddingProvider()
+        svc = EmbeddingService(embedder=provider)
+        # Force to disabled
+        svc.resilience._embedder_level = DegradationLevel.DISABLED
+        import pytest
+        with pytest.raises(EmbeddingError, match="disabled"):
+            svc.embed("test")
+        svc.shutdown()
+
+    def test_disabled_reranker_raises_error(self):
+        """At DISABLED level, rerank calls should raise EmbeddingError."""
+        svc = EmbeddingService(
+            embedder=FakeEmbeddingProvider(),
+            reranker=FakeRerankerProvider(),
+        )
+        svc.resilience._reranker_level = DegradationLevel.DISABLED
+        import pytest
+        with pytest.raises(EmbeddingError, match="disabled"):
+            svc.rerank("query", ["doc1"])
+        svc.shutdown()
+
+    def test_cpu_switch_reloads_provider(self):
+        """When needs_cpu_switch is True and provider supports it, reload on CPU."""
+        provider = FakeEmbeddingProvider()
+        svc = EmbeddingService(embedder=provider)
+        # Simulate: provider loaded on GPU, then resilience hits CPU_FALLBACK
+        svc.resilience._embedder_level = DegradationLevel.CPU_FALLBACK
+
+        # The _ensure_embedder should detect needs_cpu_switch
+        # For fake provider (no _providers_pref), it should still work
+        # by unloading and reloading
+        result = svc.embed("test after cpu switch")
+        assert result is not None
+        svc.shutdown()
+
+    def test_cpu_switch_unloads_and_reloads(self):
+        """CPU switch should unload then reload the provider."""
+        provider = FakeEmbeddingProvider()
+        svc = EmbeddingService(embedder=provider)
+        # First embed to load the provider
+        svc.embed("initial load")
+        assert provider.load_count == 1
+        assert provider.unload_count == 0
+
+        # Force CPU_FALLBACK
+        svc.resilience._embedder_level = DegradationLevel.CPU_FALLBACK
+
+        # Next embed should trigger unload + reload
+        svc.embed("after cpu switch")
+        assert provider.unload_count == 1
+        assert provider.load_count == 2
+        svc.shutdown()
+
+    def test_cpu_switch_sets_providers_pref(self):
+        """CPU switch should set _providers_pref to 'cpu' if attribute exists."""
+        provider = FakeEmbeddingProvider()
+        provider._providers_pref = "auto"  # Simulate ONNX provider
+        svc = EmbeddingService(embedder=provider)
+        svc.resilience._embedder_level = DegradationLevel.CPU_FALLBACK
+
+        svc.embed("trigger cpu switch")
+        assert provider._providers_pref == "cpu"
+        svc.shutdown()
+
+    def test_cpu_switch_failure_advances_to_disabled(self):
+        """If CPU reload fails, should advance to DISABLED."""
+        provider = FakeFailingProvider(fail_count=999)  # Always fails
+        svc = EmbeddingService(embedder=provider)
+        svc.resilience._embedder_level = DegradationLevel.CPU_FALLBACK
+
+        import pytest
+        with pytest.raises(EmbeddingError, match="CPU fallback failed"):
+            svc.embed("trigger failing cpu switch")
+        assert svc.resilience.embedder_level == DegradationLevel.DISABLED
+        svc.shutdown()
+
+    def test_reranker_cpu_switch(self):
+        """Reranker should also support CPU switching."""
+        reranker = FakeRerankerProvider()
+        svc = EmbeddingService(
+            embedder=FakeEmbeddingProvider(),
+            reranker=reranker,
+        )
+        # Load reranker first
+        svc.rerank("query", ["doc1", "doc2"])
+        assert reranker.load_count == 1
+
+        # Force CPU_FALLBACK on reranker
+        svc.resilience._reranker_level = DegradationLevel.CPU_FALLBACK
+        svc.rerank("query", ["doc1", "doc2"])
+        assert reranker.unload_count == 1
+        assert reranker.load_count == 2
+        svc.shutdown()

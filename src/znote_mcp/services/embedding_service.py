@@ -121,6 +121,12 @@ class EmbeddingService:
 
     def _ensure_embedder(self) -> None:
         """Load the embedder if not already loaded. Thread-safe."""
+        # Check if we need to switch to CPU
+        if self.resilience.embedder_needs_cpu_switch:
+            with self._embedder_lock:
+                if self.resilience.embedder_needs_cpu_switch:
+                    self._switch_embedder_to_cpu()
+
         if self._embedder.is_loaded:
             self._reset_embedder_idle_timer()
             return
@@ -150,6 +156,12 @@ class EmbeddingService:
                 code=ErrorCode.RERANKER_FAILED,
                 operation="reranker_load",
             )
+        # Check if we need to switch to CPU
+        if self.resilience.reranker_needs_cpu_switch:
+            with self._reranker_lock:
+                if self.resilience.reranker_needs_cpu_switch:
+                    self._switch_reranker_to_cpu()
+
         if self._reranker.is_loaded:
             self._reset_reranker_idle_timer()
             return
@@ -170,6 +182,49 @@ class EmbeddingService:
                     operation="reranker_load",
                     original_error=e,
                 )
+
+    def _switch_embedder_to_cpu(self) -> None:
+        """Unload current embedder and reload with CPU-only providers."""
+        try:
+            if self._embedder.is_loaded:
+                self._embedder.unload()
+            # Switch provider preference if supported
+            if hasattr(self._embedder, "_providers_pref"):
+                self._embedder._providers_pref = "cpu"
+                logger.info("Switched embedder to CPU-only providers")
+            self._embedder.load()
+            logger.info("Embedder reloaded on CPU")
+        except Exception as e:
+            logger.error("CPU fallback failed for embedder: %s", e)
+            self.resilience.advance_embedder()  # Will go to DISABLED
+            raise EmbeddingError(
+                f"CPU fallback failed: {e}",
+                code=ErrorCode.EMBEDDING_MODEL_LOAD_FAILED,
+                operation="cpu_fallback",
+                original_error=e,
+            )
+
+    def _switch_reranker_to_cpu(self) -> None:
+        """Unload current reranker and reload with CPU-only providers."""
+        if self._reranker is None:
+            return
+        try:
+            if self._reranker.is_loaded:
+                self._reranker.unload()
+            if hasattr(self._reranker, "_providers_pref"):
+                self._reranker._providers_pref = "cpu"
+                logger.info("Switched reranker to CPU-only providers")
+            self._reranker.load()
+            logger.info("Reranker reloaded on CPU")
+        except Exception as e:
+            logger.error("CPU fallback failed for reranker: %s", e)
+            self.resilience.advance_reranker()  # Will go to DISABLED
+            raise EmbeddingError(
+                f"Reranker CPU fallback failed: {e}",
+                code=ErrorCode.EMBEDDING_MODEL_LOAD_FAILED,
+                operation="reranker_cpu_fallback",
+                original_error=e,
+            )
 
     def _reset_embedder_idle_timer(self) -> None:
         """Reset (or start) the embedder idle unload timer."""
