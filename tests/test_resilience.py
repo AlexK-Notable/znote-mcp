@@ -410,3 +410,36 @@ class TestCpuFallback:
         assert reranker.unload_count == 1
         assert reranker.load_count == 2
         svc.shutdown()
+
+
+class TestMcpNotifications:
+    """Tests for MCP notification wiring."""
+
+    def test_notification_callback_receives_messages(self):
+        """Verify notifications flow from resilience manager through EmbeddingService."""
+        messages = []
+
+        def on_notify(level, msg):
+            messages.append((level, msg))
+
+        svc = EmbeddingService(
+            embedder=FakeEmbeddingProvider(),
+            on_notify=on_notify,
+        )
+        svc.resilience.advance_embedder()
+        assert len(messages) == 1
+        assert messages[0][0] == "warning"
+        svc.shutdown()
+
+    def test_notification_on_multiple_advances(self):
+        """Each advance should produce a notification."""
+        messages = []
+        svc = EmbeddingService(
+            embedder=FakeEmbeddingProvider(),
+            on_notify=lambda level, msg: messages.append((level, msg)),
+        )
+        svc.resilience.advance_embedder()
+        svc.resilience.advance_embedder()
+        svc.resilience.advance_embedder()
+        assert len(messages) == 3
+        svc.shutdown()
