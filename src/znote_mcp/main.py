@@ -14,6 +14,9 @@ from znote_mcp.observability import configure_logging, metrics
 from znote_mcp.server.mcp_server import ZettelkastenMcpServer
 from znote_mcp.setup_manager import ensure_semantic_deps, warmup_models_background
 
+# Module-level handle kept open for process lifetime (faulthandler needs it)
+_crash_log_handle = None
+
 
 def parse_args():
     """Parse command line arguments."""
@@ -75,6 +78,14 @@ def main():
     logger = logging.getLogger(__name__)
     if log_dir:
         logger.info(f"Persistent logging enabled: {log_dir}")
+
+    # Enable crash diagnostics — dumps traceback on SIGSEGV/SIGFPE/SIGABRT
+    if log_dir:
+        global _crash_log_handle
+        import faulthandler
+        _crash_log_handle = open(log_dir / "crash.log", "a")
+        faulthandler.enable(file=_crash_log_handle)
+        logger.info("Crash diagnostics enabled: %s/crash.log", log_dir)
 
     # Register metrics save on shutdown
     atexit.register(_save_metrics_on_exit)
