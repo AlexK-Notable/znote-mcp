@@ -484,6 +484,56 @@ class TestAdaptiveBatchResilience:
         svc.shutdown()
 
 
+class TestEndToEndResilience:
+    """Full scenario: provider fails, degrades, recovers at lower level."""
+
+    def test_full_degradation_cascade(self):
+        """Simulate: GPU OOM → reduced batch → reduced tokens → CPU → works."""
+        notifications = []
+
+        # Provider that fails first 3 load attempts
+        provider = FakeFailingProvider(fail_count=3)
+        svc = EmbeddingService(
+            embedder=provider,
+            on_notify=lambda level, msg: notifications.append((level, msg)),
+        )
+
+        # Attempts 1-3 fail, each advancing the level
+        for i in range(3):
+            try:
+                svc.embed("test")
+            except EmbeddingError:
+                pass
+
+        # Should be at CPU_FALLBACK by now
+        assert svc.resilience.embedder_level == DegradationLevel.CPU_FALLBACK
+        assert len(notifications) == 3
+
+        # Attempt 4 succeeds (provider stops failing at count 3)
+        result = svc.embed("test")
+        assert result is not None
+        svc.shutdown()
+
+    def test_embedder_disabled_raises_clearly(self):
+        """When embedder is disabled, embed should raise EmbeddingError, not crash."""
+        import pytest
+
+        provider = FakeFailingProvider(fail_count=100)  # Always fails
+        svc = EmbeddingService(embedder=provider)
+
+        # Drive to disabled
+        for _ in range(5):
+            try:
+                svc.embed("test")
+            except EmbeddingError:
+                pass
+
+        assert svc.resilience.is_embedder_enabled is False
+        with pytest.raises(EmbeddingError, match="disabled"):
+            svc.embed("test")
+        svc.shutdown()
+
+
 class TestStartupFlow:
     """Tests for the full startup validation flow."""
 
