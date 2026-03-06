@@ -445,6 +445,45 @@ class TestMcpNotifications:
         svc.shutdown()
 
 
+class TestAdaptiveBatchResilience:
+    """Tests that embed_batch uses resilience manager parameters."""
+
+    def test_reduced_batch_size_used_in_embed_batch(self):
+        """After advancing to REDUCED_BATCH, embed_batch should use smaller batches."""
+        provider = FakeEmbeddingProvider()
+        svc = EmbeddingService(embedder=provider)
+        svc.resilience.advance_embedder()  # Level 1: halved batch
+
+        texts = [f"text {i}" for i in range(20)]
+        results = svc.embed_batch(texts)
+        assert len(results) == 20
+        svc.shutdown()
+
+    def test_reduced_batch_size_overrides_caller(self):
+        """Resilience batch_size should override the caller-provided batch_size."""
+        provider = FakeEmbeddingProvider()
+        svc = EmbeddingService(embedder=provider)
+        # Initial resilience batch_size is 32, halved to 16
+        svc.resilience.advance_embedder()
+        assert svc.resilience.embedder_batch_size == 16
+
+        # Even if caller passes batch_size=64, resilience should cap it
+        texts = [f"text {i}" for i in range(20)]
+        results = svc.embed_batch(texts, batch_size=64)
+        assert len(results) == 20
+        svc.shutdown()
+
+    def test_reduced_tokens_used_in_adaptive(self):
+        """After advancing to REDUCED_TOKENS, max_tokens should shrink."""
+        provider = FakeEmbeddingProvider()
+        svc = EmbeddingService(embedder=provider)
+        svc.resilience.advance_embedder()
+        svc.resilience.advance_embedder()  # Level 2: halved tokens
+
+        assert svc.resilience.embedder_max_tokens < svc.resilience._initial_max_tokens
+        svc.shutdown()
+
+
 class TestStartupFlow:
     """Tests for the full startup validation flow."""
 

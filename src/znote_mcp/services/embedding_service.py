@@ -333,8 +333,10 @@ class EmbeddingService:
                 operation="embed_batch",
             )
         self._ensure_embedder()
+        # Use resilience-adjusted batch size (may be smaller than caller's)
+        effective_batch = min(batch_size, self.resilience.embedder_batch_size)
         try:
-            return self._embedder.embed_batch(texts, batch_size)
+            return self._embedder.embed_batch(texts, effective_batch)
         except EmbeddingError:
             raise
         except Exception as e:
@@ -376,7 +378,7 @@ class EmbeddingService:
         self._ensure_embedder()
         if not hasattr(self._embedder, "embed_batch_adaptive"):
             # Fallback to fixed batching if provider doesn't support adaptive
-            return self.embed_batch(texts, batch_size=8)
+            return self.embed_batch(texts, batch_size=self.resilience.embedder_batch_size)
         try:
             return self._embedder.embed_batch_adaptive(texts, memory_budget_gb)
         except EmbeddingError:
