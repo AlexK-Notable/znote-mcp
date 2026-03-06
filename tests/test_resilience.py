@@ -255,3 +255,49 @@ class TestEmbeddingServiceResilience:
         result = svc.embed("test")
         assert result is not None
         svc.shutdown()
+
+
+class FakeFailingReranker(FakeRerankerProvider):
+    """Reranker that fails with BFCArena on first N calls to rerank."""
+
+    def __init__(self, fail_count=0):
+        super().__init__()
+        self._fail_count = fail_count
+        self._calls = 0
+
+    def rerank(self, query, documents, top_k=5):
+        self._calls += 1
+        if self._calls <= self._fail_count:
+            raise RuntimeError(
+                "BFCArena::AllocateRawInternal Failed to allocate memory"
+            )
+        return super().rerank(query, documents, top_k)
+
+
+class TestRerankerBatchedInference:
+    """Tests for reranker batched scoring and OOM handling."""
+
+    def test_reranker_handles_large_doc_set(self):
+        """Reranker should handle 20+ documents."""
+        reranker = FakeRerankerProvider()
+        svc = EmbeddingService(
+            embedder=FakeEmbeddingProvider(),
+            reranker=reranker,
+        )
+        results = svc.rerank("test query", [f"document {i}" for i in range(20)], top_k=5)
+        assert len(results) == 5
+        svc.shutdown()
+
+    def test_reranker_oom_advances_resilience_level(self):
+        """On BFCArena error, reranker resilience level should advance."""
+        reranker = FakeFailingReranker(fail_count=1)
+        svc = EmbeddingService(
+            embedder=FakeEmbeddingProvider(),
+            reranker=reranker,
+        )
+        try:
+            svc.rerank("query", [f"doc {i}" for i in range(10)])
+        except EmbeddingError:
+            pass
+        assert svc.resilience.reranker_level.value >= 1
+        svc.shutdown()
