@@ -191,3 +191,65 @@ def apply_tuning(config: object, result: TuningResult) -> None:
     for field_name, env_var in field_env_map.items():
         if env_var not in os.environ:
             setattr(config, field_name, getattr(result, field_name))
+
+
+_MIN_FREE_VRAM_MB = 1024  # 1 GB minimum free VRAM to bother with GPU
+
+
+def validate_gpu(profile: HardwareProfile, tuning: TuningResult) -> TuningResult:
+    """Validate that the GPU is actually usable before committing to it.
+
+    Checks:
+    1. Is tuning even requesting GPU? (if CPU, pass through)
+    2. Is there enough free VRAM right now?
+
+    Returns the original tuning if GPU is valid, or a CPU-recomputed
+    tuning if any check fails.
+    """
+    if tuning.onnx_providers == "cpu":
+        return tuning  # Already CPU, nothing to validate
+
+    # Check free VRAM
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            free_mb = int(float(result.stdout.strip().split("\n")[0]))
+            if free_mb < _MIN_FREE_VRAM_MB:
+                logger.warning(
+                    "GPU has only %d MB free VRAM (need %d MB), falling back to CPU",
+                    free_mb,
+                    _MIN_FREE_VRAM_MB,
+                )
+                return compute_tuning(
+                    HardwareProfile(
+                        system_ram_mb=profile.system_ram_mb,
+                        cpu_arch=profile.cpu_arch,
+                    )
+                )
+        else:
+            logger.warning(
+                "nvidia-smi query failed (rc=%d), falling back to CPU",
+                result.returncode,
+            )
+            return compute_tuning(
+                HardwareProfile(
+                    system_ram_mb=profile.system_ram_mb,
+                    cpu_arch=profile.cpu_arch,
+                )
+            )
+    except (FileNotFoundError, subprocess.TimeoutExpired, ValueError, OSError) as e:
+        logger.warning("GPU validation failed (%s), falling back to CPU", e)
+        return compute_tuning(
+            HardwareProfile(
+                system_ram_mb=profile.system_ram_mb,
+                cpu_arch=profile.cpu_arch,
+            )
+        )
+
+    logger.info("GPU validation passed: %d MB free VRAM", free_mb)
+    return tuning
