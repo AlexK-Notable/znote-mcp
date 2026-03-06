@@ -443,3 +443,36 @@ class TestMcpNotifications:
         svc.resilience.advance_embedder()
         assert len(messages) == 3
         svc.shutdown()
+
+
+class TestStartupFlow:
+    """Tests for the full startup validation flow."""
+
+    def test_startup_flow_cpu_passthrough(self):
+        """CPU-only profile should pass through validate_gpu unchanged."""
+        from znote_mcp.hardware import validate_gpu, compute_tuning, HardwareProfile
+        profile = HardwareProfile(system_ram_mb=32000, cpu_arch="x86_64")
+        tuning = compute_tuning(profile)
+        validated = validate_gpu(profile, tuning)
+        assert validated.onnx_providers == "cpu"
+
+    def test_startup_flow_gpu_with_low_vram_falls_back(self):
+        """GPU profile with insufficient free VRAM should fall back to CPU."""
+        from znote_mcp.hardware import validate_gpu, compute_tuning, HardwareProfile
+        profile = HardwareProfile(
+            gpu_name="RTX 4070",
+            gpu_vram_mb=16000,
+            system_ram_mb=32000,
+            cpu_arch="x86_64",
+            onnx_providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+        )
+        tuning = compute_tuning(profile)
+        assert tuning.onnx_providers == "auto"
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "200"  # Only 200 MB free
+        with patch("znote_mcp.hardware.subprocess.run", return_value=mock_result):
+            validated = validate_gpu(profile, tuning)
+        assert validated.onnx_providers == "cpu"
+        assert "cpu" in validated.device_label.lower()

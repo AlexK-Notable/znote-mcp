@@ -101,10 +101,11 @@ def main():
 
     # Hardware auto-tuning: detect GPU/RAM and set optimal defaults
     if config.embeddings_enabled:
-        from znote_mcp.hardware import apply_tuning, compute_tuning, detect_hardware
+        from znote_mcp.hardware import apply_tuning, compute_tuning, detect_hardware, validate_gpu
 
         profile = detect_hardware()
         tuning = compute_tuning(profile)
+        tuning = validate_gpu(profile, tuning)
         apply_tuning(config, tuning)
         logger.info(
             "Hardware auto-tune: %s (batch=%d, embed_tokens=%d, rerank_tokens=%d, mem=%.1fGB)",
