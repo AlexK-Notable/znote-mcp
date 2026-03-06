@@ -188,3 +188,70 @@ class TestResilienceManager:
         mgr.advance_embedder()
         assert len(notifications) == 1
         assert "batch size" in notifications[0][1].lower()
+
+
+from tests.fakes import FakeEmbeddingProvider, FakeRerankerProvider
+from znote_mcp.services.embedding_service import EmbeddingService
+from znote_mcp.exceptions import EmbeddingError
+
+
+class FakeFailingProvider(FakeEmbeddingProvider):
+    """Provider that raises BFCArena-like errors on demand."""
+
+    def __init__(self, dim=8, fail_count=0):
+        super().__init__(dim=dim)
+        self._fail_count = fail_count
+        self._calls = 0
+
+    def load(self):
+        self._calls += 1
+        if self._calls <= self._fail_count:
+            raise RuntimeError(
+                "BFCArena::AllocateRawInternal Failed to allocate memory"
+            )
+        super().load()
+
+    def embed(self, text):
+        self._calls += 1
+        if self._calls <= self._fail_count:
+            raise RuntimeError(
+                "BFCArena::AllocateRawInternal Failed to allocate memory"
+            )
+        return super().embed(text)
+
+
+class TestEmbeddingServiceResilience:
+    """Tests for EmbeddingService integration with resilience manager."""
+
+    def test_service_creates_resilience_manager(self):
+        svc = EmbeddingService(
+            embedder=FakeEmbeddingProvider(),
+            reranker=FakeRerankerProvider(),
+        )
+        assert svc.resilience is not None
+        svc.shutdown()
+
+    def test_bfcarena_load_failure_advances_level(self):
+        """BFCArena error on load should advance degradation level."""
+        provider = FakeFailingProvider(fail_count=1)
+        svc = EmbeddingService(embedder=provider)
+        try:
+            svc.embed("test")
+        except EmbeddingError:
+            pass
+        assert svc.resilience.embedder_level.value >= 1
+        svc.shutdown()
+
+    def test_service_still_works_after_transient_failure(self):
+        """After one load failure, next attempt should succeed."""
+        provider = FakeFailingProvider(fail_count=1)
+        svc = EmbeddingService(embedder=provider)
+        # First call fails
+        try:
+            svc.embed("test")
+        except EmbeddingError:
+            pass
+        # Second call should succeed (provider stops failing after fail_count)
+        result = svc.embed("test")
+        assert result is not None
+        svc.shutdown()
