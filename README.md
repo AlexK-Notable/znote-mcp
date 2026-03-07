@@ -59,19 +59,19 @@ The result is both vertical depth (following a thread deeper into a topic) and h
 
 ## Features
 
-### 22 MCP Tools
+### 17 MCP Tools
 
-The server exposes 22 tools, all prefixed with `zk_`:
+The server exposes 17 tools, all prefixed with `zk_`:
 
 **Notes** — `zk_create_note`, `zk_get_note`, `zk_update_note`, `zk_delete_note`, `zk_note_history`, `zk_bulk_create_notes`
 
-**Links** — `zk_create_link`, `zk_remove_link`
+**Links** — `zk_manage_links` (create/remove with semantic types)
 
 **Search** — `zk_search_notes` (auto-selects strategy), `zk_fts_search` (FTS5 with boolean/phrase/prefix), `zk_list_notes` (by date, project, connectivity), `zk_find_related` (linked, similar, or semantic)
 
-**Tags** — `zk_add_tag`, `zk_remove_tag`, `zk_cleanup_tags`
+**Tags** — `zk_manage_tags` (add/remove, batch-capable), `zk_cleanup_tags`
 
-**Projects** — `zk_create_project`, `zk_list_projects`, `zk_get_project`, `zk_delete_project`
+**Projects** — `zk_manage_projects` (create/list/get/delete)
 
 **System** — `zk_status` (dashboard), `zk_system` (rebuild, sync, backup, reindex), `zk_restore`
 
@@ -220,7 +220,7 @@ System prompts, project knowledge, and chat prompts are provided in the `docs/` 
 ### Layer Structure
 
 ```
-MCP Tools (server/mcp_server.py) ─── 22 registered tools
+MCP Tools (server/mcp_server.py) ─── 17 registered tools
     │
 Services ─── business logic
     ├── zettel_service.py ─── CRUD, links, tags, bulk ops, embedding on write
@@ -240,6 +240,7 @@ Infrastructure
     ├── text_chunker.py ─── token-aware chunking with sentence boundaries
     ├── git_wrapper.py ─── git versioning for concurrency
     ├── obsidian_mirror.py ─── vault sync with wikilink rewriting
+    ├── resilience.py ─── ONNX progressive memory degradation (5 levels)
     └── setup_manager.py ─── auto-install deps, model warmup
 ```
 
@@ -265,8 +266,9 @@ znote-mcp/
 │   │   ├── embedding_service.py     # Embedding lifecycle
 │   │   ├── embedding_types.py       # Protocol interfaces (PEP 544)
 │   │   ├── onnx_providers.py        # ONNX Runtime providers
+│   │   ├── resilience.py            # Progressive memory degradation (5 levels)
 │   │   └── text_chunker.py          # Token-aware chunking
-│   ├── server/mcp_server.py     # MCP server (22 tools)
+│   ├── server/mcp_server.py     # MCP server (17 tools)
 │   ├── config.py                # Pydantic config with env var support
 │   ├── hardware.py              # Hardware detection + auto-tuning
 │   ├── setup_manager.py         # Semantic dep auto-install + model warmup
@@ -306,6 +308,20 @@ Embedding and reranker providers use `typing.Protocol` (PEP 544) for structural 
 ### Adaptive Batching
 
 Rather than fixed batch sizes, the embedding system uses greedy adaptive batching. Given a memory budget and the actual token lengths of pending texts, it packs as many items as possible into each batch without exceeding the budget. Short notes get large batches (fast); long notes get small batches (safe). This replaces the earlier fixed-bucket approach and improves reindex throughput significantly on mixed-length corpora.
+
+### ONNX Progressive Memory Resilience
+
+When ONNX embedding encounters memory pressure (OOM errors, allocation failures), the server degrades gracefully through five levels instead of failing outright:
+
+| Level | Name | Action |
+|-------|------|--------|
+| 0 | Normal | Full config from hardware auto-tuning |
+| 1 | Reduced Batch | Halve batch size |
+| 2 | Reduced Tokens | Also halve max token length |
+| 3 | CPU Fallback | Switch provider to CPU (slower but stable) |
+| 4 | Disabled | Semantic search off for session (FTS still available) |
+
+Each degradation step is logged and surfaced via MCP notifications. The system tracks embedder and reranker state independently, so a reranker OOM doesn't force the embedder to degrade. Recovery is automatic on session restart.
 
 ### INT8 Quantization
 
