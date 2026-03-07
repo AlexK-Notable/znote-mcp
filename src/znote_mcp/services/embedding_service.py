@@ -55,6 +55,8 @@ class EmbeddingService:
         reranker_idle_timeout: int = 120,
         embedder_idle_timeout: int = 120,
         on_notify: Optional[Callable] = None,
+        initial_batch_size: int = 8,
+        initial_max_tokens: int = 2048,
     ) -> None:
         self._embedder = embedder
         self._reranker = reranker
@@ -70,8 +72,8 @@ class EmbeddingService:
 
         # Resilience manager for progressive ONNX degradation
         self.resilience = OnnxResilienceManager(
-            initial_batch_size=32,
-            initial_max_tokens=8192,
+            initial_batch_size=initial_batch_size,
+            initial_max_tokens=initial_max_tokens,
             on_notify=on_notify,
         )
 

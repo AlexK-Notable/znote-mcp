@@ -462,7 +462,7 @@ class TestAdaptiveBatchResilience:
     def test_reduced_batch_size_overrides_caller(self):
         """Resilience batch_size should override the caller-provided batch_size."""
         provider = FakeEmbeddingProvider()
-        svc = EmbeddingService(embedder=provider)
+        svc = EmbeddingService(embedder=provider, initial_batch_size=32)
         # Initial resilience batch_size is 32, halved to 16
         svc.resilience.advance_embedder()
         assert svc.resilience.embedder_batch_size == 16

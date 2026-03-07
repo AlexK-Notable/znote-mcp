@@ -207,6 +207,8 @@ class ZettelkastenMcpServer:
                 reranker=reranker,
                 reranker_idle_timeout=config.reranker_idle_timeout,
                 embedder_idle_timeout=config.embedder_idle_timeout,
+                initial_batch_size=config.embedding_batch_size,
+                initial_max_tokens=max(config.embedding_max_tokens, config.reranker_max_tokens),
             )
             logger.info(
                 f"Embedding service created (model={config.embedding_model}, "
