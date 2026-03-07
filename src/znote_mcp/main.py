@@ -14,6 +14,9 @@ from znote_mcp.observability import configure_logging, metrics
 from znote_mcp.server.mcp_server import ZettelkastenMcpServer
 from znote_mcp.setup_manager import ensure_semantic_deps, warmup_models_background
 
+# Module-level handle kept open for process lifetime (faulthandler needs it)
+_crash_log_handle = None
+
 
 def parse_args():
     """Parse command line arguments."""
@@ -76,6 +79,14 @@ def main():
     if log_dir:
         logger.info(f"Persistent logging enabled: {log_dir}")
 
+    # Enable crash diagnostics — dumps traceback on SIGSEGV/SIGFPE/SIGABRT
+    if log_dir:
+        global _crash_log_handle
+        import faulthandler
+        _crash_log_handle = open(log_dir / "crash.log", "a")
+        faulthandler.enable(file=_crash_log_handle)
+        logger.info("Crash diagnostics enabled: %s/crash.log", log_dir)
+
     # Register metrics save on shutdown
     atexit.register(_save_metrics_on_exit)
 
@@ -90,10 +101,11 @@ def main():
 
     # Hardware auto-tuning: detect GPU/RAM and set optimal defaults
     if config.embeddings_enabled:
-        from znote_mcp.hardware import apply_tuning, compute_tuning, detect_hardware
+        from znote_mcp.hardware import apply_tuning, compute_tuning, detect_hardware, validate_gpu
 
         profile = detect_hardware()
         tuning = compute_tuning(profile)
+        tuning = validate_gpu(profile, tuning)
         apply_tuning(config, tuning)
         logger.info(
             "Hardware auto-tune: %s (batch=%d, embed_tokens=%d, rerank_tokens=%d, mem=%.1fGB)",

@@ -906,6 +906,58 @@ class OnnxRerankerProvider:
 
         return scores
 
+    def _score_pairs_batched(
+        self, query: str, documents: Sequence[str], batch_size: int = 32
+    ) -> List[float]:
+        """Score query-document pairs in batches with OOM retry.
+
+        Chunks documents into sub-batches of ``batch_size`` and scores each
+        independently.  On a BFCArena OOM error, halves the failing sub-batch
+        and retries (up to 4 splits).
+
+        Args:
+            query: The search query.
+            documents: Sequence of document texts to score.
+            batch_size: Maximum documents per inference call.
+
+        Returns:
+            List of relevance scores in the same order as ``documents``.
+        """
+        all_scores: List[float] = []
+
+        for i in range(0, len(documents), batch_size):
+            batch_docs = documents[i : i + batch_size]
+            sub_batches = [batch_docs]
+            oom_splits = 0
+            _MAX_OOM_SPLITS = 4
+
+            while sub_batches:
+                sub = sub_batches.pop(0)
+                try:
+                    scores = self._score_pairs(query, sub)
+                    all_scores.extend(scores)
+                except Exception as e:
+                    if (
+                        "BFCArena" in str(e)
+                        and len(sub) > 1
+                        and oom_splits < _MAX_OOM_SPLITS
+                    ):
+                        mid = len(sub) // 2
+                        oom_splits += 1
+                        logger.warning(
+                            "Reranker GPU OOM on batch of %d docs, "
+                            "splitting (attempt %d/%d)",
+                            len(sub),
+                            oom_splits,
+                            _MAX_OOM_SPLITS,
+                        )
+                        sub_batches.insert(0, sub[mid:])
+                        sub_batches.insert(0, sub[:mid])
+                    else:
+                        raise
+
+        return all_scores
+
     def rerank(
         self, query: str, documents: Sequence[str], top_k: int = 5
     ) -> List[Tuple[int, float]]:
@@ -916,7 +968,7 @@ class OnnxRerankerProvider:
         if not documents:
             return []
 
-        scores = self._score_pairs(query, documents)
+        scores = self._score_pairs_batched(query, documents)
         indexed_scores = list(enumerate(scores))
         indexed_scores.sort(key=lambda x: x[1], reverse=True)
         return indexed_scores[:top_k]

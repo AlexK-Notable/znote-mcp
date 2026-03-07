@@ -67,6 +67,10 @@ class ZettelkastenMcpServer:
         # Conditionally create embedding service
         embedding_service = self._create_embedding_service()
 
+        # Wire MCP notifications for ONNX degradation events
+        if embedding_service is not None:
+            embedding_service.resilience._on_notify = self._send_resilience_notification
+
         # Services — share a single database engine when provided
         self.zettel_service = ZettelService(
             embedding_service=embedding_service,
@@ -94,6 +98,40 @@ class ZettelkastenMcpServer:
     def _shutdown(self) -> None:
         """Clean up resources on server exit."""
         self.zettel_service.shutdown()
+
+    def _send_resilience_notification(self, level: str, message: str) -> None:
+        """Send an ONNX degradation notification via MCP log message.
+
+        Best-effort: logs errors but never raises (called from exception handlers).
+        The resilience manager calls this from sync context, so we bridge to async
+        via the running event loop.
+        """
+        import asyncio
+
+        try:
+            ctx = self.mcp._mcp_server.request_context
+            session = ctx.session
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.call_soon_threadsafe(
+                    asyncio.ensure_future,
+                    session.send_log_message(
+                        level=level,
+                        data=message,
+                        logger="znote-mcp.resilience",
+                    ),
+                )
+            else:
+                loop.run_until_complete(
+                    session.send_log_message(
+                        level=level,
+                        data=message,
+                        logger="znote-mcp.resilience",
+                    ),
+                )
+        except Exception:
+            # Best-effort — don't let notification failure break degradation flow
+            logger.debug("Failed to send MCP notification: %s", message)
 
     def format_error_response(self, error: Exception) -> str:
         """Format an error response in a consistent way.
@@ -1316,6 +1354,18 @@ class ZettelkastenMcpServer:
                                         )
                                 else:
                                     output += "**Providers (active):** embedder not yet loaded\n"
+                                # Resilience state
+                                r = embedding_svc.resilience
+                                e_level = r.embedder_level
+                                r_level = r.reranker_level
+                                from znote_mcp.services.resilience import DegradationLevel
+                                if e_level > DegradationLevel.NORMAL or r_level > DegradationLevel.NORMAL:
+                                    output += f"**Resilience (embedder):** {e_level.name} (batch={r.embedder_batch_size}, tokens={r.embedder_max_tokens})\n"
+                                    output += f"**Resilience (reranker):** {r_level.name} (batch={r.reranker_batch_size}, tokens={r.reranker_max_tokens})\n"
+                                    if not r.is_embedder_enabled:
+                                        output += "**WARNING:** Embedder disabled due to repeated ONNX failures. Only FTS search available.\n"
+                                    if not r.is_reranker_enabled:
+                                        output += "**WARNING:** Reranker disabled — search results will not be reranked.\n"
                             else:
                                 output += "**Providers (active):** embedding service not initialized\n"
                             repo = self.zettel_service.repository

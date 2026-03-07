@@ -19,9 +19,10 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Callable, List, Optional, Sequence, Tuple
 
 from znote_mcp.exceptions import EmbeddingError, ErrorCode
+from znote_mcp.services.resilience import OnnxResilienceManager
 
 if TYPE_CHECKING:
     import numpy as np
@@ -53,6 +54,7 @@ class EmbeddingService:
         reranker: Optional[RerankerProvider] = None,
         reranker_idle_timeout: int = 120,
         embedder_idle_timeout: int = 120,
+        on_notify: Optional[Callable] = None,
     ) -> None:
         self._embedder = embedder
         self._reranker = reranker
@@ -65,6 +67,13 @@ class EmbeddingService:
         self._embedder_idle_timer: Optional[threading.Timer] = None
         self._reranker_idle_timer: Optional[threading.Timer] = None
         self._shutdown = False
+
+        # Resilience manager for progressive ONNX degradation
+        self.resilience = OnnxResilienceManager(
+            initial_batch_size=32,
+            initial_max_tokens=8192,
+            on_notify=on_notify,
+        )
 
     @property
     def dimension(self) -> int:
@@ -112,6 +121,12 @@ class EmbeddingService:
 
     def _ensure_embedder(self) -> None:
         """Load the embedder if not already loaded. Thread-safe."""
+        # Check if we need to switch to CPU
+        if self.resilience.embedder_needs_cpu_switch:
+            with self._embedder_lock:
+                if self.resilience.embedder_needs_cpu_switch:
+                    self._switch_embedder_to_cpu()
+
         if self._embedder.is_loaded:
             self._reset_embedder_idle_timer()
             return
@@ -124,6 +139,8 @@ class EmbeddingService:
                 logger.info("Embedding model loaded")
                 self._reset_embedder_idle_timer()
             except Exception as e:
+                if "BFCArena" in str(e) or "allocate memory" in str(e).lower():
+                    self.resilience.advance_embedder()
                 raise EmbeddingError(
                     f"Failed to load embedding model: {e}",
                     code=ErrorCode.EMBEDDING_MODEL_LOAD_FAILED,
@@ -139,6 +156,12 @@ class EmbeddingService:
                 code=ErrorCode.RERANKER_FAILED,
                 operation="reranker_load",
             )
+        # Check if we need to switch to CPU
+        if self.resilience.reranker_needs_cpu_switch:
+            with self._reranker_lock:
+                if self.resilience.reranker_needs_cpu_switch:
+                    self._switch_reranker_to_cpu()
+
         if self._reranker.is_loaded:
             self._reset_reranker_idle_timer()
             return
@@ -151,12 +174,57 @@ class EmbeddingService:
                 logger.info("Reranker model loaded")
                 self._reset_reranker_idle_timer()
             except Exception as e:
+                if "BFCArena" in str(e) or "allocate memory" in str(e).lower():
+                    self.resilience.advance_reranker()
                 raise EmbeddingError(
                     f"Failed to load reranker model: {e}",
                     code=ErrorCode.EMBEDDING_MODEL_LOAD_FAILED,
                     operation="reranker_load",
                     original_error=e,
                 )
+
+    def _switch_embedder_to_cpu(self) -> None:
+        """Unload current embedder and reload with CPU-only providers."""
+        try:
+            if self._embedder.is_loaded:
+                self._embedder.unload()
+            # Switch provider preference if supported
+            if hasattr(self._embedder, "_providers_pref"):
+                self._embedder._providers_pref = "cpu"
+                logger.info("Switched embedder to CPU-only providers")
+            self._embedder.load()
+            logger.info("Embedder reloaded on CPU")
+        except Exception as e:
+            logger.error("CPU fallback failed for embedder: %s", e)
+            self.resilience.advance_embedder()  # Will go to DISABLED
+            raise EmbeddingError(
+                f"CPU fallback failed: {e}",
+                code=ErrorCode.EMBEDDING_MODEL_LOAD_FAILED,
+                operation="cpu_fallback",
+                original_error=e,
+            )
+
+    def _switch_reranker_to_cpu(self) -> None:
+        """Unload current reranker and reload with CPU-only providers."""
+        if self._reranker is None:
+            return
+        try:
+            if self._reranker.is_loaded:
+                self._reranker.unload()
+            if hasattr(self._reranker, "_providers_pref"):
+                self._reranker._providers_pref = "cpu"
+                logger.info("Switched reranker to CPU-only providers")
+            self._reranker.load()
+            logger.info("Reranker reloaded on CPU")
+        except Exception as e:
+            logger.error("CPU fallback failed for reranker: %s", e)
+            self.resilience.advance_reranker()  # Will go to DISABLED
+            raise EmbeddingError(
+                f"Reranker CPU fallback failed: {e}",
+                code=ErrorCode.EMBEDDING_MODEL_LOAD_FAILED,
+                operation="reranker_cpu_fallback",
+                original_error=e,
+            )
 
     def _reset_embedder_idle_timer(self) -> None:
         """Reset (or start) the embedder idle unload timer."""
@@ -222,12 +290,20 @@ class EmbeddingService:
         Raises:
             EmbeddingError: If model loading or inference fails.
         """
+        if not self.resilience.is_embedder_enabled:
+            raise EmbeddingError(
+                "Embedding disabled due to repeated ONNX failures",
+                code=ErrorCode.EMBEDDING_UNAVAILABLE,
+                operation="embed",
+            )
         self._ensure_embedder()
         try:
             return self._embedder.embed(text)
         except EmbeddingError:
             raise
         except Exception as e:
+            if "BFCArena" in str(e) or "allocate memory" in str(e).lower():
+                self.resilience.advance_embedder()
             raise EmbeddingError(
                 f"Embedding inference failed: {e}",
                 code=ErrorCode.EMBEDDING_INFERENCE_FAILED,
@@ -250,12 +326,22 @@ class EmbeddingService:
         Raises:
             EmbeddingError: If model loading or inference fails.
         """
+        if not self.resilience.is_embedder_enabled:
+            raise EmbeddingError(
+                "Embedding disabled due to repeated ONNX failures",
+                code=ErrorCode.EMBEDDING_UNAVAILABLE,
+                operation="embed_batch",
+            )
         self._ensure_embedder()
+        # Use resilience-adjusted batch size (may be smaller than caller's)
+        effective_batch = min(batch_size, self.resilience.embedder_batch_size)
         try:
-            return self._embedder.embed_batch(texts, batch_size)
+            return self._embedder.embed_batch(texts, effective_batch)
         except EmbeddingError:
             raise
         except Exception as e:
+            if "BFCArena" in str(e) or "allocate memory" in str(e).lower():
+                self.resilience.advance_embedder()
             raise EmbeddingError(
                 f"Batch embedding failed: {e}",
                 code=ErrorCode.EMBEDDING_INFERENCE_FAILED,
@@ -283,15 +369,23 @@ class EmbeddingService:
         Raises:
             EmbeddingError: If model loading or inference fails.
         """
+        if not self.resilience.is_embedder_enabled:
+            raise EmbeddingError(
+                "Embedding disabled due to repeated ONNX failures",
+                code=ErrorCode.EMBEDDING_UNAVAILABLE,
+                operation="embed_batch_adaptive",
+            )
         self._ensure_embedder()
         if not hasattr(self._embedder, "embed_batch_adaptive"):
             # Fallback to fixed batching if provider doesn't support adaptive
-            return self.embed_batch(texts, batch_size=8)
+            return self.embed_batch(texts, batch_size=self.resilience.embedder_batch_size)
         try:
             return self._embedder.embed_batch_adaptive(texts, memory_budget_gb)
         except EmbeddingError:
             raise
         except Exception as e:
+            if "BFCArena" in str(e) or "allocate memory" in str(e).lower():
+                self.resilience.advance_embedder()
             raise EmbeddingError(
                 f"Adaptive batch embedding failed: {e}",
                 code=ErrorCode.EMBEDDING_INFERENCE_FAILED,
@@ -318,12 +412,20 @@ class EmbeddingService:
         Raises:
             EmbeddingError: If no reranker configured, or loading/inference fails.
         """
+        if not self.resilience.is_reranker_enabled:
+            raise EmbeddingError(
+                "Reranker disabled due to repeated ONNX failures",
+                code=ErrorCode.EMBEDDING_UNAVAILABLE,
+                operation="rerank",
+            )
         self._ensure_reranker()
         try:
             return self._reranker.rerank(query, documents, top_k)
         except EmbeddingError:
             raise
         except Exception as e:
+            if "BFCArena" in str(e) or "allocate memory" in str(e).lower():
+                self.resilience.advance_reranker()
             raise EmbeddingError(
                 f"Reranking failed: {e}",
                 code=ErrorCode.RERANKER_FAILED,
