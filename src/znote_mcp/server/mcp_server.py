@@ -1354,6 +1354,18 @@ class ZettelkastenMcpServer:
                                         )
                                 else:
                                     output += "**Providers (active):** embedder not yet loaded\n"
+                                # Resilience state
+                                r = embedding_svc.resilience
+                                e_level = r.embedder_level
+                                r_level = r.reranker_level
+                                from znote_mcp.services.resilience import DegradationLevel
+                                if e_level > DegradationLevel.NORMAL or r_level > DegradationLevel.NORMAL:
+                                    output += f"**Resilience (embedder):** {e_level.name} (batch={r.embedder_batch_size}, tokens={r.embedder_max_tokens})\n"
+                                    output += f"**Resilience (reranker):** {r_level.name} (batch={r.reranker_batch_size}, tokens={r.reranker_max_tokens})\n"
+                                    if not r.is_embedder_enabled:
+                                        output += "**WARNING:** Embedder disabled due to repeated ONNX failures. Only FTS search available.\n"
+                                    if not r.is_reranker_enabled:
+                                        output += "**WARNING:** Reranker disabled — search results will not be reranked.\n"
                             else:
                                 output += "**Providers (active):** embedding service not initialized\n"
                             repo = self.zettel_service.repository
