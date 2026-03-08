@@ -240,7 +240,9 @@ Infrastructure
     ├── text_chunker.py ─── token-aware chunking with sentence boundaries
     ├── git_wrapper.py ─── git versioning for concurrency
     ├── obsidian_mirror.py ─── vault sync with wikilink rewriting
-    ├── resilience.py ─── ONNX progressive memory degradation (5 levels)
+    ├── resilience_coordinator.py ─── AIMD + circuit breaker orchestration per component
+    ├── aimd.py ─── AIMD adaptive memory budget controller
+    ├── circuit_breaker.py ─── GPU↔CPU switching with cooldown escalation
     └── setup_manager.py ─── auto-install deps, model warmup
 ```
 
@@ -266,7 +268,9 @@ znote-mcp/
 │   │   ├── embedding_service.py     # Embedding lifecycle
 │   │   ├── embedding_types.py       # Protocol interfaces (PEP 544)
 │   │   ├── onnx_providers.py        # ONNX Runtime providers
-│   │   ├── resilience.py            # Progressive memory degradation (5 levels)
+│   │   ├── resilience_coordinator.py # AIMD + circuit breaker orchestration
+│   │   ├── aimd.py                  # AIMD adaptive memory budget controller
+│   │   ├── circuit_breaker.py       # GPU↔CPU switching with cooldowns
 │   │   └── text_chunker.py          # Token-aware chunking
 │   ├── server/mcp_server.py     # MCP server (17 tools)
 │   ├── config.py                # Pydantic config with env var support
@@ -276,7 +280,7 @@ znote-mcp/
 │   ├── observability.py         # Structured logging and metrics
 │   ├── exceptions.py            # Error hierarchy with codes
 │   └── main.py                  # Entry point
-├── tests/                       # 36 test files, 782 tests
+├── tests/                       # 40 test files, 1030 tests
 ├── benchmarks/                  # Embedding + reranker benchmark data
 ├── scripts/                     # Benchmark and utility scripts
 ├── alembic/                     # Database migrations
@@ -309,19 +313,39 @@ Embedding and reranker providers use `typing.Protocol` (PEP 544) for structural 
 
 Rather than fixed batch sizes, the embedding system uses greedy adaptive batching. Given a memory budget and the actual token lengths of pending texts, it packs as many items as possible into each batch without exceeding the budget. Short notes get large batches (fast); long notes get small batches (safe). This replaces the earlier fixed-bucket approach and improves reindex throughput significantly on mixed-length corpora.
 
-### ONNX Progressive Memory Resilience
+### AIMD Adaptive Resilience
 
-When ONNX embedding encounters memory pressure (OOM errors, allocation failures), the server degrades gracefully through five levels instead of failing outright:
+When ONNX embedding encounters memory pressure (OOM errors, allocation failures), the server adapts automatically using an AIMD (Additive Increase / Multiplicative Decrease) controller — the same algorithm TCP uses for congestion control, applied to GPU memory budgets.
 
-| Level | Name | Action |
-|-------|------|--------|
-| 0 | Normal | Full config from hardware auto-tuning |
-| 1 | Reduced Batch | Halve batch size |
-| 2 | Reduced Tokens | Also halve max token length |
-| 3 | CPU Fallback | Switch provider to CPU (slower but stable) |
-| 4 | Disabled | Semantic search off for session (FTS still available) |
+**How it works:**
 
-Each degradation step is logged and surfaced via MCP notifications. The system tracks embedder and reranker state independently, so a reranker OOM doesn't force the embedder to degrade. Recovery is automatic on session restart.
+- **On success**: memory budget increases linearly (additive increase), probing toward full capacity
+- **On failure**: memory budget halves immediately (multiplicative decrease), reducing pressure fast
+- **Circuit breaker**: if failures persist or budget hits the 1GB floor, the circuit breaker trips and switches to CPU. After a cooldown, it retries GPU
+- **Cross-component linking**: stress on the embedder sends a caution signal to the reranker (and vice versa), preventing cascading failures
+- **Automatic recovery**: unlike the old fixed staircase, AIMD recovers to full capacity when conditions improve — no server restart needed
+
+**Agent signaling**: state transitions are prepended as inline notices to tool responses, so agents know what's happening:
+
+```
+---
+⚠ Embedding system state change
+  Event: memory pressure — budget reduced to 1.50GB
+  Component: embedder
+  Semantic search: operational, may be slower
+---
+```
+
+**Agent controls** via `zk_system`:
+
+| Action | Effect |
+|--------|--------|
+| `embedding_reset` | Reset AIMD + circuit breakers to initial state |
+| `embedding_force_cpu` | Force CPU mode (stays until reset) |
+| `embedding_disable` | Disable semantic search for session |
+| `embedding_enable` | Re-enable after manual disable |
+
+Embedder and reranker are tracked independently. `zk_status` reports AIMD phase, budget, circuit breaker state, and provider for each component.
 
 ### INT8 Quantization
 
@@ -329,7 +353,7 @@ Quantized ONNX models are supported for both embedding and reranking. INT8 model
 
 ### Tests
 
-782 tests across 36 files covering unit, integration, E2E, protocol, embedding, concurrency, and resilience:
+1030 tests across 40 files covering unit, integration, E2E, protocol, embedding, concurrency, and resilience:
 
 ```bash
 uv run pytest -v tests/                                    # All tests
@@ -345,7 +369,7 @@ uv run pytest tests/test_mcp_protocol.py -v                # MCP protocol (34 te
 | E2E | Full system workflows in isolated environments |
 | Embeddings | Provider, service, chunking, search, reindex (5 phased files) |
 | Concurrency | Thread safety, multi-process, versioned operations |
-| Resilience | Error injection, failure recovery, database hardening |
+| Resilience | AIMD controller, circuit breaker, coordinator, error injection, OOM recovery, inline notices, agent controls |
 
 ---
 
