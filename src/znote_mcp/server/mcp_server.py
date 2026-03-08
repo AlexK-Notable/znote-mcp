@@ -67,8 +67,6 @@ class ZettelkastenMcpServer:
         # Conditionally create embedding service
         embedding_service = self._create_embedding_service()
 
-        # Resilience event wiring will be added in Task 9 (agent signaling)
-
         # Services — share a single database engine when provided
         self.zettel_service = ZettelService(
             embedding_service=embedding_service,
@@ -222,6 +220,68 @@ class ZettelkastenMcpServer:
             logger.warning(f"Failed to create embedding service: {e}")
             return None
 
+    def _format_resilience_notices(self) -> str:
+        """Drain pending resilience events and format them as inline notices.
+
+        Returns a string to prepend to tool responses. Empty string when
+        there are no pending events.
+        """
+        embedding_svc = self.zettel_service.embedding_service
+        if embedding_svc is None:
+            return ""
+
+        notices = embedding_svc.coordinator.drain_pending_notices()
+        if not notices:
+            return ""
+
+        blocks: list[str] = []
+        for event in notices:
+            etype = event.get("type", "")
+            component = event.get("component", "unknown")
+
+            if etype == "budget_reduced":
+                new_cwnd = event.get("new_cwnd", "?")
+                at_floor = event.get("at_floor", False)
+                severity = "budget at floor" if at_floor else "budget reduced"
+                blocks.append(
+                    f"---\n"
+                    f"\u26a0 Embedding system state change\n"
+                    f"  Event: memory pressure \u2014 {severity}\n"
+                    f"  Component: {component}\n"
+                    f"  New budget: {new_cwnd:.1f}GB\n"
+                    f"  Semantic search: operational, may be slower\n"
+                    f"---"
+                )
+
+            elif etype == "circuit_breaker_tripped":
+                cooldown = event.get("cooldown_seconds", "?")
+                blocks.append(
+                    f"---\n"
+                    f"\u26a0 Embedding system state change\n"
+                    f"  Event: circuit breaker tripped \u2014 "
+                    f"switching to CPU fallback\n"
+                    f"  Component: {component}\n"
+                    f"  Cooldown: {cooldown:.0f}s\n"
+                    f"  Semantic search: degraded\n"
+                    f"---"
+                )
+
+            elif etype == "budget_recovered":
+                cwnd = event.get("cwnd", "?")
+                blocks.append(
+                    f"---\n"
+                    f"\u2705 Embedding system recovered\n"
+                    f"  Event: budget restored to {cwnd:.1f}GB\n"
+                    f"  Component: {component}\n"
+                    f"  Semantic search: fully operational\n"
+                    f"---"
+                )
+
+        if not blocks:
+            return ""
+
+        return "\n".join(blocks) + "\n\n"
+
     def _register_tools(self) -> None:
         """Register MCP tools."""
 
@@ -280,7 +340,11 @@ class ZettelkastenMcpServer:
                         obsidian_path=obsidian_path,
                     )
                     op["note_id"] = note.id
-                    return f"Note created successfully with ID: {note.id} (project: {note.project})"
+                    notices = self._format_resilience_notices()
+                    return (
+                        notices
+                        + f"Note created successfully with ID: {note.id} (project: {note.project})"
+                    )
                 except Exception as e:
                     return self.format_error_response(e)
 
@@ -500,8 +564,9 @@ class ZettelkastenMcpServer:
 
                 # Success - return new version
                 versioned = result
+                notices = self._format_resilience_notices()
                 return (
-                    f"Note updated successfully: {versioned.note.id}\n"
+                    notices + f"Note updated successfully: {versioned.note.id}\n"
                     f"New version: {versioned.version.commit_hash}\n"
                     f"Project: {versioned.note.project}"
                 )
@@ -689,9 +754,12 @@ class ZettelkastenMcpServer:
                         op["result_count"] = len(results)
 
                         if not results:
-                            return "No semantically similar notes found."
+                            notices = self._format_resilience_notices()
+                            return notices + "No semantically similar notes found."
 
-                        result_text = f"Found {len(results)} semantically similar notes:\n\n"
+                        result_text = (
+                            f"Found {len(results)} semantically similar notes:\n\n"
+                        )
                         for i, result in enumerate(results, 1):
                             note = result.note
                             result_text += f"{i}. {note.title} (ID: {note.id})\n"
@@ -709,7 +777,8 @@ class ZettelkastenMcpServer:
                                     content_preview += "..."
                                 result_text += f"   Preview: {content_preview}\n"
                             result_text += "\n"
-                        return result_text
+                        notices = self._format_resilience_notices()
+                        return notices + result_text
 
                     elif mode == "text":
                         # Convert tags string to list if provided
@@ -866,15 +935,17 @@ class ZettelkastenMcpServer:
                         updated = self.zettel_service.bulk_add_tags(ids, tags)
                         return f"Added tags [{', '.join(tags)}] to {updated} notes."
                     note = self.zettel_service.add_tag_to_note(str(ids[0]), tags[0])
-                    return f"Tag '{tags[0]}' added to note '{note.title}' (ID: {note.id})"
+                    return (
+                        f"Tag '{tags[0]}' added to note '{note.title}' (ID: {note.id})"
+                    )
                 else:  # remove
                     if len(ids) > 1 or len(tags) > 1:
                         updated = self.zettel_service.bulk_remove_tags(ids, tags)
                         return f"Removed tags [{', '.join(tags)}] from {updated} notes."
-                    note = self.zettel_service.remove_tag_from_note(str(ids[0]), tags[0])
-                    return (
-                        f"Tag '{tags[0]}' removed from note '{note.title}' (ID: {note.id})"
+                    note = self.zettel_service.remove_tag_from_note(
+                        str(ids[0]), tags[0]
                     )
+                    return f"Tag '{tags[0]}' removed from note '{note.title}' (ID: {note.id})"
             except Exception as e:
                 return self.format_error_response(e)
 
@@ -1040,11 +1111,15 @@ class ZettelkastenMcpServer:
                     elif mode == "by_project":
                         if not project:
                             return "Error: 'project' parameter is required for mode='by_project'"
-                        total_in_project = self.zettel_service.count_notes_in_project(project)
+                        total_in_project = self.zettel_service.count_notes_in_project(
+                            project
+                        )
                         if total_in_project == 0:
                             return f"No notes found in project '{project}'."
 
-                        notes = self.zettel_service.get_notes_by_project(project, limit=limit)
+                        notes = self.zettel_service.get_notes_by_project(
+                            project, limit=limit
+                        )
                         op["result_count"] = len(notes)
 
                         output = f"Notes in project '{project}' (showing {len(notes)} of {total_in_project}):\n\n"
@@ -1199,7 +1274,11 @@ class ZettelkastenMcpServer:
                                     "Set ZETTELKASTEN_EMBEDDINGS_ENABLED=true and install "
                                     "the [semantic] extra to enable."
                                 )
-                            return f"No semantically related notes found for '{note.title}'"
+                            notices = self._format_resilience_notices()
+                            return (
+                                notices
+                                + f"No semantically related notes found for '{note.title}'"
+                            )
 
                         output = f"Notes semantically related to '{note.title}':\n\n"
                         for i, result in enumerate(results, 1):
@@ -1212,7 +1291,8 @@ class ZettelkastenMcpServer:
                             if r_note.tags:
                                 output += f"   Tags: {', '.join(tag.name for tag in r_note.tags)}\n"
                             output += "\n"
-                        return output
+                        notices = self._format_resilience_notices()
+                        return notices + output
 
                     else:
                         return f"Invalid mode: '{mode}'. Valid modes: linked, similar, semantic"
@@ -1359,7 +1439,10 @@ class ZettelkastenMcpServer:
                                 r_cb = snap["reranker"]["circuit_breaker"]
                                 e_aimd = snap["embedder"]["aimd"]
                                 r_aimd = snap["reranker"]["aimd"]
-                                if e_cb["state"] != "closed" or r_cb["state"] != "closed":
+                                if (
+                                    e_cb["state"] != "closed"
+                                    or r_cb["state"] != "closed"
+                                ):
                                     output += f"**Resilience (embedder):** breaker={e_cb['state']}, provider={e_cb['provider']}, budget={e_aimd['cwnd']:.1f}GB\n"
                                     output += f"**Resilience (reranker):** breaker={r_cb['state']}, provider={r_cb['provider']}, budget={r_aimd['cwnd']:.1f}GB\n"
                                     if e_cb["state"] == "disabled":
@@ -1647,8 +1730,9 @@ class ZettelkastenMcpServer:
                                     )
 
                             stats = self.zettel_service.reindex_embeddings()
+                            notices = self._format_resilience_notices()
                             return (
-                                f"Embedding reindex complete.\n"
+                                notices + f"Embedding reindex complete.\n"
                                 f"{provider_line}"
                                 f"Total notes: {stats['total']}\n"
                                 f"Embedded: {stats['embedded']}\n"
@@ -1821,7 +1905,9 @@ class ZettelkastenMcpServer:
                     return "Error: project_id is required when action='create'"
                 if not name:
                     return "Error: name is required when action='create'"
-                with timed_operation("zk_manage_projects_create", project_id=project_id) as op:
+                with timed_operation(
+                    "zk_manage_projects_create", project_id=project_id
+                ) as op:
                     try:
                         project = Project(
                             id=project_id,
@@ -1874,7 +1960,9 @@ class ZettelkastenMcpServer:
             elif action == "get":
                 if not project_id:
                     return "Error: project_id is required when action='get'"
-                with timed_operation("zk_manage_projects_get", project_id=project_id) as op:
+                with timed_operation(
+                    "zk_manage_projects_get", project_id=project_id
+                ) as op:
                     try:
                         project = self.project_repository.get(project_id)
                         if not project:
@@ -1897,9 +1985,7 @@ class ZettelkastenMcpServer:
                                 output += f"  * {child.id}\n"
 
                         if project.metadata:
-                            output += (
-                                f"\nMetadata: {json.dumps(project.metadata, indent=2)}\n"
-                            )
+                            output += f"\nMetadata: {json.dumps(project.metadata, indent=2)}\n"
 
                         return output
                     except Exception as e:
@@ -1907,15 +1993,21 @@ class ZettelkastenMcpServer:
             elif action == "delete":
                 if not project_id:
                     return "Error: project_id is required when action='delete'"
-                with timed_operation("zk_manage_projects_delete", project_id=project_id) as op:
+                with timed_operation(
+                    "zk_manage_projects_delete", project_id=project_id
+                ) as op:
                     try:
                         project = self.project_repository.get(project_id)
                         if not project:
                             return f"Project '{project_id}' not found."
 
                         if not confirm:
-                            note_count = self.project_repository.get_note_count(project_id)
-                            children = self.project_repository.search(parent_id=project_id)
+                            note_count = self.project_repository.get_note_count(
+                                project_id
+                            )
+                            children = self.project_repository.search(
+                                parent_id=project_id
+                            )
                             return (
                                 f"Delete project '{project_id}'?\n\n"
                                 f"Notes in project: {note_count}\n"
@@ -1931,7 +2023,9 @@ class ZettelkastenMcpServer:
                     except Exception as e:
                         return self.format_error_response(e)
             else:
-                return f"Unknown action '{action}'. Choose from: create, list, get, delete"
+                return (
+                    f"Unknown action '{action}'. Choose from: create, list, get, delete"
+                )
 
     def _setup_sync_wizard(self) -> str:
         """Run the sync setup wizard. Validates prerequisites and initializes.

@@ -670,3 +670,181 @@ class TestProtocolResilienceRecovery:
         )
         text = get_text(result)
         assert "Recovery Note" in text or "similar" in text.lower()
+
+
+# ---------------------------------------------------------------------------
+# Tests: Inline Resilience Notices (Task 9)
+# ---------------------------------------------------------------------------
+
+
+class TestProtocolInlineNotices:
+    """Test that tool responses include inline resilience notices on state changes."""
+
+    @pytest.mark.anyio
+    async def test_search_includes_notice_after_oom(
+        self, resilience_client, controllable_providers
+    ):
+        """After OOM during semantic search, the response should include
+        a state-change notice with the warning indicator."""
+        embedder, _ = controllable_providers
+
+        # Seed a note while healthy
+        await resilience_client.call_tool(
+            "zk_create_note",
+            {
+                "title": "Notice Test Note",
+                "content": "Content for notice testing.",
+                "note_type": "permanent",
+            },
+        )
+
+        # Arm OOM — next search triggers failure + notice
+        embedder.arm()
+        result = await resilience_client.call_tool(
+            "zk_search_notes",
+            {"query": "notice test", "mode": "semantic"},
+        )
+        text = get_text(result)
+        # Should contain a state change notice
+        assert "\u26a0" in text or "state change" in text.lower()
+        assert "budget" in text.lower() or "memory pressure" in text.lower()
+
+    @pytest.mark.anyio
+    async def test_normal_search_has_no_notice(
+        self, resilience_client, controllable_providers
+    ):
+        """A normal search with no state change should NOT include a notice."""
+        embedder, _ = controllable_providers
+
+        # Seed a note
+        await resilience_client.call_tool(
+            "zk_create_note",
+            {
+                "title": "Clean Search Note",
+                "content": "This note exists for clean search testing.",
+                "note_type": "permanent",
+            },
+        )
+
+        # Search while healthy — no state change expected
+        result = await resilience_client.call_tool(
+            "zk_search_notes",
+            {"query": "clean search note", "mode": "semantic"},
+        )
+        text = get_text(result)
+        # No notice block
+        assert "---" not in text.split("\n")[0] or "state change" not in text.lower()
+        assert "\u26a0" not in text
+        assert "\u2705" not in text
+
+    @pytest.mark.anyio
+    async def test_recovery_notice_shows_checkmark(
+        self, resilience_client, resilience_mcp_server, controllable_providers
+    ):
+        """After recovery to full capacity, the response should include
+        a recovery notice with the checkmark indicator."""
+        embedder, _ = controllable_providers
+        svc = resilience_mcp_server.zettel_service.embedding_service
+
+        # Seed notes
+        await resilience_client.call_tool(
+            "zk_create_note",
+            {
+                "title": "Recovery Notice Note",
+                "content": "Content for recovery notice testing.",
+                "note_type": "permanent",
+            },
+        )
+
+        # Cause one OOM to reduce budget (but not trip breaker)
+        embedder.arm()
+        await resilience_client.call_tool(
+            "zk_search_notes",
+            {"query": "trigger oom", "mode": "semantic"},
+        )
+        # Drain the degradation notice so it doesn't appear later
+        svc.coordinator.drain_pending_notices()
+
+        # Disarm and manually push budget back to max to trigger recovery
+        embedder.disarm()
+        coord = svc.coordinator
+        coord.embedder_aimd._cwnd = coord.embedder_aimd.max_cwnd
+        coord._degraded["embedder"] = True
+        # A success at full cwnd triggers recovery event
+        coord.on_embedder_success(utilization=0.5)
+
+        # Next search should include recovery notice
+        result = await resilience_client.call_tool(
+            "zk_search_notes",
+            {"query": "recovery notice", "mode": "semantic"},
+        )
+        text = get_text(result)
+        assert "\u2705" in text or "recovered" in text.lower()
+
+    @pytest.mark.anyio
+    async def test_circuit_breaker_trip_notice(
+        self, resilience_client, controllable_providers
+    ):
+        """When the circuit breaker trips, the response should mention it."""
+        embedder, _ = controllable_providers
+
+        # Seed note
+        await resilience_client.call_tool(
+            "zk_create_note",
+            {
+                "title": "Breaker Trip Note",
+                "content": "Content for breaker trip testing.",
+                "note_type": "permanent",
+            },
+        )
+
+        # Trip breaker with 3 OOMs (trip_threshold=3)
+        embedder.arm()
+        for _ in range(3):
+            await resilience_client.call_tool(
+                "zk_search_notes",
+                {"query": "trip breaker", "mode": "semantic"},
+            )
+
+        # The last search result should have accumulated notices
+        # including circuit_breaker_tripped
+        # (notices accumulate across the 3 calls — the 3rd call's response
+        # may have them, or we check on the next call)
+        result = await resilience_client.call_tool(
+            "zk_search_notes",
+            {"query": "check notices", "mode": "semantic"},
+        )
+        text = get_text(result)
+        # At least some notice should be present from the accumulated failures
+        # (The breaker trips on the 3rd failure, emitting a tripped notice)
+        assert (
+            "circuit breaker" in text.lower()
+            or "state change" in text.lower()
+            or "\u26a0" in text
+        )
+
+    @pytest.mark.anyio
+    async def test_create_note_includes_notice_after_oom(
+        self, resilience_client, resilience_mcp_server, controllable_providers
+    ):
+        """zk_create_note should include notice when embedding fails."""
+        embedder, _ = controllable_providers
+        svc = resilience_mcp_server.zettel_service.embedding_service
+
+        # Arm OOM
+        embedder.arm()
+
+        # Create a note — embedding will fail, generating a notice
+        result = await resilience_client.call_tool(
+            "zk_create_note",
+            {
+                "title": "OOM Create Note",
+                "content": "Created during OOM condition.",
+                "note_type": "permanent",
+            },
+        )
+        text = get_text(result)
+        # Note creation should succeed (embedding failure is non-fatal)
+        assert "created successfully" in text.lower()
+        # And should include a resilience notice
+        assert "\u26a0" in text or "state change" in text.lower()
