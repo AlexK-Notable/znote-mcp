@@ -1439,16 +1439,43 @@ class ZettelkastenMcpServer:
                                 r_cb = snap["reranker"]["circuit_breaker"]
                                 e_aimd = snap["embedder"]["aimd"]
                                 r_aimd = snap["reranker"]["aimd"]
-                                if (
-                                    e_cb["state"] != "closed"
-                                    or r_cb["state"] != "closed"
-                                ):
-                                    output += f"**Resilience (embedder):** breaker={e_cb['state']}, provider={e_cb['provider']}, budget={e_aimd['cwnd']:.1f}GB\n"
-                                    output += f"**Resilience (reranker):** breaker={r_cb['state']}, provider={r_cb['provider']}, budget={r_aimd['cwnd']:.1f}GB\n"
-                                    if e_cb["state"] == "disabled":
-                                        output += "**WARNING:** Embedder disabled due to repeated ONNX failures. Only FTS search available.\n"
-                                    if r_cb["state"] == "disabled":
-                                        output += "**WARNING:** Reranker disabled — search results will not be reranked.\n"
+                                output += "\n### Resilience\n"
+                                output += (
+                                    f"**Embedder AIMD:** phase={e_aimd['phase']}, "
+                                    f"cwnd={e_aimd['cwnd']:.1f}GB, "
+                                    f"ssthresh={e_aimd['ssthresh']:.1f}GB\n"
+                                )
+                                output += (
+                                    f"**Embedder Breaker:** state={e_cb['state']}, "
+                                    f"provider={e_cb['provider']}, "
+                                    f"failures={e_cb['failures_in_window']}, "
+                                    f"trips={e_cb['trip_count']}"
+                                )
+                                if e_cb["cooldown_remaining"] > 0:
+                                    output += (
+                                        f", cooldown={e_cb['cooldown_remaining']:.0f}s"
+                                    )
+                                output += "\n"
+                                output += (
+                                    f"**Reranker AIMD:** phase={r_aimd['phase']}, "
+                                    f"cwnd={r_aimd['cwnd']:.1f}GB, "
+                                    f"ssthresh={r_aimd['ssthresh']:.1f}GB\n"
+                                )
+                                output += (
+                                    f"**Reranker Breaker:** state={r_cb['state']}, "
+                                    f"provider={r_cb['provider']}, "
+                                    f"failures={r_cb['failures_in_window']}, "
+                                    f"trips={r_cb['trip_count']}"
+                                )
+                                if r_cb["cooldown_remaining"] > 0:
+                                    output += (
+                                        f", cooldown={r_cb['cooldown_remaining']:.0f}s"
+                                    )
+                                output += "\n"
+                                if e_cb["state"] == "disabled":
+                                    output += "**WARNING:** Embedder disabled due to repeated ONNX failures. Only FTS search available.\n"
+                                if r_cb["state"] == "disabled":
+                                    output += "**WARNING:** Reranker disabled — search results will not be reranked.\n"
                             else:
                                 output += "**Providers (active):** embedding service not initialized\n"
                             repo = self.zettel_service.repository
@@ -1607,6 +1634,12 @@ class ZettelkastenMcpServer:
                     - "setup_sync": Run setup wizard to validate and initialize sync
                     - "generate_sync_templates": Generate CODEOWNERS and CI guard templates
                     - "remove_user": Remove an imported user (requires target param)
+                    - "embedding_reset": Reset AIMD controllers and circuit breakers
+                      to initial state. Useful after transient GPU issues are resolved.
+                    - "embedding_force_cpu": Switch to CPU-only mode, bypassing
+                      AIMD/circuit breaker logic.
+                    - "embedding_disable": Disable semantic search for this session.
+                    - "embedding_enable": Re-enable semantic search after manual disable.
                 backup_label: Optional label for backup (e.g., "pre-migration")
                 force: Skip memory safety check for reindex_embeddings
                 target: Target identifier for actions that need it (e.g., username
@@ -1808,13 +1841,66 @@ class ZettelkastenMcpServer:
                         )
                         return "\n".join(lines)
 
+                    elif action == "embedding_reset":
+                        embedding_svc = self.zettel_service.embedding_service
+                        if embedding_svc is None:
+                            return "Embedding service is not initialized."
+                        embedding_svc.coordinator.reset_all()
+                        snap = embedding_svc.coordinator.snapshot()
+                        return (
+                            "Embedding resilience state reset.\n"
+                            "AIMD controllers and circuit breakers returned "
+                            "to initial state.\n"
+                            f"Embedder budget: {snap['embedder']['aimd']['cwnd']:.1f}GB\n"
+                            f"Reranker budget: {snap['reranker']['aimd']['cwnd']:.1f}GB"
+                        )
+
+                    elif action == "embedding_force_cpu":
+                        embedding_svc = self.zettel_service.embedding_service
+                        if embedding_svc is None:
+                            return "Embedding service is not initialized."
+                        embedding_svc.coordinator.force_cpu_all()
+                        return (
+                            "Forced CPU mode for all embedding components.\n"
+                            "AIMD controllers unchanged. Circuit breakers "
+                            "set to forced_cpu.\n"
+                            "Use embedding_reset to return to GPU."
+                        )
+
+                    elif action == "embedding_disable":
+                        embedding_svc = self.zettel_service.embedding_service
+                        if embedding_svc is None:
+                            return "Embedding service is not initialized."
+                        embedding_svc.coordinator.disable_all()
+                        return (
+                            "Semantic search disabled for this session.\n"
+                            "All embedding and reranking operations will "
+                            "raise errors.\n"
+                            "Use embedding_enable to re-enable."
+                        )
+
+                    elif action == "embedding_enable":
+                        embedding_svc = self.zettel_service.embedding_service
+                        if embedding_svc is None:
+                            return "Embedding service is not initialized."
+                        embedding_svc.coordinator.enable_all()
+                        snap = embedding_svc.coordinator.snapshot()
+                        return (
+                            "Semantic search re-enabled.\n"
+                            "Circuit breakers reset to closed (GPU).\n"
+                            f"Embedder budget: {snap['embedder']['aimd']['cwnd']:.1f}GB\n"
+                            f"Reranker budget: {snap['reranker']['aimd']['cwnd']:.1f}GB"
+                        )
+
                     else:
                         return (
                             f"Invalid action: '{action}'. Valid actions: "
                             "rebuild, sync, backup, list_backups, "
                             "reset_fts, reindex_embeddings, git_push, "
                             "pull_imports, setup_sync, "
-                            "generate_sync_templates, remove_user"
+                            "generate_sync_templates, remove_user, "
+                            "embedding_reset, embedding_force_cpu, "
+                            "embedding_disable, embedding_enable"
                         )
 
                 except Exception as e:

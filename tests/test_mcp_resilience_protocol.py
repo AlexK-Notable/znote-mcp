@@ -18,6 +18,9 @@ import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
 from mcp.types import CallToolResult
 
+from tests.conftest_protocol import mcp_client  # noqa: F401 — fixture
+from tests.conftest_protocol import mcp_server  # noqa: F401 — fixture
+from tests.conftest_protocol import protocol_config  # noqa: F401 — fixture
 from znote_mcp.config import config
 from znote_mcp.models.db_models import init_db
 from znote_mcp.server.mcp_server import ZettelkastenMcpServer
@@ -848,3 +851,173 @@ class TestProtocolInlineNotices:
         assert "created successfully" in text.lower()
         # And should include a resilience notice
         assert "\u26a0" in text or "state change" in text.lower()
+
+
+# ---------------------------------------------------------------------------
+# Tests: Agent Controls — zk_system actions (Task 10)
+# ---------------------------------------------------------------------------
+
+
+class TestProtocolEmbeddingControls:
+    """Test zk_system embedding control actions through MCP protocol."""
+
+    @pytest.mark.anyio
+    async def test_embedding_reset(
+        self, resilience_client, resilience_mcp_server, controllable_providers
+    ):
+        """embedding_reset should restore AIMD and breakers to initial state."""
+        embedder, _ = controllable_providers
+        svc = resilience_mcp_server.zettel_service.embedding_service
+
+        # Degrade the system
+        embedder.arm()
+        for _ in range(3):
+            await resilience_client.call_tool(
+                "zk_search_notes",
+                {"query": "degrade", "mode": "semantic"},
+            )
+        assert (
+            svc.coordinator.embedder_aimd.cwnd < svc.coordinator.embedder_aimd.max_cwnd
+        )
+
+        # Reset via MCP
+        result = await resilience_client.call_tool(
+            "zk_system", {"action": "embedding_reset"}
+        )
+        text = get_text(result)
+        assert "reset" in text.lower()
+        assert "initial state" in text.lower() or "6.0GB" in text
+
+        # Verify state — reset goes to initial cwnd (slow_start at max/2)
+        snap = svc.coordinator.snapshot()
+        assert snap["embedder"]["aimd"]["phase"] == "slow_start"
+        assert snap["embedder"]["circuit_breaker"]["state"] == "closed"
+        assert snap["reranker"]["circuit_breaker"]["state"] == "closed"
+
+    @pytest.mark.anyio
+    async def test_embedding_force_cpu(self, resilience_client, resilience_mcp_server):
+        """embedding_force_cpu should set breakers to forced_cpu."""
+        svc = resilience_mcp_server.zettel_service.embedding_service
+
+        result = await resilience_client.call_tool(
+            "zk_system", {"action": "embedding_force_cpu"}
+        )
+        text = get_text(result)
+        assert "forced cpu" in text.lower() or "cpu mode" in text.lower()
+
+        snap = svc.coordinator.snapshot()
+        assert snap["embedder"]["circuit_breaker"]["state"] == "forced_cpu"
+        assert snap["reranker"]["circuit_breaker"]["state"] == "forced_cpu"
+
+    @pytest.mark.anyio
+    async def test_embedding_disable(self, resilience_client, resilience_mcp_server):
+        """embedding_disable should disable both breakers."""
+        svc = resilience_mcp_server.zettel_service.embedding_service
+
+        result = await resilience_client.call_tool(
+            "zk_system", {"action": "embedding_disable"}
+        )
+        text = get_text(result)
+        assert "disabled" in text.lower()
+
+        snap = svc.coordinator.snapshot()
+        assert snap["embedder"]["circuit_breaker"]["state"] == "disabled"
+        assert snap["reranker"]["circuit_breaker"]["state"] == "disabled"
+
+    @pytest.mark.anyio
+    async def test_embedding_enable(self, resilience_client, resilience_mcp_server):
+        """embedding_enable should re-enable after disable."""
+        svc = resilience_mcp_server.zettel_service.embedding_service
+
+        # Disable first
+        await resilience_client.call_tool("zk_system", {"action": "embedding_disable"})
+
+        # Re-enable
+        result = await resilience_client.call_tool(
+            "zk_system", {"action": "embedding_enable"}
+        )
+        text = get_text(result)
+        assert "re-enabled" in text.lower() or "enabled" in text.lower()
+
+        snap = svc.coordinator.snapshot()
+        assert snap["embedder"]["circuit_breaker"]["state"] == "closed"
+        assert snap["reranker"]["circuit_breaker"]["state"] == "closed"
+
+    @pytest.mark.anyio
+    async def test_embedding_controls_without_embedding_service(self, mcp_client):
+        """Embedding control actions should return a message when service is None."""
+        for action in [
+            "embedding_reset",
+            "embedding_force_cpu",
+            "embedding_disable",
+            "embedding_enable",
+        ]:
+            result = await mcp_client.call_tool("zk_system", {"action": action})
+            text = get_text(result)
+            assert "not initialized" in text.lower()
+
+
+# ---------------------------------------------------------------------------
+# Tests: Enhanced zk_status (Task 10)
+# ---------------------------------------------------------------------------
+
+
+class TestProtocolEnhancedStatus:
+    """Test enhanced zk_status embeddings section with AIMD/breaker details."""
+
+    @pytest.mark.anyio
+    async def test_status_shows_aimd_state(self, resilience_client):
+        """Status should show AIMD phase, cwnd, ssthresh for both components."""
+        result = await resilience_client.call_tool(
+            "zk_status", {"sections": "embeddings"}
+        )
+        text = get_text(result)
+        assert "AIMD" in text
+        assert "phase=" in text
+        assert "cwnd=" in text
+        assert "ssthresh=" in text
+
+    @pytest.mark.anyio
+    async def test_status_shows_breaker_state(self, resilience_client):
+        """Status should show circuit breaker state, provider, failures."""
+        result = await resilience_client.call_tool(
+            "zk_status", {"sections": "embeddings"}
+        )
+        text = get_text(result)
+        assert "Breaker" in text
+        assert "state=" in text
+        assert "provider=" in text
+        assert "failures=" in text
+
+    @pytest.mark.anyio
+    async def test_status_shows_degraded_aimd_after_oom(
+        self, resilience_client, controllable_providers
+    ):
+        """After OOM, status should show reduced cwnd and non-closed breaker."""
+        embedder, _ = controllable_providers
+
+        # Trigger OOM failures to trip breaker
+        embedder.arm()
+        for _ in range(3):
+            await resilience_client.call_tool(
+                "zk_search_notes",
+                {"query": "oom", "mode": "semantic"},
+            )
+
+        result = await resilience_client.call_tool(
+            "zk_status", {"sections": "embeddings"}
+        )
+        text = get_text(result)
+        # Should show non-closed state and trips > 0
+        assert "trips=" in text
+        assert "state=open" in text or "state=closed" in text
+
+    @pytest.mark.anyio
+    async def test_status_resilience_section_always_present(self, resilience_client):
+        """Resilience subsection should always appear when embeddings enabled,
+        not only when degraded."""
+        result = await resilience_client.call_tool(
+            "zk_status", {"sections": "embeddings"}
+        )
+        text = get_text(result)
+        assert "Resilience" in text
