@@ -67,9 +67,7 @@ class ZettelkastenMcpServer:
         # Conditionally create embedding service
         embedding_service = self._create_embedding_service()
 
-        # Wire MCP notifications for ONNX degradation events
-        if embedding_service is not None:
-            embedding_service.resilience._on_notify = self._send_resilience_notification
+        # Resilience event wiring will be added in Task 9 (agent signaling)
 
         # Services — share a single database engine when provided
         self.zettel_service = ZettelService(
@@ -207,8 +205,7 @@ class ZettelkastenMcpServer:
                 reranker=reranker,
                 reranker_idle_timeout=config.reranker_idle_timeout,
                 embedder_idle_timeout=config.embedder_idle_timeout,
-                initial_batch_size=config.embedding_batch_size,
-                initial_max_tokens=max(config.embedding_max_tokens, config.reranker_max_tokens),
+                memory_budget_gb=config.embedding_memory_budget_gb,
             )
             logger.info(
                 f"Embedding service created (model={config.embedding_model}, "
@@ -1356,17 +1353,18 @@ class ZettelkastenMcpServer:
                                         )
                                 else:
                                     output += "**Providers (active):** embedder not yet loaded\n"
-                                # Resilience state
-                                r = embedding_svc.resilience
-                                e_level = r.embedder_level
-                                r_level = r.reranker_level
-                                from znote_mcp.services.resilience import DegradationLevel
-                                if e_level > DegradationLevel.NORMAL or r_level > DegradationLevel.NORMAL:
-                                    output += f"**Resilience (embedder):** {e_level.name} (batch={r.embedder_batch_size}, tokens={r.embedder_max_tokens})\n"
-                                    output += f"**Resilience (reranker):** {r_level.name} (batch={r.reranker_batch_size}, tokens={r.reranker_max_tokens})\n"
-                                    if not r.is_embedder_enabled:
+                                # Resilience state (AIMD + circuit breaker)
+                                snap = embedding_svc.coordinator.snapshot()
+                                e_cb = snap["embedder"]["circuit_breaker"]
+                                r_cb = snap["reranker"]["circuit_breaker"]
+                                e_aimd = snap["embedder"]["aimd"]
+                                r_aimd = snap["reranker"]["aimd"]
+                                if e_cb["state"] != "closed" or r_cb["state"] != "closed":
+                                    output += f"**Resilience (embedder):** breaker={e_cb['state']}, provider={e_cb['provider']}, budget={e_aimd['cwnd']:.1f}GB\n"
+                                    output += f"**Resilience (reranker):** breaker={r_cb['state']}, provider={r_cb['provider']}, budget={r_aimd['cwnd']:.1f}GB\n"
+                                    if e_cb["state"] == "disabled":
                                         output += "**WARNING:** Embedder disabled due to repeated ONNX failures. Only FTS search available.\n"
-                                    if not r.is_reranker_enabled:
+                                    if r_cb["state"] == "disabled":
                                         output += "**WARNING:** Reranker disabled — search results will not be reranked.\n"
                             else:
                                 output += "**Providers (active):** embedding service not initialized\n"

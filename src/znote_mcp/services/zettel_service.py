@@ -254,9 +254,7 @@ class ZettelService:
         """
         # Embed each chunk — use adaptive batching for proper memory budgeting
         chunk_texts = [c.text for c in chunks]
-        vectors = self._embedding_service.embed_batch_adaptive(
-            chunk_texts, memory_budget_gb=config.embedding_memory_budget_gb
-        )
+        vectors = self._embedding_service.embed_batch_adaptive(chunk_texts)
 
         # Build (chunk_index, vector) pairs
         chunk_data = list(zip([c.index for c in chunks], vectors))
@@ -416,7 +414,7 @@ class ZettelService:
                         f"(adaptive batching, {budget}GB budget)..."
                     )
                     vectors = self._embedding_service.embed_batch_adaptive(
-                        short_texts, memory_budget_gb=budget
+                        short_texts
                     )
                 else:
                     logger.info(
@@ -478,7 +476,7 @@ class ZettelService:
 
             try:
                 all_vectors = self._embedding_service.embed_batch_adaptive(
-                    all_chunk_texts, memory_budget_gb=budget
+                    all_chunk_texts
                 )
 
                 # Distribute vectors back to notes and store per-note
