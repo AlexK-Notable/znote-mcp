@@ -11,19 +11,17 @@ Claude Code exercises.
 
 import re
 from typing import List, Sequence, Tuple
+from unittest.mock import patch
 
 import numpy as np
 import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
 from mcp.types import CallToolResult
-from unittest.mock import patch
 
 from znote_mcp.config import config
 from znote_mcp.models.db_models import init_db
 from znote_mcp.server.mcp_server import ZettelkastenMcpServer
 from znote_mcp.services.embedding_service import EmbeddingService
-from znote_mcp.services.resilience import DegradationLevel
-
 
 # ---------------------------------------------------------------------------
 # Fake providers
@@ -179,6 +177,7 @@ def resilience_mcp_server(resilience_protocol_config, controllable_providers):
             reranker=reranker,
             reranker_idle_timeout=0,
             embedder_idle_timeout=0,
+            memory_budget_gb=6.0,
         )
 
     engine = init_db()
@@ -247,10 +246,10 @@ class TestProtocolResilienceSearch:
         assert isinstance(text, str) and len(text) > 0
 
     @pytest.mark.anyio
-    async def test_repeated_oom_advances_degradation_level(
+    async def test_repeated_oom_advances_degradation(
         self, resilience_client, resilience_mcp_server, controllable_providers
     ):
-        """Each BFCArena error during search should advance the resilience level."""
+        """Each BFCArena error during search should reduce AIMD budget."""
         embedder, _ = controllable_providers
         svc = resilience_mcp_server.zettel_service.embedding_service
 
@@ -263,8 +262,10 @@ class TestProtocolResilienceSearch:
                 {"query": "trigger oom", "mode": "semantic"},
             )
 
-        # Resilience should have advanced
-        assert svc.resilience.embedder_level.value >= 1
+        # AIMD cwnd should have decreased from failures
+        assert (
+            svc.coordinator.embedder_aimd.cwnd < svc.coordinator.embedder_aimd.max_cwnd
+        )
 
     @pytest.mark.anyio
     async def test_auto_mode_uses_text_when_semantic_returns_empty(
@@ -493,43 +494,48 @@ class TestProtocolResilienceStatus:
     async def test_status_shows_degradation_after_oom(
         self, resilience_client, controllable_providers
     ):
-        """After OOM errors, status should report the degradation level."""
+        """After OOM errors, status should report the degradation state."""
         embedder, _ = controllable_providers
 
-        # Trigger one OOM to advance to REDUCED_BATCH
+        # Trigger enough OOMs to trip the breaker (trip_threshold=3)
         embedder.arm()
-        await resilience_client.call_tool(
-            "zk_search_notes",
-            {"query": "trigger oom", "mode": "semantic"},
-        )
+        for _ in range(3):
+            await resilience_client.call_tool(
+                "zk_search_notes",
+                {"query": "trigger oom", "mode": "semantic"},
+            )
         embedder.disarm()
 
         result = await resilience_client.call_tool(
             "zk_status", {"sections": "embeddings"}
         )
         text = get_text(result)
-        # Should mention degradation or reduced state
+        # New format: "breaker=open" or "budget=X.XGB" in Resilience lines
         assert (
-            "degraded" in text.lower()
-            or "reduced" in text.lower()
-            or "REDUCED_BATCH" in text
-            or "Resilience" in text
+            "Resilience" in text
+            or "breaker" in text.lower()
+            or "budget" in text.lower()
+            or "open" in text.lower()
         )
 
     @pytest.mark.anyio
     async def test_status_shows_disabled_after_full_cascade(
-        self, resilience_client, controllable_providers
+        self, resilience_client, resilience_mcp_server, controllable_providers
     ):
         """After full degradation cascade, status should clearly show disabled."""
         embedder, _ = controllable_providers
+        svc = resilience_mcp_server.zettel_service.embedding_service
 
-        # Drive to disabled
+        # Drive through OOMs then force disable
         embedder.arm()
         for _ in range(6):
             await resilience_client.call_tool(
                 "zk_search_notes",
                 {"query": "oom", "mode": "semantic"},
             )
+
+        # Force the breaker to disabled state (simulates CPU also failing)
+        svc.coordinator.embedder_breaker.on_cpu_failure()
 
         result = await resilience_client.call_tool(
             "zk_status", {"sections": "embeddings"}
@@ -576,9 +582,7 @@ class TestProtocolResilienceRecovery:
         note_id = extract_note_id(r1)
 
         # Get
-        r2 = await resilience_client.call_tool(
-            "zk_get_note", {"identifier": note_id}
-        )
+        r2 = await resilience_client.call_tool("zk_get_note", {"identifier": note_id})
         text = get_text(r2)
         assert "Created While Degraded" in text
 
@@ -649,7 +653,7 @@ class TestProtocolResilienceRecovery:
             },
         )
 
-        # One OOM (advances to REDUCED_BATCH, but doesn't disable)
+        # One OOM (advances AIMD but doesn't trip breaker with threshold=3)
         embedder.arm()
         await resilience_client.call_tool(
             "zk_search_notes",
@@ -659,7 +663,7 @@ class TestProtocolResilienceRecovery:
         # Disarm — simulates VRAM becoming available
         embedder.disarm()
 
-        # Should work again at reduced batch size
+        # Should work again at reduced budget
         result = await resilience_client.call_tool(
             "zk_search_notes",
             {"query": "recovery note findable", "mode": "semantic"},

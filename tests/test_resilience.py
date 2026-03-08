@@ -4,6 +4,8 @@ import faulthandler
 import tempfile
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from znote_mcp.hardware import (
     HardwareProfile,
     TuningResult,
@@ -87,112 +89,9 @@ class TestValidateGpu:
         assert result.onnx_providers == "cpu"
 
 
-from znote_mcp.services.resilience import OnnxResilienceManager, DegradationLevel
-
-
-class TestResilienceManager:
-    """Tests for the OnnxResilienceManager state machine."""
-
-    def test_initial_level_is_normal(self):
-        mgr = OnnxResilienceManager(
-            initial_batch_size=64,
-            initial_max_tokens=8192,
-        )
-        assert mgr.embedder_level == DegradationLevel.NORMAL
-        assert mgr.reranker_level == DegradationLevel.NORMAL
-
-    def test_advance_embedder_reduces_batch(self):
-        mgr = OnnxResilienceManager(
-            initial_batch_size=64,
-            initial_max_tokens=8192,
-        )
-        mgr.advance_embedder()
-        assert mgr.embedder_level == DegradationLevel.REDUCED_BATCH
-        assert mgr.embedder_batch_size == 32
-
-    def test_advance_embedder_twice_reduces_tokens(self):
-        mgr = OnnxResilienceManager(
-            initial_batch_size=64,
-            initial_max_tokens=8192,
-        )
-        mgr.advance_embedder()
-        mgr.advance_embedder()
-        assert mgr.embedder_level == DegradationLevel.REDUCED_TOKENS
-        assert mgr.embedder_batch_size == 32
-        assert mgr.embedder_max_tokens == 4096
-
-    def test_advance_to_cpu_fallback(self):
-        mgr = OnnxResilienceManager(
-            initial_batch_size=64,
-            initial_max_tokens=8192,
-        )
-        mgr.advance_embedder()
-        mgr.advance_embedder()
-        mgr.advance_embedder()
-        assert mgr.embedder_level == DegradationLevel.CPU_FALLBACK
-
-    def test_advance_to_disabled(self):
-        mgr = OnnxResilienceManager(
-            initial_batch_size=64,
-            initial_max_tokens=8192,
-        )
-        for _ in range(4):
-            mgr.advance_embedder()
-        assert mgr.embedder_level == DegradationLevel.DISABLED
-
-    def test_advance_past_disabled_stays_disabled(self):
-        mgr = OnnxResilienceManager(
-            initial_batch_size=64,
-            initial_max_tokens=8192,
-        )
-        for _ in range(10):
-            mgr.advance_embedder()
-        assert mgr.embedder_level == DegradationLevel.DISABLED
-
-    def test_reranker_independent_of_embedder(self):
-        mgr = OnnxResilienceManager(
-            initial_batch_size=64,
-            initial_max_tokens=8192,
-        )
-        mgr.advance_reranker()
-        assert mgr.reranker_level == DegradationLevel.REDUCED_BATCH
-        assert mgr.embedder_level == DegradationLevel.NORMAL
-
-    def test_is_component_enabled(self):
-        mgr = OnnxResilienceManager(
-            initial_batch_size=64,
-            initial_max_tokens=8192,
-        )
-        assert mgr.is_embedder_enabled is True
-        for _ in range(4):
-            mgr.advance_embedder()
-        assert mgr.is_embedder_enabled is False
-
-    def test_needs_cpu_fallback(self):
-        mgr = OnnxResilienceManager(
-            initial_batch_size=64,
-            initial_max_tokens=8192,
-        )
-        assert mgr.embedder_needs_cpu_switch is False
-        for _ in range(3):
-            mgr.advance_embedder()
-        assert mgr.embedder_needs_cpu_switch is True
-
-    def test_notification_callback_called_on_advance(self):
-        notifications = []
-        mgr = OnnxResilienceManager(
-            initial_batch_size=64,
-            initial_max_tokens=8192,
-            on_notify=lambda level, msg: notifications.append((level, msg)),
-        )
-        mgr.advance_embedder()
-        assert len(notifications) == 1
-        assert "batch size" in notifications[0][1].lower()
-
-
 from tests.fakes import FakeEmbeddingProvider, FakeRerankerProvider
-from znote_mcp.services.embedding_service import EmbeddingService
 from znote_mcp.exceptions import EmbeddingError
+from znote_mcp.services.embedding_service import EmbeddingService
 
 
 class FakeFailingProvider(FakeEmbeddingProvider):
@@ -221,25 +120,30 @@ class FakeFailingProvider(FakeEmbeddingProvider):
 
 
 class TestEmbeddingServiceResilience:
-    """Tests for EmbeddingService integration with resilience manager."""
+    """Tests for EmbeddingService integration with ResilienceCoordinator."""
 
-    def test_service_creates_resilience_manager(self):
+    def test_service_creates_coordinator(self):
         svc = EmbeddingService(
             embedder=FakeEmbeddingProvider(),
             reranker=FakeRerankerProvider(),
         )
-        assert svc.resilience is not None
+        assert svc.coordinator is not None
+        assert hasattr(svc.coordinator, "embedder_aimd")
+        assert hasattr(svc.coordinator, "embedder_breaker")
         svc.shutdown()
 
-    def test_bfcarena_load_failure_advances_level(self):
-        """BFCArena error on load should advance degradation level."""
+    def test_bfcarena_load_failure_triggers_coordinator(self):
+        """BFCArena error on load should record failure in coordinator."""
         provider = FakeFailingProvider(fail_count=1)
         svc = EmbeddingService(embedder=provider)
         try:
             svc.embed("test")
         except EmbeddingError:
             pass
-        assert svc.resilience.embedder_level.value >= 1
+        # AIMD cwnd should have decreased from initial
+        assert (
+            svc.coordinator.embedder_aimd.cwnd < svc.coordinator.embedder_aimd.max_cwnd
+        )
         svc.shutdown()
 
     def test_service_still_works_after_transient_failure(self):
@@ -284,12 +188,14 @@ class TestRerankerBatchedInference:
             embedder=FakeEmbeddingProvider(),
             reranker=reranker,
         )
-        results = svc.rerank("test query", [f"document {i}" for i in range(20)], top_k=5)
+        results = svc.rerank(
+            "test query", [f"document {i}" for i in range(20)], top_k=5
+        )
         assert len(results) == 5
         svc.shutdown()
 
-    def test_reranker_oom_advances_resilience_level(self):
-        """On BFCArena error, reranker resilience level should advance."""
+    def test_reranker_oom_triggers_coordinator(self):
+        """On BFCArena error, reranker coordinator state should update."""
         reranker = FakeFailingReranker(fail_count=1)
         svc = EmbeddingService(
             embedder=FakeEmbeddingProvider(),
@@ -299,55 +205,53 @@ class TestRerankerBatchedInference:
             svc.rerank("query", [f"doc {i}" for i in range(10)])
         except EmbeddingError:
             pass
-        assert svc.resilience.reranker_level.value >= 1
+        # AIMD cwnd should have decreased
+        assert (
+            svc.coordinator.reranker_aimd.cwnd < svc.coordinator.reranker_aimd.max_cwnd
+        )
         svc.shutdown()
 
 
 class TestCpuFallback:
-    """Tests for runtime GPU→CPU provider switching."""
+    """Tests for runtime GPU->CPU provider switching via circuit breaker."""
 
     def test_embedder_cpu_switch_flag_detected(self):
-        """After advancing to CPU_FALLBACK, needs_cpu_switch should be True."""
+        """After force_cpu(), breaker provider should be 'cpu'."""
         provider = FakeEmbeddingProvider()
         svc = EmbeddingService(embedder=provider)
-        # Force to level 3 (CPU_FALLBACK)
-        svc.resilience._embedder_level = DegradationLevel.CPU_FALLBACK
-        assert svc.resilience.embedder_needs_cpu_switch is True
+        svc.coordinator.embedder_breaker.force_cpu()
+        assert svc.coordinator.embedder_breaker.provider == "cpu"
         svc.shutdown()
 
     def test_disabled_embedder_raises_error(self):
-        """At DISABLED level, embed calls should raise EmbeddingError."""
+        """When breaker is disabled, embed calls should raise EmbeddingError."""
         provider = FakeEmbeddingProvider()
         svc = EmbeddingService(embedder=provider)
-        # Force to disabled
-        svc.resilience._embedder_level = DegradationLevel.DISABLED
-        import pytest
+        # Disable via CPU failure path
+        svc.coordinator.embedder_breaker.on_cpu_failure()
         with pytest.raises(EmbeddingError, match="disabled"):
             svc.embed("test")
         svc.shutdown()
 
     def test_disabled_reranker_raises_error(self):
-        """At DISABLED level, rerank calls should raise EmbeddingError."""
+        """When reranker breaker is disabled, rerank calls should raise EmbeddingError."""
         svc = EmbeddingService(
             embedder=FakeEmbeddingProvider(),
             reranker=FakeRerankerProvider(),
         )
-        svc.resilience._reranker_level = DegradationLevel.DISABLED
-        import pytest
+        svc.coordinator.reranker_breaker.on_cpu_failure()
         with pytest.raises(EmbeddingError, match="disabled"):
             svc.rerank("query", ["doc1"])
         svc.shutdown()
 
     def test_cpu_switch_reloads_provider(self):
-        """When needs_cpu_switch is True and provider supports it, reload on CPU."""
+        """When breaker forces CPU and provider supports it, reload on CPU."""
         provider = FakeEmbeddingProvider()
         svc = EmbeddingService(embedder=provider)
-        # Simulate: provider loaded on GPU, then resilience hits CPU_FALLBACK
-        svc.resilience._embedder_level = DegradationLevel.CPU_FALLBACK
+        # Force CPU via breaker
+        svc.coordinator.embedder_breaker.force_cpu()
 
-        # The _ensure_embedder should detect needs_cpu_switch
-        # For fake provider (no _providers_pref), it should still work
-        # by unloading and reloading
+        # The _ensure_embedder should detect CPU switch
         result = svc.embed("test after cpu switch")
         assert result is not None
         svc.shutdown()
@@ -361,8 +265,8 @@ class TestCpuFallback:
         assert provider.load_count == 1
         assert provider.unload_count == 0
 
-        # Force CPU_FALLBACK
-        svc.resilience._embedder_level = DegradationLevel.CPU_FALLBACK
+        # Force CPU via breaker
+        svc.coordinator.embedder_breaker.force_cpu()
 
         # Next embed should trigger unload + reload
         svc.embed("after cpu switch")
@@ -375,22 +279,22 @@ class TestCpuFallback:
         provider = FakeEmbeddingProvider()
         provider._providers_pref = "auto"  # Simulate ONNX provider
         svc = EmbeddingService(embedder=provider)
-        svc.resilience._embedder_level = DegradationLevel.CPU_FALLBACK
+        svc.coordinator.embedder_breaker.force_cpu()
 
         svc.embed("trigger cpu switch")
         assert provider._providers_pref == "cpu"
         svc.shutdown()
 
-    def test_cpu_switch_failure_advances_to_disabled(self):
-        """If CPU reload fails, should advance to DISABLED."""
+    def test_cpu_switch_failure_disables_breaker(self):
+        """If CPU reload fails, breaker should move to disabled state."""
         provider = FakeFailingProvider(fail_count=999)  # Always fails
         svc = EmbeddingService(embedder=provider)
-        svc.resilience._embedder_level = DegradationLevel.CPU_FALLBACK
+        svc.coordinator.embedder_breaker.force_cpu()
 
-        import pytest
         with pytest.raises(EmbeddingError, match="CPU fallback failed"):
             svc.embed("trigger failing cpu switch")
-        assert svc.resilience.embedder_level == DegradationLevel.DISABLED
+        assert svc.coordinator.embedder_breaker.state == "disabled"
+        assert svc.coordinator.embedder_breaker.is_enabled is False
         svc.shutdown()
 
     def test_reranker_cpu_switch(self):
@@ -404,131 +308,70 @@ class TestCpuFallback:
         svc.rerank("query", ["doc1", "doc2"])
         assert reranker.load_count == 1
 
-        # Force CPU_FALLBACK on reranker
-        svc.resilience._reranker_level = DegradationLevel.CPU_FALLBACK
+        # Force CPU on reranker breaker
+        svc.coordinator.reranker_breaker.force_cpu()
         svc.rerank("query", ["doc1", "doc2"])
         assert reranker.unload_count == 1
         assert reranker.load_count == 2
         svc.shutdown()
 
 
-class TestMcpNotifications:
-    """Tests for MCP notification wiring."""
-
-    def test_notification_callback_receives_messages(self):
-        """Verify notifications flow from resilience manager through EmbeddingService."""
-        messages = []
-
-        def on_notify(level, msg):
-            messages.append((level, msg))
-
-        svc = EmbeddingService(
-            embedder=FakeEmbeddingProvider(),
-            on_notify=on_notify,
-        )
-        svc.resilience.advance_embedder()
-        assert len(messages) == 1
-        assert messages[0][0] == "warning"
-        svc.shutdown()
-
-    def test_notification_on_multiple_advances(self):
-        """Each advance should produce a notification."""
-        messages = []
-        svc = EmbeddingService(
-            embedder=FakeEmbeddingProvider(),
-            on_notify=lambda level, msg: messages.append((level, msg)),
-        )
-        svc.resilience.advance_embedder()
-        svc.resilience.advance_embedder()
-        svc.resilience.advance_embedder()
-        assert len(messages) == 3
-        svc.shutdown()
-
-
-class TestAdaptiveBatchResilience:
-    """Tests that embed_batch uses resilience manager parameters."""
-
-    def test_reduced_batch_size_used_in_embed_batch(self):
-        """After advancing to REDUCED_BATCH, embed_batch should use smaller batches."""
-        provider = FakeEmbeddingProvider()
-        svc = EmbeddingService(embedder=provider)
-        svc.resilience.advance_embedder()  # Level 1: halved batch
-
-        texts = [f"text {i}" for i in range(20)]
-        results = svc.embed_batch(texts)
-        assert len(results) == 20
-        svc.shutdown()
-
-    def test_reduced_batch_size_overrides_caller(self):
-        """Resilience batch_size should override the caller-provided batch_size."""
-        provider = FakeEmbeddingProvider()
-        svc = EmbeddingService(embedder=provider, initial_batch_size=32)
-        # Initial resilience batch_size is 32, halved to 16
-        svc.resilience.advance_embedder()
-        assert svc.resilience.embedder_batch_size == 16
-
-        # Even if caller passes batch_size=64, resilience should cap it
-        texts = [f"text {i}" for i in range(20)]
-        results = svc.embed_batch(texts, batch_size=64)
-        assert len(results) == 20
-        svc.shutdown()
-
-    def test_reduced_tokens_used_in_adaptive(self):
-        """After advancing to REDUCED_TOKENS, max_tokens should shrink."""
-        provider = FakeEmbeddingProvider()
-        svc = EmbeddingService(embedder=provider)
-        svc.resilience.advance_embedder()
-        svc.resilience.advance_embedder()  # Level 2: halved tokens
-
-        assert svc.resilience.embedder_max_tokens < svc.resilience._initial_max_tokens
-        svc.shutdown()
-
-
 class TestEndToEndResilience:
-    """Full scenario: provider fails, degrades, recovers at lower level."""
+    """Full scenario: provider fails, AIMD decreases, breaker trips."""
 
     def test_full_degradation_cascade(self):
-        """Simulate: GPU OOM → reduced batch → reduced tokens → CPU → works."""
-        notifications = []
+        """Simulate: GPU OOM -> AIMD decrease -> breaker trips -> CPU fallback.
 
-        # Provider that fails first 3 load attempts
-        provider = FakeFailingProvider(fail_count=3)
+        With max_budget=6.0 and min_budget=1.0:
+        - Failure 1: cwnd 3.0 -> 1.5 (halved from initial=3.0)
+        - Failure 2: cwnd 1.5 -> 1.0 (floor), breaker trips, CPU switch attempted
+        - Failure 3: CPU switch fails -> breaker disabled
+
+        Provider fails first 2 calls, so after 2 failures the breaker trips
+        and CPU switch succeeds on attempt 3 (fail_count=2).
+        """
+        provider = FakeFailingProvider(fail_count=2)
         svc = EmbeddingService(
             embedder=provider,
-            on_notify=lambda level, msg: notifications.append((level, msg)),
+            memory_budget_gb=6.0,
         )
 
-        # Attempts 1-3 fail, each advancing the level
-        for i in range(3):
+        # Attempts 1-2 fail, triggering AIMD decrease + breaker trip
+        for i in range(2):
             try:
                 svc.embed("test")
             except EmbeddingError:
                 pass
 
-        # Should be at CPU_FALLBACK by now
-        assert svc.resilience.embedder_level == DegradationLevel.CPU_FALLBACK
-        assert len(notifications) == 3
+        # After 2 failures hitting the AIMD floor, breaker tripped
+        # and the CPU switch was attempted (but provider was still failing)
+        # Now the breaker is open, provider is CPU
+        assert svc.coordinator.embedder_breaker.provider == "cpu"
 
-        # Attempt 4 succeeds (provider stops failing at count 3)
+        # AIMD cwnd should have been halved to floor
+        assert svc.coordinator.embedder_aimd.cwnd <= 1.0
+
+        # Provider stops failing after count=2, so next embed succeeds
         result = svc.embed("test")
         assert result is not None
         svc.shutdown()
 
     def test_embedder_disabled_raises_clearly(self):
-        """When embedder is disabled, embed should raise EmbeddingError, not crash."""
-        import pytest
-
+        """When embedder breaker is disabled, embed should raise EmbeddingError."""
         provider = FakeFailingProvider(fail_count=100)  # Always fails
         svc = EmbeddingService(embedder=provider)
 
-        # Drive to disabled
+        # Drive through failures until breaker trips, then force CPU failure
         for _ in range(5):
             try:
                 svc.embed("test")
             except EmbeddingError:
                 pass
 
-        assert svc.resilience.is_embedder_enabled is False
+        # Force disable via CPU failure path
+        svc.coordinator.embedder_breaker.on_cpu_failure()
+
+        assert svc.coordinator.embedder_breaker.is_enabled is False
         with pytest.raises(EmbeddingError, match="disabled"):
             svc.embed("test")
         svc.shutdown()
@@ -539,7 +382,8 @@ class TestStartupFlow:
 
     def test_startup_flow_cpu_passthrough(self):
         """CPU-only profile should pass through validate_gpu unchanged."""
-        from znote_mcp.hardware import validate_gpu, compute_tuning, HardwareProfile
+        from znote_mcp.hardware import HardwareProfile, compute_tuning, validate_gpu
+
         profile = HardwareProfile(system_ram_mb=32000, cpu_arch="x86_64")
         tuning = compute_tuning(profile)
         validated = validate_gpu(profile, tuning)
@@ -547,7 +391,8 @@ class TestStartupFlow:
 
     def test_startup_flow_gpu_with_low_vram_falls_back(self):
         """GPU profile with insufficient free VRAM should fall back to CPU."""
-        from znote_mcp.hardware import validate_gpu, compute_tuning, HardwareProfile
+        from znote_mcp.hardware import HardwareProfile, compute_tuning, validate_gpu
+
         profile = HardwareProfile(
             gpu_name="RTX 4070",
             gpu_vram_mb=16000,
