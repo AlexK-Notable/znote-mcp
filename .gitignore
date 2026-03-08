@@ -84,3 +84,6 @@ coverage.xml
 # Claude Code local files
 .claude/
 .anamnesis/
+
+# Git worktrees
+.worktrees/
