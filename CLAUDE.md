@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-znote-mcp is an MCP (Model Context Protocol) server implementing Zettelkasten knowledge management. It provides 22 tools for creating, linking, searching, and synthesizing atomic notes through Claude and other MCP-compatible clients. Version 1.5.2 adds idle timeouts for both embedder and reranker models (default 2 min) to free VRAM/RAM when not in use, building on 1.5.0's hardware-aware auto-configuration, adaptive batching, INT8 quantization, and benchmarked model selection.
+znote-mcp is an MCP (Model Context Protocol) server implementing Zettelkasten knowledge management. It provides 22 tools for creating, linking, searching, and synthesizing atomic notes through Claude and other MCP-compatible clients. Version 1.6.0 adds AIMD-based adaptive resilience with per-component circuit breakers for GPU/CPU switching, inline agent signaling on state transitions, and embedding control actions (`embedding_reset`, `embedding_force_cpu`, `embedding_disable`, `embedding_enable`). Building on 1.5.2's idle timeouts, 1.5.0's hardware-aware auto-configuration, adaptive batching, INT8 quantization, and benchmarked model selection.
 
 ## Common Commands
 
@@ -96,9 +96,10 @@ When `[semantic]` deps are installed, embeddings auto-enable on startup:
 3. **Providers** (`onnx_providers.py`): Direct ONNX Runtime embedding (gte-modernbert-base, 768-dim) and reranking (gte-reranker-modernbert-base) with lazy loading
 4. **Types** (`embedding_types.py`): Protocol interfaces for `EmbeddingProvider` and `RerankerProvider` (structural subtyping, no inheritance required)
 5. **Chunking** (`text_chunker.py`): Splits long notes into overlapping token-aware chunks respecting sentence boundaries
-6. **Service** (`embedding_service.py`): Thread-safe orchestrator with idle timeouts for both embedder and reranker (default 120s); adaptive greedy batching based on memory budget
-7. **Storage**: sqlite-vec `vec0` virtual table for KNN vector search; chunked embeddings stored with note-level and chunk-level granularity
-8. **Integration**: `zettel_service.py` embeds on create/update, `search_service.py` uses vector KNN + optional reranking for `mode="semantic"`
+6. **Service** (`embedding_service.py`): Thread-safe orchestrator with idle timeouts for both embedder and reranker (default 120s); adaptive greedy batching within AIMD-governed memory budget
+7. **Resilience** (`resilience_coordinator.py`, `aimd.py`, `circuit_breaker.py`): AIMD controller per component governs memory budget (additive increase on success, multiplicative decrease on failure); circuit breaker handles GPU↔CPU switching with cooldown escalation; coordinator orchestrates cross-component caution signals and emits structured events for agent signaling
+8. **Storage**: sqlite-vec `vec0` virtual table for KNN vector search; chunked embeddings stored with note-level and chunk-level granularity
+9. **Integration**: `zettel_service.py` embeds on create/update, `search_service.py` uses vector KNN + optional reranking for `mode="semantic"`
 
 ### Key Files
 
@@ -109,7 +110,10 @@ When `[semantic]` deps are installed, embeddings auto-enable on startup:
 | `src/znote_mcp/server/mcp_server.py` | MCP server with 22 tools registered via decorators |
 | `src/znote_mcp/services/zettel_service.py` | Business logic for CRUD, links, tags, bulk ops; embeds notes on create/update |
 | `src/znote_mcp/services/search_service.py` | Search by text, tags, links, semantic vectors; find orphans/central notes |
-| `src/znote_mcp/services/embedding_service.py` | Thread-safe embedding/reranking orchestrator with lazy loading and idle timeout |
+| `src/znote_mcp/services/embedding_service.py` | Thread-safe embedding/reranking orchestrator with lazy loading, idle timeout, and AIMD-governed budget |
+| `src/znote_mcp/services/resilience_coordinator.py` | Orchestrates AIMD controllers + circuit breakers per component with cross-component linking and event emission |
+| `src/znote_mcp/services/aimd.py` | AIMD adaptive memory budget controller (slow start, congestion avoidance, cooldown phases) |
+| `src/znote_mcp/services/circuit_breaker.py` | Circuit breaker for GPU↔CPU switching with sliding window failure tracking and cooldown escalation |
 | `src/znote_mcp/services/embedding_types.py` | Protocol interfaces for EmbeddingProvider and RerankerProvider |
 | `src/znote_mcp/services/onnx_providers.py` | ONNX Runtime implementations for embedding and reranking models |
 | `src/znote_mcp/services/text_chunker.py` | Token-aware text chunking with sentence-boundary-respecting overlap |
@@ -190,11 +194,12 @@ Benchmark results stored in `benchmarks/` (CPU, GPU, GPU-smoke matrices). Produc
 
 ## Testing
 
-36 test files covering unit, integration, E2E, protocol, semantic search, and hardware auto-tuning.
+40 test files covering unit, integration, E2E, protocol, semantic search, resilience, and hardware auto-tuning.
 
 - **Unit tests**: `tests/conftest.py` provides fixtures with temp directories
 - **E2E tests**: `tests/conftest_e2e.py` provides `IsolatedTestEnvironment` class ensuring complete isolation from production data
 - **Protocol tests**: `tests/conftest_protocol.py` + `tests/test_mcp_protocol.py` — 34 tests exercising all 22 tools through the full MCP JSON-RPC pipeline using `mcp.shared.memory.create_connected_server_and_client_session` (no mocking). Includes semantic search tests with `FakeEmbeddingProvider`/`FakeRerankerProvider`.
+- **Resilience tests**: `test_aimd.py` (22 tests), `test_circuit_breaker.py` (17 tests), `test_resilience_coordinator.py` (10 tests) for AIMD controller, circuit breaker, and coordinator logic. `test_resilience.py` for EmbeddingService integration with coordinator. `test_mcp_resilience_protocol.py` (33 tests) for protocol-level resilience: OOM handling, inline notices, agent controls, status reporting, and E2E AIMD pipeline.
 - **Embedding tests**: 5 phased test files (`test_embedding_phase1.py` through `test_embedding_phase5.py`) covering providers, service, chunking, search integration, and reranker
 - **Chunked embedding tests**: `test_chunked_embedding_integration.py` for long-note splitting and multi-chunk vector storage
 - **Concurrency tests**: `test_concurrency.py` and `test_multiprocess_concurrency.py` for thread and process safety
