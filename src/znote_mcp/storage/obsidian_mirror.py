@@ -46,8 +46,8 @@ class ObsidianMirror:
         """Mirror a single note to the Obsidian vault.
 
         If ``note.obsidian_path`` is set, writes to
-        ``vault/{obsidian_path}/YYYY-MM-DD_Title_id.md``.
-        Otherwise falls back to ``vault/project/purpose/YYYY-MM-DD_Title_id.md``.
+        ``vault/{obsidian_path}/Title.md``.
+        Otherwise falls back to ``vault/project/purpose/Title.md``.
         """
         if not self.vault_path:
             return
@@ -67,6 +67,14 @@ class ObsidianMirror:
         target_dir.mkdir(parents=True, exist_ok=True)
 
         obsidian_file_path = target_dir / f"{safe_filename}.md"
+
+        # Disambiguate: if a different note already occupies this filename,
+        # append a short ID suffix to avoid silent overwrites.
+        if obsidian_file_path.exists():
+            existing_id = self._extract_id_from_file(obsidian_file_path)
+            if existing_id and existing_id != note.id:
+                short_id = note.id[-6:] if len(note.id) >= 6 else note.id
+                obsidian_file_path = target_dir / f"{safe_filename}_{short_id}.md"
 
         obsidian_markdown = self.rewrite_links(markdown)
         obsidian_markdown = self.normalize_markdown(obsidian_markdown)
@@ -143,26 +151,27 @@ class ObsidianMirror:
     # Filename building
     # ------------------------------------------------------------------
 
+    # Most filesystems cap at 255 bytes; leave room for ".md" extension
+    MAX_FILENAME_LEN = 200
+
     @staticmethod
     def build_filename(
         title: str,
         note_id: str,
         created_at: Optional["datetime.datetime"] = None,
     ) -> str:
-        """Build a terminal-friendly Obsidian filename.
+        """Build a human-friendly Obsidian filename.
 
-        Format: ``YYYY-MM-DD_Sanitized-Title_id_suffix``
+        Format: ``Sanitized-Title`` (date and ID live in YAML frontmatter).
+        Falls back to the note ID when the title is empty.  Truncates to
+        :attr:`MAX_FILENAME_LEN` characters to stay within filesystem limits.
         """
         safe_title = sanitize_for_terminal(title)
-        id_suffix = note_id[-12:] if len(note_id) >= 12 else note_id
-
-        date_prefix = ""
-        if created_at:
-            date_prefix = created_at.strftime("%Y-%m-%d") + "_"
-
         if safe_title:
-            return f"{date_prefix}{safe_title}_{id_suffix}"
-        return f"{date_prefix}{note_id}"
+            if len(safe_title) > ObsidianMirror.MAX_FILENAME_LEN:
+                safe_title = safe_title[: ObsidianMirror.MAX_FILENAME_LEN].rstrip("-")
+            return safe_title
+        return note_id
 
     # ------------------------------------------------------------------
     # Link rewriting
@@ -232,12 +241,33 @@ class ObsidianMirror:
 
     @staticmethod
     def inject_frontmatter(markdown: str, note: Note) -> str:
-        """Add Obsidian-specific frontmatter (aliases, cssclasses)."""
+        """Add Obsidian-specific frontmatter and strip duplicate title heading.
+
+        Obsidian renders the ``title`` frontmatter field (or ``aliases``) as
+        the note heading, so a leading ``# Title`` in the body produces a
+        visible duplicate.  This method strips the first H1 when it matches
+        the note title.
+        """
         try:
             post = frontmatter.loads(markdown)
             post.metadata["aliases"] = [note.title]
             note_type_val = note.note_type.value if note.note_type else "permanent"
             post.metadata["cssclasses"] = [note_type_val]
+
+            # Strip leading H1 that duplicates the title
+            body = post.content
+            lines = body.split("\n")
+            if lines:
+                first_line = lines[0].strip()
+                if first_line.startswith("# "):
+                    heading_text = first_line[2:].strip()
+                    if heading_text == note.title.strip():
+                        # Drop the heading and any immediately following blank line
+                        lines = lines[1:]
+                        while lines and lines[0].strip() == "":
+                            lines = lines[1:]
+                        post.content = "\n".join(lines)
+
             return frontmatter.dumps(post)
         except Exception as e:
             logger.warning(f"Failed to inject Obsidian frontmatter: {e}")
@@ -246,6 +276,16 @@ class ObsidianMirror:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_id_from_file(path: Path) -> Optional[str]:
+        """Read the ``id`` field from a mirrored file's YAML frontmatter."""
+        try:
+            text = path.read_text(encoding="utf-8")
+            post = frontmatter.loads(text)
+            return post.metadata.get("id")
+        except Exception:
+            return None
 
     def _clean_old_files(self) -> None:
         """Remove existing .md mirror files (preserves Obsidian config)."""

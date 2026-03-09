@@ -397,14 +397,12 @@ class TestIntegration:
                     tags=["obsidian", "mirror"],
                 )
 
-                # Verify the note was mirrored (filename includes ID suffix for uniqueness)
-                # Format: project/purpose/YYYY-MM-DD_Title-Name_id_suffix.md
+                # Verify the note was mirrored (filename is just the sanitized title)
+                # Format: project/purpose/Title.md
                 # Purpose defaults to "general" for notes created without explicit purpose
                 purpose_dir = obsidian_path / "test-project" / "general"
-                id_suffix = note.id[-12:]
-                # Glob with wildcard for the date prefix (e.g. "2026-02-10_")
                 matching_files = list(
-                    purpose_dir.glob(f"*Obsidian-Test-Note_{id_suffix}.md")
+                    purpose_dir.glob("Obsidian-Test-Note.md")
                 )
                 assert (
                     len(matching_files) == 1
@@ -424,11 +422,10 @@ class TestIntegration:
                     project="another-project",
                 )
 
-                # Verify second note mirrored with ID suffix (in purpose subdir)
+                # Verify second note mirrored (in purpose subdir)
                 purpose_dir2 = obsidian_path / "another-project" / "general"
-                id_suffix2 = note2.id[-12:]
                 matching_files2 = list(
-                    purpose_dir2.glob(f"*Second-Obsidian-Note_{id_suffix2}.md")
+                    purpose_dir2.glob("Second-Obsidian-Note.md")
                 )
                 assert len(matching_files2) == 1
 
@@ -465,37 +462,29 @@ class TestIntegration:
                     project="collision-test",
                 )
 
-                # Both notes should have unique files in the same purpose directory
-                # Purpose defaults to "general" when not specified
+                # Both notes should have unique files in the same purpose directory.
+                # The first note gets "Hello-World.md", the second gets
+                # "Hello-World_{short_id}.md" via the collision disambiguator.
                 purpose_dir = obsidian_path / "collision-test" / "general"
 
-                # Find files for each note by their ID suffix (new format: *_id_suffix.md)
-                id_suffix1 = note1.id[-12:]
-                id_suffix2 = note2.id[-12:]
+                # First note should have the clean filename
+                file1 = purpose_dir / "Hello-World.md"
+                assert file1.exists(), f"Note 1 should have Hello-World.md"
 
-                files1 = list(purpose_dir.glob(f"*_{id_suffix1}.md"))
-                files2 = list(purpose_dir.glob(f"*_{id_suffix2}.md"))
-
-                assert (
-                    len(files1) == 1
-                ), f"Note 1 should have exactly 1 file, found {len(files1)}"
-                assert (
-                    len(files2) == 1
-                ), f"Note 2 should have exactly 1 file, found {len(files2)}"
+                # Second note should have a disambiguated filename
+                short_id2 = note2.id[-6:]
+                file2 = purpose_dir / f"Hello-World_{short_id2}.md"
+                assert file2.exists(), f"Note 2 should have Hello-World_{short_id2}.md"
 
                 # Verify they are different files
-                assert (
-                    files1[0] != files2[0]
-                ), "Collision! Both notes mapped to same file"
+                assert file1 != file2, "Collision! Both notes mapped to same file"
 
                 # Verify content is correct in each file
-                with open(files1[0], "r") as f:
-                    content1 = f.read()
-                    assert "First note with colon" in content1
+                content1 = file1.read_text()
+                assert "First note with colon" in content1
 
-                with open(files2[0], "r") as f:
-                    content2 = f.read()
-                    assert "Second note with semicolon" in content2
+                content2 = file2.read_text()
+                assert "Second note with semicolon" in content2
 
                 # Verify total files (should be exactly 2)
                 all_files = list(purpose_dir.glob("*.md"))
@@ -510,7 +499,7 @@ class TestIntegration:
         """Test that wikilinks are rewritten from IDs to Obsidian-compatible format.
 
         Links like [[20260128T072243924474000000]] should become
-        [[Note-Title_74000000]] to match Obsidian filenames.
+        [[Note-Title]] to match Obsidian filenames.
         """
         with tempfile.TemporaryDirectory() as temp_obsidian_dir:
             obsidian_path = Path(temp_obsidian_dir)
@@ -544,8 +533,7 @@ class TestIntegration:
 
                 # Find the source note's Obsidian file
                 purpose_dir = obsidian_path / "link-test" / "general"
-                source_suffix = source_note.id[-12:]
-                source_files = list(purpose_dir.glob(f"*_{source_suffix}.md"))
+                source_files = list(purpose_dir.glob("Source-Note.md"))
                 assert (
                     len(source_files) == 1
                 ), f"Expected 1 source file, found {len(source_files)}"
@@ -559,13 +547,8 @@ class TestIntegration:
                     target_note.id not in content
                 ), f"Full ID {target_note.id} should be rewritten"
 
-                # The link SHOULD contain the target's title-based format
-                # with date prefix from _build_obsidian_filename
-                target_suffix = target_note.id[-12:]
-                date_prefix = target_note.created_at.strftime("%Y-%m-%d") + "_"
-                expected_link = (
-                    f"[[{date_prefix}Target-Important-Note_{target_suffix}]]"
-                )
+                # The link SHOULD contain the target's title-based filename
+                expected_link = "[[Target-Important-Note]]"
                 assert (
                     expected_link in content
                 ), f"Expected link {expected_link} not found in content"

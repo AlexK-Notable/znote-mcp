@@ -120,36 +120,37 @@ class TestAutoPurposeInference:
 # =============================================================================
 
 
-class TestDatePrefixFilenames:
-    """Tests for ObsidianMirror.build_filename() with date prefixes."""
+class TestFilenames:
+    """Tests for ObsidianMirror.build_filename() — title-only format."""
 
-    def test_filename_with_date(self):
+    def test_filename_is_sanitized_title(self):
         created = datetime.datetime(2026, 2, 8, 12, 0, 0, tzinfo=timezone.utc)
         result = ObsidianMirror.build_filename(
             "My Test Note", "20260208T120000000000000000", created
         )
-        assert result == "2026-02-08_My-Test-Note_000000000000"
+        assert result == "My-Test-Note"
 
-    def test_filename_without_date(self):
-        """When created_at is None, no date prefix."""
+    def test_filename_ignores_date(self):
+        """Date is in frontmatter, not the filename."""
         result = ObsidianMirror.build_filename(
             "My Test Note", "20260208T120000000000000000", None
         )
-        assert result == "My-Test-Note_000000000000"
+        assert result == "My-Test-Note"
 
     def test_filename_with_special_chars(self):
         created = datetime.datetime(2026, 1, 15, tzinfo=timezone.utc)
         result = ObsidianMirror.build_filename(
             "Architecture Plan: API Design", "20260115T000000000000000000", created
         )
-        assert result.startswith("2026-01-15_Architecture-Plan")
-        assert result.endswith("_000000000000")
+        assert "Architecture-Plan" in result
+        # No date prefix or ID suffix
+        assert "2026" not in result
+        assert "000000" not in result
 
-    def test_filename_empty_title(self):
-        created = datetime.datetime(2026, 3, 1, tzinfo=timezone.utc)
+    def test_filename_empty_title_falls_back_to_id(self):
         note_id = "20260301T000000000000000000"
-        result = ObsidianMirror.build_filename("", note_id, created)
-        assert result == f"2026-03-01_{note_id}"
+        result = ObsidianMirror.build_filename("", note_id, None)
+        assert result == note_id
 
 
 # =============================================================================
@@ -260,7 +261,7 @@ class TestObsidianMirrorIntegration:
             )
             yield repo, Path(vault_dir)
 
-    def test_mirror_creates_date_prefixed_file(self, obsidian_repo):
+    def test_mirror_creates_title_only_file(self, obsidian_repo):
         repo, vault = obsidian_repo
         note = Note(
             title="Test Note",
@@ -274,9 +275,8 @@ class TestObsidianMirrorIntegration:
         assert research_dir.exists()
         files = list(research_dir.glob("*.md"))
         assert len(files) == 1
-        # Filename should start with date
-        fname = files[0].name
-        assert fname[:10].count("-") == 2  # YYYY-MM-DD format
+        # Filename should be just the sanitized title
+        assert files[0].name == "Test-Note.md"
 
     def test_mirror_normalizes_tables(self, obsidian_repo):
         repo, vault = obsidian_repo
@@ -493,6 +493,45 @@ class TestObsidianFrontmatter:
 
         assert "cssclasses" in fm
         assert "fleeting" in fm["cssclasses"]
+
+    def test_mirror_strips_duplicate_title_heading(self, obsidian_repo):
+        """When body starts with # Title matching note.title, it's stripped."""
+        repo, vault = obsidian_repo
+        note = Note(
+            title="My Research Note",
+            content="# My Research Note\n\nActual content starts here.",
+            project="testproj",
+            note_type=NoteType.PERMANENT,
+        )
+        repo.create(note)
+
+        files = list(vault.glob("**/*.md"))
+        assert len(files) == 1
+        content = files[0].read_text()
+
+        # The body should NOT have a duplicate # Title heading
+        # (aliases in frontmatter already provides the display title)
+        body = content.split("---", 2)[2].strip()
+        assert not body.startswith("# My Research Note")
+        assert "Actual content starts here." in body
+
+    def test_mirror_keeps_non_matching_heading(self, obsidian_repo):
+        """When body starts with # Heading that differs from title, keep it."""
+        repo, vault = obsidian_repo
+        note = Note(
+            title="My Research Note",
+            content="# Different Heading\n\nBody text.",
+            project="testproj",
+            note_type=NoteType.PERMANENT,
+        )
+        repo.create(note)
+
+        files = list(vault.glob("**/*.md"))
+        assert len(files) == 1
+        content = files[0].read_text()
+
+        body = content.split("---", 2)[2].strip()
+        assert body.startswith("# Different Heading")
 
     def test_source_file_unchanged(self, obsidian_repo):
         """Source .md file should NOT have aliases or cssclasses."""

@@ -377,7 +377,7 @@ class ZettelkastenMcpServer:
         ) -> str:
             """Create a new Zettelkasten note.
             Args:
-                title: The title of the note
+                title: Short, descriptive title (aim for 3-8 words). Titles become Obsidian filenames — keep them concise
                 content: The main content of the note
                 note_type: Type of note (fleeting, literature, permanent, structure, hub)
                 project: Project this note belongs to (organizes notes into project directories)
