@@ -29,6 +29,22 @@ from znote_mcp.storage.note_repository import NoteRepository
 
 logger = logging.getLogger(__name__)
 
+# Semantic inverse for bidirectional links — maps each link type to its reverse.
+LINK_INVERSE_MAP = {
+    LinkType.REFERENCE: LinkType.REFERENCE,
+    LinkType.EXTENDS: LinkType.EXTENDED_BY,
+    LinkType.EXTENDED_BY: LinkType.EXTENDS,
+    LinkType.REFINES: LinkType.REFINED_BY,
+    LinkType.REFINED_BY: LinkType.REFINES,
+    LinkType.CONTRADICTS: LinkType.CONTRADICTED_BY,
+    LinkType.CONTRADICTED_BY: LinkType.CONTRADICTS,
+    LinkType.QUESTIONS: LinkType.QUESTIONED_BY,
+    LinkType.QUESTIONED_BY: LinkType.QUESTIONS,
+    LinkType.SUPPORTS: LinkType.SUPPORTED_BY,
+    LinkType.SUPPORTED_BY: LinkType.SUPPORTS,
+    LinkType.RELATED: LinkType.RELATED,
+}
+
 # Keywords for auto-purpose inference (checked against title, tags, and first 200 chars of content)
 _PURPOSE_KEYWORDS: Dict[NotePurpose, List[str]] = {
     NotePurpose.BUGFIXING: [
@@ -839,22 +855,7 @@ class ZettelService:
         if bidirectional:
             # If no explicit bidirectional type is provided, determine appropriate inverse
             if bidirectional_type is None:
-                # Map link types to their semantic inverses
-                inverse_map = {
-                    LinkType.REFERENCE: LinkType.REFERENCE,
-                    LinkType.EXTENDS: LinkType.EXTENDED_BY,
-                    LinkType.EXTENDED_BY: LinkType.EXTENDS,
-                    LinkType.REFINES: LinkType.REFINED_BY,
-                    LinkType.REFINED_BY: LinkType.REFINES,
-                    LinkType.CONTRADICTS: LinkType.CONTRADICTED_BY,
-                    LinkType.CONTRADICTED_BY: LinkType.CONTRADICTS,
-                    LinkType.QUESTIONS: LinkType.QUESTIONED_BY,
-                    LinkType.QUESTIONED_BY: LinkType.QUESTIONS,
-                    LinkType.SUPPORTS: LinkType.SUPPORTED_BY,
-                    LinkType.SUPPORTED_BY: LinkType.SUPPORTS,
-                    LinkType.RELATED: LinkType.RELATED,
-                }
-                bidirectional_type = inverse_map.get(link_type, link_type)
+                bidirectional_type = LINK_INVERSE_MAP.get(link_type, link_type)
 
             # Check if the reverse link already exists before adding it
             for link in target_note.links:
@@ -922,31 +923,13 @@ class ZettelService:
 
         # Batch-fetch all unique target IDs
         target_ids = list({spec.target_id for spec in link_specs})
-        target_map: Dict[str, Note] = {}
-        for tid in target_ids:
-            t = self.repository.get(tid)
-            if t:
-                target_map[tid] = t
+        target_notes = self.repository.get_by_ids(target_ids)
+        target_map: Dict[str, Note] = {n.id: n for n in target_notes}
 
         created = 0
         skipped = 0
         failed: List[Dict[str, str]] = []
         reverse_updates: List[tuple] = []  # (target_note, link_type, description)
-
-        inverse_map = {
-            LinkType.REFERENCE: LinkType.REFERENCE,
-            LinkType.EXTENDS: LinkType.EXTENDED_BY,
-            LinkType.EXTENDED_BY: LinkType.EXTENDS,
-            LinkType.REFINES: LinkType.REFINED_BY,
-            LinkType.REFINED_BY: LinkType.REFINES,
-            LinkType.CONTRADICTS: LinkType.CONTRADICTED_BY,
-            LinkType.CONTRADICTED_BY: LinkType.CONTRADICTS,
-            LinkType.QUESTIONS: LinkType.QUESTIONED_BY,
-            LinkType.QUESTIONED_BY: LinkType.QUESTIONS,
-            LinkType.SUPPORTS: LinkType.SUPPORTED_BY,
-            LinkType.SUPPORTED_BY: LinkType.SUPPORTS,
-            LinkType.RELATED: LinkType.RELATED,
-        }
 
         for spec in link_specs:
             if spec.target_id not in target_map:
@@ -979,7 +962,7 @@ class ZettelService:
             created += 1
 
             if spec.bidirectional:
-                inv_type = inverse_map.get(lt, lt)
+                inv_type = LINK_INVERSE_MAP.get(lt, lt)
                 reverse_updates.append(
                     (target_map[spec.target_id], inv_type, spec.description)
                 )

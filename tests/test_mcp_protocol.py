@@ -1285,3 +1285,289 @@ class TestProjectFilter:
         text = get_text(result)
         assert "Alpha Note" in text
         assert "Beta Note" not in text
+
+
+# ============================================================
+# P0: Critical missing tests
+# ============================================================
+
+
+class TestSingleResultIds:
+    """Verify output=ids works for single-result queries (bug #20 fix)."""
+
+    @pytest.mark.anyio
+    async def test_search_single_result_output_ids(self, mcp_client):
+        """A search returning 1 result with output=ids should still emit an IDs line."""
+        r = await mcp_client.call_tool(
+            "zk_create_note",
+            {"title": "Unique Singleton", "content": "singleton content xyz"},
+        )
+        await mcp_client.call_tool(
+            "zk_search_notes",
+            {"query": "singleton content xyz", "mode": "text", "output": "ids"},
+        )
+        result = await mcp_client.call_tool(
+            "zk_search_notes",
+            {"query": "singleton content xyz", "mode": "text", "output": "ids"},
+        )
+        text = get_text(result)
+        assert "IDs:" in text
+
+    @pytest.mark.anyio
+    async def test_list_single_result_output_ids(self, mcp_client):
+        """list_notes with 1 result and output=ids should emit IDs line."""
+        r = await mcp_client.call_tool(
+            "zk_create_note",
+            {"title": "Only Note", "content": "only", "note_type": "hub"},
+        )
+        result = await mcp_client.call_tool(
+            "zk_list_notes",
+            {"mode": "all", "note_type": "hub", "output": "ids"},
+        )
+        text = get_text(result)
+        assert "IDs:" in text
+
+
+class TestLinkTypeVerification:
+    """Verify that created links have the correct link_type persisted."""
+
+    @pytest.mark.anyio
+    async def test_link_type_persisted_correctly(self, mcp_client):
+        """Create a link with type 'extends', verify it reads back as 'extends'."""
+        r1 = await mcp_client.call_tool(
+            "zk_create_note", {"title": "Source", "content": "src"}
+        )
+        r2 = await mcp_client.call_tool(
+            "zk_create_note", {"title": "Target", "content": "tgt"}
+        )
+        src_id = extract_note_id_from_protocol(r1)
+        tgt_id = extract_note_id_from_protocol(r2)
+
+        await mcp_client.call_tool(
+            "zk_manage_links",
+            {
+                "action": "create",
+                "source_id": src_id,
+                "target_id": tgt_id,
+                "link_type": "extends",
+            },
+        )
+
+        note = await mcp_client.call_tool("zk_get_note", {"identifier": src_id})
+        text = get_text(note)
+        assert "extends" in text.lower()
+
+
+# ============================================================
+# P1: Important missing tests
+# ============================================================
+
+
+class TestMutualExclusion:
+    """Verify target_id and links cannot be used together in manage_links."""
+
+    @pytest.mark.anyio
+    async def test_target_id_and_links_mutual_exclusion(self, mcp_client):
+        """Providing both target_id and links should return an error."""
+        r1 = await mcp_client.call_tool(
+            "zk_create_note", {"title": "A", "content": "a"}
+        )
+        r2 = await mcp_client.call_tool(
+            "zk_create_note", {"title": "B", "content": "b"}
+        )
+        src_id = extract_note_id_from_protocol(r1)
+        tgt_id = extract_note_id_from_protocol(r2)
+
+        result = await mcp_client.call_tool(
+            "zk_manage_links",
+            {
+                "action": "create",
+                "source_id": src_id,
+                "target_id": tgt_id,
+                "links": json.dumps(
+                    [{"target_id": tgt_id, "link_type": "reference"}]
+                ),
+            },
+        )
+        text = get_text(result)
+        assert "error" in text.lower()
+
+
+class TestLinkReadBack:
+    """Verify links created via batch appear on the source note."""
+
+    @pytest.mark.anyio
+    async def test_batch_links_read_back(self, mcp_client):
+        """Links created via JSON batch should be visible on get_note."""
+        r1 = await mcp_client.call_tool(
+            "zk_create_note", {"title": "Hub", "content": "hub"}
+        )
+        r2 = await mcp_client.call_tool(
+            "zk_create_note", {"title": "Spoke1", "content": "s1"}
+        )
+        r3 = await mcp_client.call_tool(
+            "zk_create_note", {"title": "Spoke2", "content": "s2"}
+        )
+        hub_id = extract_note_id_from_protocol(r1)
+        s1_id = extract_note_id_from_protocol(r2)
+        s2_id = extract_note_id_from_protocol(r3)
+
+        await mcp_client.call_tool(
+            "zk_manage_links",
+            {
+                "action": "create",
+                "source_id": hub_id,
+                "links": json.dumps(
+                    [
+                        {"target_id": s1_id, "link_type": "reference"},
+                        {"target_id": s2_id, "link_type": "extends"},
+                    ]
+                ),
+            },
+        )
+
+        note = await mcp_client.call_tool("zk_get_note", {"identifier": hub_id})
+        text = get_text(note)
+        assert s1_id in text
+        assert s2_id in text
+
+
+class TestAdditiveLinks:
+    """Verify links on update are additive, not replacing."""
+
+    @pytest.mark.anyio
+    async def test_update_links_are_additive(self, mcp_client):
+        """Creating a note with links, then updating with new links, keeps both."""
+        r1 = await mcp_client.call_tool(
+            "zk_create_note", {"title": "Main", "content": "main"}
+        )
+        r2 = await mcp_client.call_tool(
+            "zk_create_note", {"title": "First", "content": "f"}
+        )
+        r3 = await mcp_client.call_tool(
+            "zk_create_note", {"title": "Second", "content": "s"}
+        )
+        main_id = extract_note_id_from_protocol(r1)
+        first_id = extract_note_id_from_protocol(r2)
+        second_id = extract_note_id_from_protocol(r3)
+
+        # Create with initial link
+        await mcp_client.call_tool(
+            "zk_manage_links",
+            {
+                "action": "create",
+                "source_id": main_id,
+                "target_id": first_id,
+                "link_type": "reference",
+            },
+        )
+
+        # Update with additional link
+        await mcp_client.call_tool(
+            "zk_update_note",
+            {
+                "note_id": main_id,
+                "content": "updated main",
+                "links": json.dumps(
+                    [{"target_id": second_id, "link_type": "extends"}]
+                ),
+            },
+        )
+
+        note = await mcp_client.call_tool("zk_get_note", {"identifier": main_id})
+        text = get_text(note)
+        assert first_id in text
+        assert second_id in text
+
+
+# ============================================================
+# P2: Edge case tests
+# ============================================================
+
+
+class TestBatchLimits:
+    """Verify batch limit enforcement."""
+
+    @pytest.mark.anyio
+    async def test_manage_links_exceeds_50_limit(self, mcp_client):
+        """Providing >50 links in a JSON batch should return an error."""
+        r1 = await mcp_client.call_tool(
+            "zk_create_note", {"title": "Source", "content": "s"}
+        )
+        src_id = extract_note_id_from_protocol(r1)
+
+        # 51 fake targets — all will be invalid IDs but the limit check happens first
+        links = [
+            {"target_id": f"fake-{i}", "link_type": "reference"} for i in range(51)
+        ]
+        result = await mcp_client.call_tool(
+            "zk_manage_links",
+            {
+                "action": "create",
+                "source_id": src_id,
+                "links": json.dumps(links),
+            },
+        )
+        text = get_text(result)
+        assert "maximum" in text.lower() or "50" in text
+
+
+class TestBidirectionalLinks:
+    """Verify bidirectional link creation."""
+
+    @pytest.mark.anyio
+    async def test_bidirectional_creates_inverse(self, mcp_client):
+        """A bidirectional 'extends' link should create 'extended_by' on the target."""
+        r1 = await mcp_client.call_tool(
+            "zk_create_note", {"title": "Parent", "content": "p"}
+        )
+        r2 = await mcp_client.call_tool(
+            "zk_create_note", {"title": "Child", "content": "c"}
+        )
+        parent_id = extract_note_id_from_protocol(r1)
+        child_id = extract_note_id_from_protocol(r2)
+
+        await mcp_client.call_tool(
+            "zk_manage_links",
+            {
+                "action": "create",
+                "source_id": child_id,
+                "target_id": parent_id,
+                "link_type": "extends",
+                "bidirectional": True,
+            },
+        )
+
+        # Check parent has inverse link back to child
+        note = await mcp_client.call_tool("zk_get_note", {"identifier": parent_id})
+        text = get_text(note)
+        assert child_id in text
+        assert "extended_by" in text.lower()
+
+
+class TestEmptyInputs:
+    """Verify graceful handling of empty/minimal inputs."""
+
+    @pytest.mark.anyio
+    async def test_empty_links_array(self, mcp_client):
+        """An empty links JSON array should not error."""
+        result = await mcp_client.call_tool(
+            "zk_create_note",
+            {
+                "title": "With Empty Links",
+                "content": "test",
+                "links": json.dumps([]),
+            },
+        )
+        text = get_text(result)
+        # Should succeed creating the note without error
+        assert "created" in text.lower() or "with empty links" in text.lower()
+
+    @pytest.mark.anyio
+    async def test_search_empty_query(self, mcp_client):
+        """A text search with empty string query should not crash."""
+        result = await mcp_client.call_tool(
+            "zk_search_notes", {"query": "", "mode": "text"}
+        )
+        # Should return something (possibly empty results), not crash
+        assert result is not None

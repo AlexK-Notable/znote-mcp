@@ -20,6 +20,7 @@ from znote_mcp.config import (
 from znote_mcp.exceptions import ValidationError, ZettelkastenError
 from znote_mcp.models.schema import (
     ConflictResult,
+    LinkSpec,
     LinkType,
     NotePurpose,
     NoteType,
@@ -181,9 +182,59 @@ class ZettelkastenMcpServer:
         return ""
 
     @staticmethod
+    def _parse_link_specs(
+        links_raw: str | list, max_links: int = 20, strict: bool = False
+    ) -> tuple[list, str | None]:
+        """Parse links JSON into LinkSpec list.
+
+        Args:
+            links_raw: JSON string or pre-parsed list of link dicts.
+            max_links: Maximum number of links allowed.
+            strict: If True, invalid items return an error. If False, skip them.
+
+        Returns:
+            (specs, error_msg) — error_msg is None on success.
+        """
+        try:
+            links_data = json.loads(links_raw) if isinstance(links_raw, str) else links_raw
+        except json.JSONDecodeError:
+            return [], "links must be valid JSON"
+        if not isinstance(links_data, list):
+            return [], "links must be a JSON array"
+        if len(links_data) > max_links:
+            return [], f"Maximum {max_links} links per batch"
+        specs = []
+        for item in links_data:
+            if not isinstance(item, dict) or "target_id" not in item:
+                if strict:
+                    return [], "Each link must be an object with at least 'target_id'"
+                continue
+            specs.append(
+                LinkSpec(
+                    target_id=item["target_id"],
+                    link_type=item.get("link_type", "reference"),
+                    description=item.get("description"),
+                    bidirectional=item.get("bidirectional", False),
+                )
+            )
+        return specs, None
+
+    @staticmethod
+    def _format_batch_link_result(result: dict) -> str:
+        """Format a create_links_batch result dict into a human-readable string."""
+        parts = [
+            f"Batch link creation: {result['created']} created, {result['skipped']} skipped"
+        ]
+        if result["failed"]:
+            parts.append(f", {len(result['failed'])} failed")
+            for f in result["failed"]:
+                parts.append(f"\n  - {f['target_id']}: {f['error']}")
+        return "".join(parts)
+
+    @staticmethod
     def _append_ids_line(response: str, ids: list) -> str:
-        """Append trailing IDs line when there are multiple results."""
-        if len(ids) > 1:
+        """Append trailing IDs line for composable output."""
+        if len(ids) >= 1:
             return response + "\n\nIDs: " + ",".join(ids)
         return response
 
@@ -377,35 +428,16 @@ class ZettelkastenMcpServer:
                     # Process links-on-create
                     if links:
                         try:
-                            from znote_mcp.models.schema import LinkSpec
-
-                            links_data = json.loads(links) if isinstance(links, str) else links
-                            if not isinstance(links_data, list):
-                                return result_msg + "\n\nWarning: links must be a JSON array, skipped."
-                            if len(links_data) > 20:
-                                return result_msg + "\n\nWarning: Maximum 20 links on create, skipped."
-
-                            specs = []
-                            for item in links_data:
-                                if isinstance(item, dict) and "target_id" in item:
-                                    specs.append(
-                                        LinkSpec(
-                                            target_id=item["target_id"],
-                                            link_type=item.get("link_type", "reference"),
-                                            description=item.get("description"),
-                                            bidirectional=item.get("bidirectional", False),
-                                        )
-                                    )
-
-                            if specs:
+                            specs, err = self._parse_link_specs(links, max_links=20)
+                            if err:
+                                result_msg += f"\n\nWarning: {err}, skipped."
+                            elif specs:
                                 link_result = self.zettel_service.create_links_batch(
                                     note.id, specs
                                 )
                                 result_msg += f"\nLinks: {link_result['created']} created"
                                 if link_result["failed"]:
                                     result_msg += f", {len(link_result['failed'])} failed"
-                        except json.JSONDecodeError:
-                            result_msg += "\n\nWarning: links JSON invalid, skipped."
                         except Exception as link_err:
                             result_msg += f"\n\nWarning: link creation failed: {link_err}"
 
@@ -683,28 +715,16 @@ class ZettelkastenMcpServer:
                 # Process links-on-update
                 if links:
                     try:
-                        from znote_mcp.models.schema import LinkSpec
-
-                        links_data = json.loads(links) if isinstance(links, str) else links
-                        if isinstance(links_data, list) and len(links_data) <= 20:
-                            specs = []
-                            for item in links_data:
-                                if isinstance(item, dict) and "target_id" in item:
-                                    specs.append(
-                                        LinkSpec(
-                                            target_id=item["target_id"],
-                                            link_type=item.get("link_type", "reference"),
-                                            description=item.get("description"),
-                                            bidirectional=item.get("bidirectional", False),
-                                        )
-                                    )
-                            if specs:
-                                link_result = self.zettel_service.create_links_batch(
-                                    single_id, specs
-                                )
-                                result_msg += f"\nLinks: {link_result['created']} created"
-                                if link_result["failed"]:
-                                    result_msg += f", {len(link_result['failed'])} failed"
+                        specs, err = self._parse_link_specs(links, max_links=20)
+                        if err:
+                            result_msg += f"\n\nWarning: {err}, skipped."
+                        elif specs:
+                            link_result = self.zettel_service.create_links_batch(
+                                single_id, specs
+                            )
+                            result_msg += f"\nLinks: {link_result['created']} created"
+                            if link_result["failed"]:
+                                result_msg += f", {len(link_result['failed'])} failed"
                     except Exception as link_err:
                         result_msg += f"\n\nWarning: link creation failed: {link_err}"
 
@@ -793,39 +813,18 @@ class ZettelkastenMcpServer:
                 if not source_id:
                     return "Error: source_id is required"
 
+                if links and target_id:
+                    return "Error: provide either target_id or links, not both"
+
                 # Mixed-type batch via JSON links array
                 if links:
                     try:
-                        links_data = json.loads(links) if isinstance(links, str) else links
-                        if not isinstance(links_data, list):
-                            return "Error: links must be a JSON array"
-                        if len(links_data) > 50:
-                            return "Error: Maximum 50 links per batch"
-
-                        from znote_mcp.models.schema import LinkSpec
-
-                        specs = []
-                        for item in links_data:
-                            if not isinstance(item, dict) or "target_id" not in item:
-                                return "Error: Each link must be an object with at least 'target_id'"
-                            specs.append(
-                                LinkSpec(
-                                    target_id=item["target_id"],
-                                    link_type=item.get("link_type", "reference"),
-                                    description=item.get("description"),
-                                    bidirectional=item.get("bidirectional", False),
-                                )
-                            )
+                        specs, err = self._parse_link_specs(links, max_links=50, strict=True)
+                        if err:
+                            return f"Error: {err}"
 
                         result = self.zettel_service.create_links_batch(source_id, specs)
-                        parts = [f"Batch link creation: {result['created']} created, {result['skipped']} skipped"]
-                        if result["failed"]:
-                            parts.append(f", {len(result['failed'])} failed")
-                            for f in result["failed"]:
-                                parts.append(f"\n  - {f['target_id']}: {f['error']}")
-                        return "".join(parts)
-                    except json.JSONDecodeError:
-                        return "Error: links must be valid JSON"
+                        return self._format_batch_link_result(result)
                     except Exception as e:
                         return self.format_error_response(e)
 
@@ -838,8 +837,6 @@ class ZettelkastenMcpServer:
                     return "Error: Maximum 50 target IDs per batch"
 
                 if len(target_ids) > 1:
-                    from znote_mcp.models.schema import LinkSpec
-
                     specs = [
                         LinkSpec(
                             target_id=tid,
@@ -851,12 +848,7 @@ class ZettelkastenMcpServer:
                     ]
                     try:
                         result = self.zettel_service.create_links_batch(source_id, specs)
-                        parts = [f"Batch link creation: {result['created']} created, {result['skipped']} skipped"]
-                        if result["failed"]:
-                            parts.append(f", {len(result['failed'])} failed")
-                            for f in result["failed"]:
-                                parts.append(f"\n  - {f['target_id']}: {f['error']}")
-                        return "".join(parts)
+                        return self._format_batch_link_result(result)
                     except Exception as e:
                         return self.format_error_response(e)
 

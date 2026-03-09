@@ -122,7 +122,7 @@ When `[semantic]` deps are installed, embeddings auto-enable on startup:
 | `src/znote_mcp/storage/note_repository.py` | Dual storage implementation (markdown files + SQLite + sqlite-vec vectors) |
 | `src/znote_mcp/exceptions.py` | Custom exception hierarchy with error codes |
 | `tests/conftest_protocol.py` | Protocol test fixtures using `mcp.shared.memory` transport + FakeEmbeddingProvider |
-| `tests/test_mcp_protocol.py` | 50 protocol integration tests (CRUD, search, links, batch, semantic, composability, project filter) |
+| `tests/test_mcp_protocol.py` | 60 protocol integration tests (CRUD, search, links, batch, semantic, composability, project filter) |
 
 ### Domain Model
 
@@ -198,7 +198,7 @@ Benchmark results stored in `benchmarks/` (CPU, GPU, GPU-smoke matrices). Produc
 
 - **Unit tests**: `tests/conftest.py` provides fixtures with temp directories
 - **E2E tests**: `tests/conftest_e2e.py` provides `IsolatedTestEnvironment` class ensuring complete isolation from production data
-- **Protocol tests**: `tests/conftest_protocol.py` + `tests/test_mcp_protocol.py` — 50 tests exercising all 17 tools through the full MCP JSON-RPC pipeline using `mcp.shared.memory.create_connected_server_and_client_session` (no mocking). Includes semantic search, batch linking, output composability, links-on-create/update, batch get, and project filter tests with `FakeEmbeddingProvider`/`FakeRerankerProvider`.
+- **Protocol tests**: `tests/conftest_protocol.py` + `tests/test_mcp_protocol.py` — 60 tests exercising all 17 tools through the full MCP JSON-RPC pipeline using `mcp.shared.memory.create_connected_server_and_client_session` (no mocking). Includes semantic search, batch linking, output composability, links-on-create/update, batch get, project filter, single-result IDs, mutual exclusion, link read-back, additive links, bidirectional inverse, batch limits, and empty input tests with `FakeEmbeddingProvider`/`FakeRerankerProvider`.
 - **Resilience tests**: `test_aimd.py` (22 tests), `test_circuit_breaker.py` (17 tests), `test_resilience_coordinator.py` (10 tests) for AIMD controller, circuit breaker, and coordinator logic. `test_resilience.py` for EmbeddingService integration with coordinator. `test_mcp_resilience_protocol.py` (33 tests) for protocol-level resilience: OOM handling, inline notices, agent controls, status reporting, and E2E AIMD pipeline.
 - **Embedding tests**: 5 phased test files (`test_embedding_phase1.py` through `test_embedding_phase5.py`) covering providers, service, chunking, search integration, and reranker
 - **Chunked embedding tests**: `test_chunked_embedding_integration.py` for long-note splitting and multi-chunk vector storage
