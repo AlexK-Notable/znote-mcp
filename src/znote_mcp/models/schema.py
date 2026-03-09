@@ -195,6 +195,20 @@ class Link(BaseModel):
     }
 
 
+@dataclass(frozen=True)
+class LinkSpec:
+    """Lightweight transfer object for batch link creation.
+
+    Not a Pydantic model — used internally to pass link parameters
+    through service methods without validation overhead.
+    """
+
+    target_id: str
+    link_type: str = "reference"
+    description: Optional[str] = None
+    bidirectional: bool = False
+
+
 class NoteType(str, Enum):
     """Types of notes in a Zettelkasten."""
 

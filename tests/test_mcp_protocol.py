@@ -1,10 +1,9 @@
 """Protocol integration tests for the Zettelkasten MCP server.
 
-These tests exercise all 17 MCP tools through the full JSON-RPC protocol
+These tests exercise all MCP tools through the full JSON-RPC protocol
 using a real ClientSession connected to a real FastMCP server. No mocking
 of transport, server, or session internals.
 
-Written against the interface defined in plan phase 3.
 Tests verify behavior through the wire protocol, not implementation details.
 
 Run with:
@@ -877,3 +876,412 @@ class TestObsidianPathProtocol:
         )
         get_text_content = get_text(get_result)
         assert "obsidian_path" not in get_text_content
+
+
+# ================================================================
+# Batch & Composability Tests (Phases 0-6)
+# ================================================================
+
+
+class TestBatchLinkProtocol:
+    """Tests for batch link creation and removal (Phase 2)."""
+
+    @pytest.mark.anyio
+    async def test_batch_create_links_comma_separated(self, mcp_client):
+        """Batch create links with comma-separated target IDs."""
+        source = await mcp_client.call_tool(
+            "zk_create_note",
+            {"title": "Source Note", "content": "Source content"},
+        )
+        source_id = extract_note_id_from_protocol(source)
+
+        target_ids = []
+        for i in range(3):
+            t = await mcp_client.call_tool(
+                "zk_create_note",
+                {"title": f"Target {i}", "content": f"Target content {i}"},
+            )
+            target_ids.append(extract_note_id_from_protocol(t))
+
+        result = await mcp_client.call_tool(
+            "zk_manage_links",
+            {
+                "action": "create",
+                "source_id": source_id,
+                "target_id": ",".join(target_ids),
+                "link_type": "reference",
+            },
+        )
+        text = get_text(result)
+        assert "3 created" in text
+        assert "0 skipped" in text
+
+    @pytest.mark.anyio
+    async def test_batch_create_links_json_mixed_types(self, mcp_client):
+        """Batch create links with JSON array for mixed link types."""
+        source = await mcp_client.call_tool(
+            "zk_create_note",
+            {"title": "Hub Note", "content": "Hub content"},
+        )
+        source_id = extract_note_id_from_protocol(source)
+
+        t1 = await mcp_client.call_tool(
+            "zk_create_note", {"title": "Ext Note", "content": "c1"}
+        )
+        t1_id = extract_note_id_from_protocol(t1)
+
+        t2 = await mcp_client.call_tool(
+            "zk_create_note", {"title": "Ref Note", "content": "c2"}
+        )
+        t2_id = extract_note_id_from_protocol(t2)
+
+        links_json = json.dumps([
+            {"target_id": t1_id, "link_type": "extends", "bidirectional": True},
+            {"target_id": t2_id, "link_type": "supports", "description": "Evidence"},
+        ])
+
+        result = await mcp_client.call_tool(
+            "zk_manage_links",
+            {"action": "create", "source_id": source_id, "links": links_json},
+        )
+        text = get_text(result)
+        assert "2 created" in text
+
+    @pytest.mark.anyio
+    async def test_batch_create_links_duplicate_skipped(self, mcp_client):
+        """Duplicate links are skipped, not errored."""
+        source = await mcp_client.call_tool(
+            "zk_create_note", {"title": "S", "content": "c"}
+        )
+        source_id = extract_note_id_from_protocol(source)
+        target = await mcp_client.call_tool(
+            "zk_create_note", {"title": "T", "content": "c"}
+        )
+        target_id = extract_note_id_from_protocol(target)
+
+        # Create first
+        await mcp_client.call_tool(
+            "zk_manage_links",
+            {
+                "action": "create",
+                "source_id": source_id,
+                "target_id": target_id,
+                "link_type": "reference",
+            },
+        )
+        # Create again — should skip
+        result = await mcp_client.call_tool(
+            "zk_manage_links",
+            {
+                "action": "create",
+                "source_id": source_id,
+                "target_id": target_id,
+                "link_type": "reference",
+            },
+        )
+        text = get_text(result)
+        assert "Error" not in text
+
+    @pytest.mark.anyio
+    async def test_batch_remove_links(self, mcp_client):
+        """Batch remove links with comma-separated target IDs."""
+        source = await mcp_client.call_tool(
+            "zk_create_note", {"title": "S", "content": "c"}
+        )
+        source_id = extract_note_id_from_protocol(source)
+
+        target_ids = []
+        for i in range(2):
+            t = await mcp_client.call_tool(
+                "zk_create_note", {"title": f"T{i}", "content": "c"}
+            )
+            target_ids.append(extract_note_id_from_protocol(t))
+
+        await mcp_client.call_tool(
+            "zk_manage_links",
+            {
+                "action": "create",
+                "source_id": source_id,
+                "target_id": ",".join(target_ids),
+            },
+        )
+
+        result = await mcp_client.call_tool(
+            "zk_manage_links",
+            {
+                "action": "remove",
+                "source_id": source_id,
+                "target_id": ",".join(target_ids),
+            },
+        )
+        text = get_text(result)
+        assert "2 links removed" in text
+
+    @pytest.mark.anyio
+    async def test_batch_create_links_partial_failure(self, mcp_client):
+        """Non-existent targets report failures without blocking others."""
+        source = await mcp_client.call_tool(
+            "zk_create_note", {"title": "S", "content": "c"}
+        )
+        source_id = extract_note_id_from_protocol(source)
+        target = await mcp_client.call_tool(
+            "zk_create_note", {"title": "T", "content": "c"}
+        )
+        target_id = extract_note_id_from_protocol(target)
+
+        result = await mcp_client.call_tool(
+            "zk_manage_links",
+            {
+                "action": "create",
+                "source_id": source_id,
+                "target_id": f"{target_id},nonexistent_id_12345",
+            },
+        )
+        text = get_text(result)
+        assert "1 created" in text
+        assert "1 failed" in text
+
+
+class TestOutputComposability:
+    """Tests for output=ids composability (Phase 3)."""
+
+    @pytest.mark.anyio
+    async def test_search_notes_output_ids(self, mcp_client):
+        """zk_search_notes with output=ids appends trailing IDs line."""
+        ids = []
+        for i in range(3):
+            r = await mcp_client.call_tool(
+                "zk_create_note",
+                {"title": f"Composable {i}", "content": f"Content about composability {i}"},
+            )
+            ids.append(extract_note_id_from_protocol(r))
+
+        result = await mcp_client.call_tool(
+            "zk_search_notes",
+            {"query": "composab", "mode": "text", "output": "ids"},
+        )
+        text = get_text(result)
+        assert "\n\nIDs: " in text
+        ids_line = text.split("\n\nIDs: ")[1].strip()
+        returned_ids = ids_line.split(",")
+        assert len(returned_ids) >= 2
+
+    @pytest.mark.anyio
+    async def test_list_notes_output_ids(self, mcp_client):
+        """zk_list_notes with output=ids appends trailing IDs line."""
+        for i in range(3):
+            await mcp_client.call_tool(
+                "zk_create_note",
+                {"title": f"List Test {i}", "content": f"Content {i}"},
+            )
+
+        result = await mcp_client.call_tool(
+            "zk_list_notes", {"mode": "all", "output": "ids"},
+        )
+        text = get_text(result)
+        assert "\n\nIDs: " in text
+
+    @pytest.mark.anyio
+    async def test_fts_search_output_ids(self, mcp_client):
+        """zk_fts_search with output=ids appends trailing IDs line."""
+        for i in range(3):
+            await mcp_client.call_tool(
+                "zk_create_note",
+                {"title": f"FTSComp {i}", "content": f"FTSComp content {i}"},
+            )
+
+        result = await mcp_client.call_tool(
+            "zk_fts_search", {"query": "FTSComp", "output": "ids"},
+        )
+        text = get_text(result)
+        assert "\n\nIDs: " in text
+
+    @pytest.mark.anyio
+    async def test_find_related_output_ids(self, mcp_client):
+        """zk_find_related with output=ids appends trailing IDs line."""
+        source = await mcp_client.call_tool(
+            "zk_create_note", {"title": "Related Source", "content": "c"}
+        )
+        source_id = extract_note_id_from_protocol(source)
+
+        target_ids = []
+        for i in range(2):
+            t = await mcp_client.call_tool(
+                "zk_create_note", {"title": f"Related T{i}", "content": "c"}
+            )
+            target_ids.append(extract_note_id_from_protocol(t))
+
+        await mcp_client.call_tool(
+            "zk_manage_links",
+            {
+                "action": "create",
+                "source_id": source_id,
+                "target_id": ",".join(target_ids),
+            },
+        )
+
+        result = await mcp_client.call_tool(
+            "zk_find_related",
+            {"note_id": source_id, "mode": "linked", "output": "ids"},
+        )
+        text = get_text(result)
+        assert "\n\nIDs: " in text
+
+
+class TestLinksOnCreateUpdate:
+    """Tests for links-on-create and links-on-update (Phase 4)."""
+
+    @pytest.mark.anyio
+    async def test_create_note_with_links(self, mcp_client):
+        """Create a note with links in a single call."""
+        t1 = await mcp_client.call_tool(
+            "zk_create_note", {"title": "Pre-existing 1", "content": "c"}
+        )
+        t1_id = extract_note_id_from_protocol(t1)
+
+        t2 = await mcp_client.call_tool(
+            "zk_create_note", {"title": "Pre-existing 2", "content": "c"}
+        )
+        t2_id = extract_note_id_from_protocol(t2)
+
+        links_json = json.dumps([
+            {"target_id": t1_id, "link_type": "reference"},
+            {"target_id": t2_id, "link_type": "extends", "bidirectional": True},
+        ])
+
+        result = await mcp_client.call_tool(
+            "zk_create_note",
+            {
+                "title": "Note With Links",
+                "content": "Has links from creation",
+                "links": links_json,
+            },
+        )
+        text = get_text(result)
+        assert "Note created successfully" in text
+        assert "Links: 2 created" in text
+
+    @pytest.mark.anyio
+    async def test_update_note_with_links(self, mcp_client):
+        """Update a note and add links in a single call."""
+        source = await mcp_client.call_tool(
+            "zk_create_note", {"title": "Updatable", "content": "c"}
+        )
+        source_id = extract_note_id_from_protocol(source)
+
+        target = await mcp_client.call_tool(
+            "zk_create_note", {"title": "Link Target", "content": "c"}
+        )
+        target_id = extract_note_id_from_protocol(target)
+
+        links_json = json.dumps([
+            {"target_id": target_id, "link_type": "supports"},
+        ])
+
+        result = await mcp_client.call_tool(
+            "zk_update_note",
+            {
+                "note_id": source_id,
+                "title": "Updated Title",
+                "links": links_json,
+            },
+        )
+        text = get_text(result)
+        assert "Note updated successfully" in text
+        assert "Links: 1 created" in text
+
+    @pytest.mark.anyio
+    async def test_create_note_with_invalid_links_still_creates(self, mcp_client):
+        """Invalid links JSON doesn't prevent note creation."""
+        result = await mcp_client.call_tool(
+            "zk_create_note",
+            {
+                "title": "Note Survives Bad Links",
+                "content": "Important content",
+                "links": "not valid json",
+            },
+        )
+        text = get_text(result)
+        assert "Note created successfully" in text
+        assert "Warning" in text
+
+
+class TestBatchGetNote:
+    """Tests for batch zk_get_note (Phase 5)."""
+
+    @pytest.mark.anyio
+    async def test_batch_get_notes(self, mcp_client):
+        """Get multiple notes with comma-separated IDs."""
+        ids = []
+        for i in range(3):
+            r = await mcp_client.call_tool(
+                "zk_create_note",
+                {"title": f"Batch Get {i}", "content": f"Content {i}"},
+            )
+            ids.append(extract_note_id_from_protocol(r))
+
+        result = await mcp_client.call_tool(
+            "zk_get_note", {"identifier": ",".join(ids)},
+        )
+        text = get_text(result)
+        assert "Retrieved 3/3 notes" in text
+        assert "Batch Get 0" in text
+        assert "Batch Get 1" in text
+        assert "Batch Get 2" in text
+
+    @pytest.mark.anyio
+    async def test_batch_get_notes_partial_not_found(self, mcp_client):
+        """Batch get with some missing IDs reports found/total."""
+        r = await mcp_client.call_tool(
+            "zk_create_note", {"title": "Exists", "content": "c"}
+        )
+        real_id = extract_note_id_from_protocol(r)
+
+        result = await mcp_client.call_tool(
+            "zk_get_note", {"identifier": f"{real_id},nonexistent_id_xyz"},
+        )
+        text = get_text(result)
+        assert "Retrieved 1/2 notes" in text
+        assert "not found" in text.lower()
+
+    @pytest.mark.anyio
+    async def test_batch_get_notes_metadata_format(self, mcp_client):
+        """Batch get with format=metadata returns compact results."""
+        ids = []
+        for i in range(2):
+            r = await mcp_client.call_tool(
+                "zk_create_note",
+                {"title": f"Meta {i}", "content": f"Full content here {i}"},
+            )
+            ids.append(extract_note_id_from_protocol(r))
+
+        result = await mcp_client.call_tool(
+            "zk_get_note", {"identifier": ",".join(ids), "format": "metadata"},
+        )
+        text = get_text(result)
+        assert "Retrieved 2/2 notes" in text
+        assert "Full content here" not in text
+
+
+class TestProjectFilter:
+    """Tests for project filter on search (Phase 6)."""
+
+    @pytest.mark.anyio
+    async def test_search_with_project_filter(self, mcp_client):
+        """Text search filtered by project only returns matching project notes."""
+        await mcp_client.call_tool(
+            "zk_create_note",
+            {"title": "Alpha Note", "content": "shared keyword", "project": "alpha"},
+        )
+        await mcp_client.call_tool(
+            "zk_create_note",
+            {"title": "Beta Note", "content": "shared keyword", "project": "beta"},
+        )
+
+        result = await mcp_client.call_tool(
+            "zk_search_notes",
+            {"query": "shared keyword", "mode": "text", "project": "alpha"},
+        )
+        text = get_text(result)
+        assert "Alpha Note" in text
+        assert "Beta Note" not in text

@@ -162,6 +162,32 @@ class ZettelkastenMcpServer:
             return f"Error: An unexpected error occurred (ref: {error_id})"
 
     @staticmethod
+    def _parse_comma_ids(raw: str) -> list:
+        """Parse a comma-separated string of IDs into a list, stripping whitespace."""
+        return [id.strip() for id in raw.split(",") if id.strip()]
+
+    @staticmethod
+    def _format_note_heading(note, index: int) -> str:
+        """Format a numbered note heading line. Works with Note objects and dicts."""
+        if isinstance(note, dict):
+            return f"{index}. {note['title']} (ID: {note['id']})\n"
+        return f"{index}. {note.title} (ID: {note.id})\n"
+
+    @staticmethod
+    def _format_note_tags(note) -> str:
+        """Format a note's tags line, or empty string if no tags."""
+        if hasattr(note, "tags") and note.tags:
+            return f"   Tags: {', '.join(tag.name for tag in note.tags)}\n"
+        return ""
+
+    @staticmethod
+    def _append_ids_line(response: str, ids: list) -> str:
+        """Append trailing IDs line when there are multiple results."""
+        if len(ids) > 1:
+            return response + "\n\nIDs: " + ",".join(ids)
+        return response
+
+    @staticmethod
     def _create_embedding_service():
         """Create an EmbeddingService if embeddings are enabled and deps are available.
 
@@ -296,6 +322,7 @@ class ZettelkastenMcpServer:
             tags: Optional[str] = None,
             plan_id: Optional[str] = None,
             obsidian_path: Optional[str] = None,
+            links: Optional[str | list] = None,
         ) -> str:
             """Create a new Zettelkasten note.
             Args:
@@ -307,6 +334,7 @@ class ZettelkastenMcpServer:
                 tags: Comma-separated list of tags (optional)
                 plan_id: Optional ID to group related planning notes
                 obsidian_path: Custom Obsidian vault subdirectory (e.g. 'project/domain/workflow/topic'). When set, overrides default project/purpose/ organization.
+                links: JSON array of links to create after note creation. Each element: {"target_id": "...", "link_type": "reference", "description": "...", "bidirectional": false}. Max 20 links.
             """
             with timed_operation("zk_create_note", title=title[:30]) as op:
                 try:
@@ -341,19 +369,60 @@ class ZettelkastenMcpServer:
                     )
                     op["note_id"] = note.id
                     notices = self._format_resilience_notices()
-                    return (
+                    result_msg = (
                         notices
                         + f"Note created successfully with ID: {note.id} (project: {note.project})"
                     )
+
+                    # Process links-on-create
+                    if links:
+                        try:
+                            from znote_mcp.models.schema import LinkSpec
+
+                            links_data = json.loads(links) if isinstance(links, str) else links
+                            if not isinstance(links_data, list):
+                                return result_msg + "\n\nWarning: links must be a JSON array, skipped."
+                            if len(links_data) > 20:
+                                return result_msg + "\n\nWarning: Maximum 20 links on create, skipped."
+
+                            specs = []
+                            for item in links_data:
+                                if isinstance(item, dict) and "target_id" in item:
+                                    specs.append(
+                                        LinkSpec(
+                                            target_id=item["target_id"],
+                                            link_type=item.get("link_type", "reference"),
+                                            description=item.get("description"),
+                                            bidirectional=item.get("bidirectional", False),
+                                        )
+                                    )
+
+                            if specs:
+                                link_result = self.zettel_service.create_links_batch(
+                                    note.id, specs
+                                )
+                                result_msg += f"\nLinks: {link_result['created']} created"
+                                if link_result["failed"]:
+                                    result_msg += f", {len(link_result['failed'])} failed"
+                        except json.JSONDecodeError:
+                            result_msg += "\n\nWarning: links JSON invalid, skipped."
+                        except Exception as link_err:
+                            result_msg += f"\n\nWarning: link creation failed: {link_err}"
+
+                    return result_msg
                 except Exception as e:
                     return self.format_error_response(e)
 
         # Get a note by ID or title
         @self.mcp.tool(name="zk_get_note")
         def zk_get_note(identifier: str, format: str = "summary") -> str:
-            """Retrieve a note by ID or title.
+            """Retrieve a note by ID or title. Supports batch retrieval with comma-separated IDs.
+
+            **Single note**: pass a note ID or title.
+            **Batch**: pass comma-separated IDs (max 50). Returns concatenated results.
+
             Args:
-                identifier: The ID or title of the note
+                identifier: The ID or title of the note, or comma-separated IDs for batch
                 format: Output format:
                     - "summary" (default): Structured overview with metadata and content
                     - "metadata": Metadata only (no content body) — compact for bulk lookups
@@ -365,8 +434,46 @@ class ZettelkastenMcpServer:
             with timed_operation("zk_get_note", identifier=identifier[:30]) as op:
                 try:
                     identifier = str(identifier)
+                    ids = self._parse_comma_ids(identifier)
+
+                    # Batch mode
+                    if len(ids) > 1:
+                        if len(ids) > 50:
+                            return "Error: Maximum 50 IDs per batch"
+                        parts = []
+                        found = 0
+                        for nid in ids:
+                            versioned = self.zettel_service.get_note_versioned(nid)
+                            if not versioned:
+                                parts.append(f"--- Note not found: {nid} ---\n")
+                                continue
+                            found += 1
+                            note = versioned.note
+                            version = versioned.version
+                            if format == "markdown":
+                                parts.append(self.zettel_service.export_note(note.id, "markdown"))
+                            elif format == "metadata":
+                                header = f"# {note.title}\nID: {note.id}\nVersion: {version.commit_hash}\n"
+                                header += f"Type: {note.note_type.value} | Project: {note.project}\n"
+                                if note.tags:
+                                    header += f"Tags: {', '.join(tag.name for tag in note.tags)}\n"
+                                if note.links:
+                                    header += f"Links: {len(note.links)} outgoing\n"
+                                parts.append(header)
+                            else:
+                                header = f"# {note.title}\nID: {note.id}\nVersion: {version.commit_hash}\n"
+                                header += f"Type: {note.note_type.value} | Project: {note.project}\n"
+                                if note.tags:
+                                    header += f"Tags: {', '.join(tag.name for tag in note.tags)}\n"
+                                header += f"\n{note.content}\n"
+                                parts.append(header)
+                        op["found"] = found > 0
+                        op["result_count"] = found
+                        return f"Retrieved {found}/{len(ids)} notes:\n\n" + "\n---\n".join(parts)
+
+                    # Single mode
                     # Try to get by ID first (with version info)
-                    versioned = self.zettel_service.get_note_versioned(identifier)
+                    versioned = self.zettel_service.get_note_versioned(ids[0] if ids else identifier)
                     # If not found, try by title
                     if not versioned:
                         note = self.zettel_service.get_note_by_title(identifier)
@@ -458,6 +565,7 @@ class ZettelkastenMcpServer:
             plan_id: Optional[str] = None,
             obsidian_path: Optional[str] = None,
             expected_version: Optional[str] = None,
+            links: Optional[str | list] = None,
         ) -> str:
             """Update an existing note, or batch-move multiple notes to a project.
 
@@ -478,12 +586,13 @@ class ZettelkastenMcpServer:
                 expected_version: Version hash from zk_get_note for conflict detection (single-note only).
                     If provided and doesn't match current version, returns CONFLICT error
                     instead of overwriting (recommended for multi-process safety).
+                links: JSON array of links to add after update. Each element: {"target_id": "...", "link_type": "reference", "description": "...", "bidirectional": false}. Max 20 links. Single-note only.
             Returns:
                 Success message with new version, or CONFLICT error if version mismatch.
             """
             try:
                 _validate_input_lengths(title=title, content=content)
-                ids = [id.strip() for id in note_id.split(",") if id.strip()]
+                ids = self._parse_comma_ids(note_id)
                 if not ids:
                     return "Error: No note IDs provided."
 
@@ -565,11 +674,41 @@ class ZettelkastenMcpServer:
                 # Success - return new version
                 versioned = result
                 notices = self._format_resilience_notices()
-                return (
+                result_msg = (
                     notices + f"Note updated successfully: {versioned.note.id}\n"
                     f"New version: {versioned.version.commit_hash}\n"
                     f"Project: {versioned.note.project}"
                 )
+
+                # Process links-on-update
+                if links:
+                    try:
+                        from znote_mcp.models.schema import LinkSpec
+
+                        links_data = json.loads(links) if isinstance(links, str) else links
+                        if isinstance(links_data, list) and len(links_data) <= 20:
+                            specs = []
+                            for item in links_data:
+                                if isinstance(item, dict) and "target_id" in item:
+                                    specs.append(
+                                        LinkSpec(
+                                            target_id=item["target_id"],
+                                            link_type=item.get("link_type", "reference"),
+                                            description=item.get("description"),
+                                            bidirectional=item.get("bidirectional", False),
+                                        )
+                                    )
+                            if specs:
+                                link_result = self.zettel_service.create_links_batch(
+                                    single_id, specs
+                                )
+                                result_msg += f"\nLinks: {link_result['created']} created"
+                                if link_result["failed"]:
+                                    result_msg += f", {len(link_result['failed'])} failed"
+                    except Exception as link_err:
+                        result_msg += f"\n\nWarning: link creation failed: {link_err}"
+
+                return result_msg
             except Exception as e:
                 return self.format_error_response(e)
 
@@ -591,7 +730,7 @@ class ZettelkastenMcpServer:
                 Success message, or CONFLICT error if version mismatch.
             """
             try:
-                ids = [id.strip() for id in note_id.split(",") if id.strip()]
+                ids = self._parse_comma_ids(note_id)
                 if not ids:
                     return "Error: No note IDs provided."
 
@@ -633,23 +772,95 @@ class ZettelkastenMcpServer:
             link_type: str = "reference",
             description: Optional[str] = None,
             bidirectional: bool = False,
+            links: Optional[str | list] = None,
         ) -> str:
-            """Manage links between notes — create or remove.
+            """Manage links between notes — create or remove. Supports batch operations.
 
-            Use action="create" to create a link between two notes.
-            Use action="remove" to remove a link between two notes.
+            **Single link**: provide source_id + target_id + link_type.
+            **Batch (uniform type)**: provide source_id + comma-separated target_id + link_type.
+            **Batch (mixed types)**: provide source_id + links (JSON array).
 
             Args:
                 action: "create" or "remove"
                 source_id: ID of the source note
-                target_id: ID of the target note
+                target_id: Target note ID, or comma-separated IDs for batch (uniform link_type)
                 link_type: Type of link (reference, extends, refines, contradicts, questions, supports, related)
                 description: Optional description of the link (for action="create")
                 bidirectional: Whether to create/remove link in both directions
+                links: JSON array for mixed-type batch create. Each element: {"target_id": "...", "link_type": "...", "description": "...", "bidirectional": true/false}. Max 50 links.
             """
             if action == "create":
-                if not source_id or not target_id:
-                    return "Error: source_id and target_id are required"
+                if not source_id:
+                    return "Error: source_id is required"
+
+                # Mixed-type batch via JSON links array
+                if links:
+                    try:
+                        links_data = json.loads(links) if isinstance(links, str) else links
+                        if not isinstance(links_data, list):
+                            return "Error: links must be a JSON array"
+                        if len(links_data) > 50:
+                            return "Error: Maximum 50 links per batch"
+
+                        from znote_mcp.models.schema import LinkSpec
+
+                        specs = []
+                        for item in links_data:
+                            if not isinstance(item, dict) or "target_id" not in item:
+                                return "Error: Each link must be an object with at least 'target_id'"
+                            specs.append(
+                                LinkSpec(
+                                    target_id=item["target_id"],
+                                    link_type=item.get("link_type", "reference"),
+                                    description=item.get("description"),
+                                    bidirectional=item.get("bidirectional", False),
+                                )
+                            )
+
+                        result = self.zettel_service.create_links_batch(source_id, specs)
+                        parts = [f"Batch link creation: {result['created']} created, {result['skipped']} skipped"]
+                        if result["failed"]:
+                            parts.append(f", {len(result['failed'])} failed")
+                            for f in result["failed"]:
+                                parts.append(f"\n  - {f['target_id']}: {f['error']}")
+                        return "".join(parts)
+                    except json.JSONDecodeError:
+                        return "Error: links must be valid JSON"
+                    except Exception as e:
+                        return self.format_error_response(e)
+
+                if not target_id:
+                    return "Error: target_id is required (or provide links JSON array)"
+
+                # Batch uniform type via comma-separated target_id
+                target_ids = self._parse_comma_ids(target_id)
+                if len(target_ids) > 50:
+                    return "Error: Maximum 50 target IDs per batch"
+
+                if len(target_ids) > 1:
+                    from znote_mcp.models.schema import LinkSpec
+
+                    specs = [
+                        LinkSpec(
+                            target_id=tid,
+                            link_type=link_type.lower(),
+                            description=description,
+                            bidirectional=bidirectional,
+                        )
+                        for tid in target_ids
+                    ]
+                    try:
+                        result = self.zettel_service.create_links_batch(source_id, specs)
+                        parts = [f"Batch link creation: {result['created']} created, {result['skipped']} skipped"]
+                        if result["failed"]:
+                            parts.append(f", {len(result['failed'])} failed")
+                            for f in result["failed"]:
+                                parts.append(f"\n  - {f['target_id']}: {f['error']}")
+                        return "".join(parts)
+                    except Exception as e:
+                        return self.format_error_response(e)
+
+                # Single link
                 try:
                     try:
                         link_type_enum = LinkType(link_type.lower())
@@ -657,15 +868,15 @@ class ZettelkastenMcpServer:
                         return f"Invalid link type: {link_type}. Valid types are: {', '.join(t.value for t in LinkType)}"
                     source_note, target_note = self.zettel_service.create_link(
                         source_id=source_id,
-                        target_id=target_id,
+                        target_id=target_ids[0],
                         link_type=link_type_enum,
                         description=description,
                         bidirectional=bidirectional,
                     )
                     if bidirectional:
-                        return f"Bidirectional link created between {source_id} and {target_id}"
+                        return f"Bidirectional link created between {source_id} and {target_ids[0]}"
                     else:
-                        return f"Link created from {source_id} to {target_id}"
+                        return f"Link created from {source_id} to {target_ids[0]}"
                 except Exception as e:
                     if "UNIQUE constraint failed" in str(e):
                         return "A link of this type already exists between these notes. Try a different link type."
@@ -673,16 +884,31 @@ class ZettelkastenMcpServer:
             elif action == "remove":
                 if not source_id or not target_id:
                     return "Error: source_id and target_id are required"
+
+                target_ids = self._parse_comma_ids(target_id)
+                if len(target_ids) > 50:
+                    return "Error: Maximum 50 target IDs per batch"
+
+                if len(target_ids) > 1:
+                    try:
+                        result = self.zettel_service.remove_links_batch(
+                            source_id, target_ids, bidirectional=bidirectional
+                        )
+                        return f"Batch link removal: {result['removed']} links removed"
+                    except Exception as e:
+                        return self.format_error_response(e)
+
+                # Single remove
                 try:
                     source_note, target_note = self.zettel_service.remove_link(
                         source_id=str(source_id),
-                        target_id=str(target_id),
+                        target_id=str(target_ids[0]),
                         bidirectional=bidirectional,
                     )
                     if bidirectional:
-                        return f"Bidirectional link removed between {source_id} and {target_id}"
+                        return f"Bidirectional link removed between {source_id} and {target_ids[0]}"
                     else:
-                        return f"Link removed from {source_id} to {target_id}"
+                        return f"Link removed from {source_id} to {target_ids[0]}"
                 except Exception as e:
                     return self.format_error_response(e)
             else:
@@ -697,6 +923,7 @@ class ZettelkastenMcpServer:
             mode: str = "auto",
             limit: int = 10,
             output: str = "full",
+            project: Optional[str] = None,
         ) -> str:
             """Search for notes by text, tags, or type.
             Args:
@@ -709,14 +936,16 @@ class ZettelkastenMcpServer:
                       tag/type filters are set; otherwise uses text search.
                     - "semantic": Embedding-based similarity search.
                       Finds conceptually related notes even without exact keyword matches.
-                      Does not support tag/type filtering.
+                      Supports project filter (post-filter with over-fetch).
                     - "text": Keyword matching in titles/content with tag/type filters.
                 limit: Maximum number of results to return
                 output: Output verbosity:
                     - "full" (default): Include content preview for each result
                     - "compact": Omit content preview — just titles, IDs, tags, dates
+                    - "ids": Append a trailing IDs line for composability with other tools
+                project: Filter results by project name. Works with all modes.
             """
-            compact = output == "compact"
+            compact = output in ("compact", "ids")
             with timed_operation(
                 "zk_search_notes", query=query[:30] if query else None, mode=mode
             ) as op:
@@ -746,31 +975,40 @@ class ZettelkastenMcpServer:
                             return "Error: query is required for semantic search."
 
                     if mode == "semantic":
+                        # Over-fetch when project filter active for post-filtering
+                        fetch_limit = limit * 5 if project else limit
                         results = self.search_service.semantic_search(
                             query=query.strip(),
-                            limit=limit,
+                            limit=fetch_limit,
                             use_reranker=True,
                         )
+
+                        # Post-filter by project
+                        if project:
+                            results = [r for r in results if r.note.project == project][:limit]
+
                         op["result_count"] = len(results)
 
                         if not results:
                             notices = self._format_resilience_notices()
-                            return notices + "No semantically similar notes found."
+                            msg = "No semantically similar notes found."
+                            if project:
+                                msg = f"No semantically similar notes found in project '{project}'."
+                            return notices + msg
 
                         result_text = (
                             f"Found {len(results)} semantically similar notes:\n\n"
                         )
                         for i, result in enumerate(results, 1):
                             note = result.note
-                            result_text += f"{i}. {note.title} (ID: {note.id})\n"
+                            result_text += self._format_note_heading(note, i)
                             result_text += f"   Score: {result.score:.3f}"
                             if result.reranked:
                                 result_text += " (reranked)"
                             result_text += "\n"
                             if note.source_user:
                                 result_text += f"   Source: {note.source_user}\n"
-                            if note.tags:
-                                result_text += f"   Tags: {', '.join(tag.name for tag in note.tags)}\n"
+                            result_text += self._format_note_tags(note)
                             if not compact:
                                 content_preview = note.content[:150].replace("\n", " ")
                                 if len(note.content) > 150:
@@ -778,7 +1016,11 @@ class ZettelkastenMcpServer:
                                 result_text += f"   Preview: {content_preview}\n"
                             result_text += "\n"
                         notices = self._format_resilience_notices()
-                        return notices + result_text
+                        result_text = notices + result_text
+                        if output == "ids":
+                            ids = [r.note.id for r in results]
+                            result_text = self._append_ids_line(result_text, ids)
+                        return result_text
 
                     elif mode == "text":
                         # Convert tags string to list if provided
@@ -799,6 +1041,10 @@ class ZettelkastenMcpServer:
                             text=query, tags=tag_list, note_type=note_type_enum
                         )
 
+                        # Post-filter by project
+                        if project:
+                            results = [r for r in results if r.note.project == project]
+
                         # Limit results
                         results = results[:limit]
                         op["result_count"] = len(results)
@@ -809,11 +1055,10 @@ class ZettelkastenMcpServer:
                         result_text = f"Found {len(results)} matching notes:\n\n"
                         for i, result in enumerate(results, 1):
                             note = result.note
-                            result_text += f"{i}. {note.title} (ID: {note.id})\n"
+                            result_text += self._format_note_heading(note, i)
                             if note.source_user:
                                 result_text += f"   Source: {note.source_user}\n"
-                            if note.tags:
-                                result_text += f"   Tags: {', '.join(tag.name for tag in note.tags)}\n"
+                            result_text += self._format_note_tags(note)
                             result_text += (
                                 f"   Created: {note.created_at.strftime('%Y-%m-%d')}\n"
                             )
@@ -823,6 +1068,9 @@ class ZettelkastenMcpServer:
                                     content_preview += "..."
                                 result_text += f"   Preview: {content_preview}\n"
                             result_text += "\n"
+                        if output == "ids":
+                            ids = [r.note.id for r in results]
+                            result_text = self._append_ids_line(result_text, ids)
                         return result_text
 
                     else:
@@ -835,7 +1083,9 @@ class ZettelkastenMcpServer:
 
         # Full-text search with FTS5
         @self.mcp.tool(name="zk_fts_search")
-        def zk_fts_search(query: str, limit: int = 10, highlight: bool = True) -> str:
+        def zk_fts_search(
+            query: str, limit: int = 10, highlight: bool = True, output: str = "full"
+        ) -> str:
             """Full-text search using FTS5 with advanced query syntax.
             Args:
                 query: Search query. Supports:
@@ -846,6 +1096,7 @@ class ZettelkastenMcpServer:
                        - Column filter: "title:python"
                 limit: Maximum number of results to return
                 highlight: Include highlighted snippets in results
+                output: "full" (default) or "ids" (append trailing IDs line for composability)
             """
             with timed_operation(
                 "zk_fts_search", query=query[:30] if query else None
@@ -881,19 +1132,22 @@ class ZettelkastenMcpServer:
                     )
 
                     # Format results
-                    output = f"{fallback_warning}Found {len(results)} notes matching '{query}':\n\n"
+                    output_text = f"{fallback_warning}Found {len(results)} notes matching '{query}':\n\n"
                     for i, result in enumerate(results, 1):
-                        output += f"{i}. {result['title']} (ID: {result['id']})\n"
-                        output += f"   Relevance: {abs(result['rank']):.2f}\n"
+                        output_text += f"{i}. {result['title']} (ID: {result['id']})\n"
+                        output_text += f"   Relevance: {abs(result['rank']):.2f}\n"
                         src_user = source_map.get(result["id"])
                         if src_user:
-                            output += f"   Source: {src_user}\n"
+                            output_text += f"   Source: {src_user}\n"
                         if highlight and "snippet" in result:
                             snippet = result["snippet"].replace("\n", " ")
-                            output += f"   Match: {snippet}\n"
-                        output += "\n"
+                            output_text += f"   Match: {snippet}\n"
+                        output_text += "\n"
 
-                    return output
+                    if output == "ids":
+                        ids = [r["id"] for r in results]
+                        output_text = self._append_ids_line(output_text, ids)
+                    return output_text
                 except Exception as e:
                     return self.format_error_response(e)
 
@@ -922,7 +1176,7 @@ class ZettelkastenMcpServer:
                 return "Error: tag is required"
 
             try:
-                ids = [id.strip() for id in note_id.split(",") if id.strip()]
+                ids = self._parse_comma_ids(note_id)
                 tags = [t.strip() for t in tag.split(",") if t.strip()]
 
                 if not ids:
@@ -1021,6 +1275,7 @@ class ZettelkastenMcpServer:
             descending: bool = True,
             limit: int = 20,
             offset: int = 0,
+            output: str = "full",
         ) -> str:
             """List and discover notes with flexible filtering.
 
@@ -1039,6 +1294,7 @@ class ZettelkastenMcpServer:
                 descending: Sort order (True for newest first)
                 limit: Maximum results to return
                 offset: Skip this many results (for pagination)
+                output: "full" (default) or "ids" (append trailing IDs line for composability)
             """
             with timed_operation("zk_list_notes", mode=mode) as op:
                 try:
@@ -1062,20 +1318,22 @@ class ZettelkastenMcpServer:
                         if not notes:
                             return f"No notes found at offset {offset}. Total notes: {total_count}"
 
-                        output = f"Notes ({offset + 1}-{offset + len(notes)} of {total_count}):\n\n"
+                        out = f"Notes ({offset + 1}-{offset + len(notes)} of {total_count}):\n\n"
                         for i, note in enumerate(notes, offset + 1):
-                            output += f"{i}. {note.title} (ID: {note.id})\n"
-                            output += f"   Type: {note.note_type.value} | Project: {note.project}\n"
-                            output += f"   Updated: {note.updated_at.strftime('%Y-%m-%d %H:%M')}\n"
-                            if note.tags:
-                                output += f"   Tags: {', '.join(tag.name for tag in note.tags)}\n"
-                            output += "\n"
+                            out += self._format_note_heading(note, i)
+                            out += f"   Type: {note.note_type.value} | Project: {note.project}\n"
+                            out += f"   Updated: {note.updated_at.strftime('%Y-%m-%d %H:%M')}\n"
+                            out += self._format_note_tags(note)
+                            out += "\n"
 
                         if offset + limit < total_count:
-                            output += (
+                            out += (
                                 f"\n(Use offset={offset + limit} to see more notes)"
                             )
-                        return output
+                        if output == "ids":
+                            ids = [n.id for n in notes]
+                            out = self._append_ids_line(out, ids)
+                        return out
 
                     elif mode == "by_date":
                         start_datetime = None
@@ -1101,12 +1359,15 @@ class ZettelkastenMcpServer:
                             return "No notes found in the specified date range."
 
                         date_type = "updated" if use_updated else "created"
-                        output = f"Notes {date_type} in date range ({len(notes)} results):\n\n"
+                        out = f"Notes {date_type} in date range ({len(notes)} results):\n\n"
                         for i, note in enumerate(notes, 1):
                             date = note.updated_at if use_updated else note.created_at
-                            output += f"{i}. {note.title} (ID: {note.id})\n"
-                            output += f"   {date_type.capitalize()}: {date.strftime('%Y-%m-%d %H:%M')}\n\n"
-                        return output
+                            out += self._format_note_heading(note, i)
+                            out += f"   {date_type.capitalize()}: {date.strftime('%Y-%m-%d %H:%M')}\n\n"
+                        if output == "ids":
+                            ids = [n.id for n in notes]
+                            out = self._append_ids_line(out, ids)
+                        return out
 
                     elif mode == "by_project":
                         if not project:
@@ -1122,14 +1383,16 @@ class ZettelkastenMcpServer:
                         )
                         op["result_count"] = len(notes)
 
-                        output = f"Notes in project '{project}' (showing {len(notes)} of {total_in_project}):\n\n"
+                        out = f"Notes in project '{project}' (showing {len(notes)} of {total_in_project}):\n\n"
                         for i, note in enumerate(notes, 1):
-                            output += f"{i}. {note.title} (ID: {note.id})\n"
-                            output += f"   Type: {note.note_type.value}\n"
-                            if note.tags:
-                                output += f"   Tags: {', '.join(tag.name for tag in note.tags)}\n"
-                            output += "\n"
-                        return output
+                            out += self._format_note_heading(note, i)
+                            out += f"   Type: {note.note_type.value}\n"
+                            out += self._format_note_tags(note)
+                            out += "\n"
+                        if output == "ids":
+                            ids = [n.id for n in notes]
+                            out = self._append_ids_line(out, ids)
+                        return out
 
                     elif mode == "central":
                         central_notes = self.search_service.find_central_notes(limit)
@@ -1138,14 +1401,16 @@ class ZettelkastenMcpServer:
                         if not central_notes:
                             return "No notes found with connections."
 
-                        output = "Most connected notes (central hubs):\n\n"
+                        out = "Most connected notes (central hubs):\n\n"
                         for i, (note, conn_count) in enumerate(central_notes, 1):
-                            output += f"{i}. {note.title} (ID: {note.id})\n"
-                            output += f"   Connections: {conn_count}\n"
-                            if note.tags:
-                                output += f"   Tags: {', '.join(tag.name for tag in note.tags)}\n"
-                            output += "\n"
-                        return output
+                            out += self._format_note_heading(note, i)
+                            out += f"   Connections: {conn_count}\n"
+                            out += self._format_note_tags(note)
+                            out += "\n"
+                        if output == "ids":
+                            ids = [n for n, _ in central_notes]
+                            out = self._append_ids_line(out, [n.id for n in ids])
+                        return out
 
                     elif mode == "orphans":
                         total_orphans = self.search_service.count_orphaned_notes()
@@ -1157,14 +1422,16 @@ class ZettelkastenMcpServer:
                         orphans = self.search_service.find_orphaned_notes(limit=limit)
                         op["result_count"] = len(orphans)
 
-                        output = f"Orphaned notes (showing {len(orphans)} of {total_orphans} with no connections):\n\n"
+                        out = f"Orphaned notes (showing {len(orphans)} of {total_orphans} with no connections):\n\n"
                         for i, note in enumerate(orphans, 1):
-                            output += f"{i}. {note.title} (ID: {note.id})\n"
-                            output += f"   Type: {note.note_type.value} | Project: {note.project}\n"
-                            if note.tags:
-                                output += f"   Tags: {', '.join(tag.name for tag in note.tags)}\n"
-                            output += "\n"
-                        return output
+                            out += self._format_note_heading(note, i)
+                            out += f"   Type: {note.note_type.value} | Project: {note.project}\n"
+                            out += self._format_note_tags(note)
+                            out += "\n"
+                        if output == "ids":
+                            ids = [n.id for n in orphans]
+                            out = self._append_ids_line(out, ids)
+                        return out
 
                     else:
                         return f"Invalid mode: '{mode}'. Valid modes: all, by_date, by_project, central, orphans"
@@ -1181,6 +1448,8 @@ class ZettelkastenMcpServer:
             direction: str = "both",
             threshold: float = 0.3,
             limit: int = 10,
+            output: str = "full",
+            project: Optional[str] = None,
         ) -> str:
             """Find notes related to a specific note.
 
@@ -1194,6 +1463,8 @@ class ZettelkastenMcpServer:
                 direction: Link direction for mode="linked" (outgoing, incoming, both)
                 threshold: Similarity threshold 0.0-1.0 for mode="similar"
                 limit: Maximum results to return
+                output: "full" (default) or "ids" (append trailing IDs line for composability)
+                project: Filter results by project name (post-filter for semantic mode)
             """
             with timed_operation(
                 "zk_find_related", mode=mode, note_id=note_id[:20]
@@ -1218,28 +1489,28 @@ class ZettelkastenMcpServer:
                         if not linked_notes:
                             return f"No {direction} links found for note '{note.title}'"
 
-                        output = f"Notes linked to '{note.title}' ({direction}):\n\n"
+                        out = f"Notes linked to '{note.title}' ({direction}):\n\n"
                         for i, linked_note in enumerate(linked_notes, 1):
-                            output += (
-                                f"{i}. {linked_note.title} (ID: {linked_note.id})\n"
-                            )
-                            if linked_note.tags:
-                                output += f"   Tags: {', '.join(tag.name for tag in linked_note.tags)}\n"
+                            out += self._format_note_heading(linked_note, i)
+                            out += self._format_note_tags(linked_note)
 
                             # Try to show link type
                             if direction in ["outgoing", "both"]:
                                 for link in note.links:
                                     if str(link.target_id) == str(linked_note.id):
-                                        output += (
+                                        out += (
                                             f"   Link type: {link.link_type.value}\n"
                                         )
                                         if link.description:
-                                            output += (
+                                            out += (
                                                 f"   Description: {link.description}\n"
                                             )
                                         break
-                            output += "\n"
-                        return output
+                            out += "\n"
+                        if output == "ids":
+                            ids = [n.id for n in linked_notes]
+                            out = self._append_ids_line(out, ids)
+                        return out
 
                     elif mode == "similar":
                         similar_notes = self.zettel_service.find_similar_notes(
@@ -1250,21 +1521,29 @@ class ZettelkastenMcpServer:
                         if not similar_notes:
                             return f"No similar notes found for '{note.title}' with threshold {threshold}"
 
-                        output = f"Notes similar to '{note.title}':\n\n"
+                        out = f"Notes similar to '{note.title}':\n\n"
                         for i, (sim_note, score) in enumerate(similar_notes, 1):
-                            output += f"{i}. {sim_note.title} (ID: {sim_note.id})\n"
-                            output += f"   Similarity: {score:.2f}\n"
-                            if sim_note.tags:
-                                output += f"   Tags: {', '.join(tag.name for tag in sim_note.tags)}\n"
-                            output += "\n"
-                        return output
+                            out += self._format_note_heading(sim_note, i)
+                            out += f"   Similarity: {score:.2f}\n"
+                            out += self._format_note_tags(sim_note)
+                            out += "\n"
+                        if output == "ids":
+                            ids = [n.id for n, _ in similar_notes]
+                            out = self._append_ids_line(out, ids)
+                        return out
 
                     elif mode == "semantic":
+                        fetch_limit = limit * 5 if project else limit
                         results = self.search_service.find_related(
                             note_id,
-                            limit=limit,
+                            limit=fetch_limit,
                             use_reranker=True,
                         )
+
+                        # Post-filter by project
+                        if project:
+                            results = [r for r in results if r.note.project == project][:limit]
+
                         op["result_count"] = len(results)
 
                         if not results:
@@ -1280,19 +1559,22 @@ class ZettelkastenMcpServer:
                                 + f"No semantically related notes found for '{note.title}'"
                             )
 
-                        output = f"Notes semantically related to '{note.title}':\n\n"
+                        out = f"Notes semantically related to '{note.title}':\n\n"
                         for i, result in enumerate(results, 1):
                             r_note = result.note
-                            output += f"{i}. {r_note.title} (ID: {r_note.id})\n"
-                            output += f"   Score: {result.score:.3f}"
+                            out += self._format_note_heading(r_note, i)
+                            out += f"   Score: {result.score:.3f}"
                             if result.reranked:
-                                output += " (reranked)"
-                            output += "\n"
-                            if r_note.tags:
-                                output += f"   Tags: {', '.join(tag.name for tag in r_note.tags)}\n"
-                            output += "\n"
+                                out += " (reranked)"
+                            out += "\n"
+                            out += self._format_note_tags(r_note)
+                            out += "\n"
                         notices = self._format_resilience_notices()
-                        return notices + output
+                        out = notices + out
+                        if output == "ids":
+                            ids = [r.note.id for r in results]
+                            out = self._append_ids_line(out, ids)
+                        return out
 
                     else:
                         return f"Invalid mode: '{mode}'. Valid modes: linked, similar, semantic"

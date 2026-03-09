@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-znote-mcp is an MCP (Model Context Protocol) server implementing Zettelkasten knowledge management. It provides 22 tools for creating, linking, searching, and synthesizing atomic notes through Claude and other MCP-compatible clients. Version 1.7.0 adds AIMD-based adaptive resilience with per-component circuit breakers for GPU/CPU switching, inline agent signaling on state transitions, and embedding control actions (`embedding_reset`, `embedding_force_cpu`, `embedding_disable`, `embedding_enable`). Building on 1.5.2's idle timeouts, 1.5.0's hardware-aware auto-configuration, adaptive batching, INT8 quantization, and benchmarked model selection.
+znote-mcp is an MCP (Model Context Protocol) server implementing Zettelkasten knowledge management. It provides 17 composable tools for creating, linking, searching, and synthesizing atomic notes through Claude and other MCP-compatible clients. Tools support batch operations (comma-separated IDs, JSON link arrays), composable output (`output="ids"` for pipeline chaining), links-on-create/update, and project filtering. Version 1.7.0 adds AIMD-based adaptive resilience with per-component circuit breakers for GPU/CPU switching, inline agent signaling on state transitions, and embedding control actions (`embedding_reset`, `embedding_force_cpu`, `embedding_disable`, `embedding_enable`). Building on 1.5.2's idle timeouts, 1.5.0's hardware-aware auto-configuration, adaptive batching, INT8 quantization, and benchmarked model selection.
 
 ## Common Commands
 
@@ -107,7 +107,7 @@ When `[semantic]` deps are installed, embeddings auto-enable on startup:
 |------|---------|
 | `src/znote_mcp/main.py` | Entry point - parses CLI args, initializes DB, auto-enables embeddings, auto-tunes config via hardware detection, starts server |
 | `src/znote_mcp/config.py` | Pydantic configuration with env var support (including all embedding config) |
-| `src/znote_mcp/server/mcp_server.py` | MCP server with 22 tools registered via decorators |
+| `src/znote_mcp/server/mcp_server.py` | MCP server with 17 composable tools registered via decorators |
 | `src/znote_mcp/services/zettel_service.py` | Business logic for CRUD, links, tags, bulk ops; embeds notes on create/update |
 | `src/znote_mcp/services/search_service.py` | Search by text, tags, links, semantic vectors; find orphans/central notes |
 | `src/znote_mcp/services/embedding_service.py` | Thread-safe embedding/reranking orchestrator with lazy loading, idle timeout, and AIMD-governed budget |
@@ -122,7 +122,7 @@ When `[semantic]` deps are installed, embeddings auto-enable on startup:
 | `src/znote_mcp/storage/note_repository.py` | Dual storage implementation (markdown files + SQLite + sqlite-vec vectors) |
 | `src/znote_mcp/exceptions.py` | Custom exception hierarchy with error codes |
 | `tests/conftest_protocol.py` | Protocol test fixtures using `mcp.shared.memory` transport + FakeEmbeddingProvider |
-| `tests/test_mcp_protocol.py` | 34 protocol integration tests (CRUD, search, links, batch, semantic, validation) |
+| `tests/test_mcp_protocol.py` | 50 protocol integration tests (CRUD, search, links, batch, semantic, composability, project filter) |
 
 ### Domain Model
 
@@ -198,7 +198,7 @@ Benchmark results stored in `benchmarks/` (CPU, GPU, GPU-smoke matrices). Produc
 
 - **Unit tests**: `tests/conftest.py` provides fixtures with temp directories
 - **E2E tests**: `tests/conftest_e2e.py` provides `IsolatedTestEnvironment` class ensuring complete isolation from production data
-- **Protocol tests**: `tests/conftest_protocol.py` + `tests/test_mcp_protocol.py` — 34 tests exercising all 22 tools through the full MCP JSON-RPC pipeline using `mcp.shared.memory.create_connected_server_and_client_session` (no mocking). Includes semantic search tests with `FakeEmbeddingProvider`/`FakeRerankerProvider`.
+- **Protocol tests**: `tests/conftest_protocol.py` + `tests/test_mcp_protocol.py` — 50 tests exercising all 17 tools through the full MCP JSON-RPC pipeline using `mcp.shared.memory.create_connected_server_and_client_session` (no mocking). Includes semantic search, batch linking, output composability, links-on-create/update, batch get, and project filter tests with `FakeEmbeddingProvider`/`FakeRerankerProvider`.
 - **Resilience tests**: `test_aimd.py` (22 tests), `test_circuit_breaker.py` (17 tests), `test_resilience_coordinator.py` (10 tests) for AIMD controller, circuit breaker, and coordinator logic. `test_resilience.py` for EmbeddingService integration with coordinator. `test_mcp_resilience_protocol.py` (33 tests) for protocol-level resilience: OOM handling, inline notices, agent controls, status reporting, and E2E AIMD pipeline.
 - **Embedding tests**: 5 phased test files (`test_embedding_phase1.py` through `test_embedding_phase5.py`) covering providers, service, chunking, search integration, and reranker
 - **Chunked embedding tests**: `test_chunked_embedding_integration.py` for long-note splitting and multi-chunk vector storage

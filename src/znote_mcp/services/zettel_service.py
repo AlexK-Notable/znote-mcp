@@ -16,6 +16,7 @@ from znote_mcp.exceptions import (
 )
 from znote_mcp.models.schema import (
     ConflictResult,
+    LinkSpec,
     LinkType,
     Note,
     NotePurpose,
@@ -894,6 +895,158 @@ class ZettelService:
                 reverse_note = self.repository.update(target_note)
 
         return source_note, reverse_note
+
+    def create_links_batch(
+        self,
+        source_id: str,
+        link_specs: List[LinkSpec],
+    ) -> Dict[str, Any]:
+        """Create multiple links from a single source note in one operation.
+
+        Reads the source note once, validates all targets, applies all links,
+        writes once. Returns a result dict with per-link status.
+
+        Args:
+            source_id: ID of the source note.
+            link_specs: List of LinkSpec objects describing links to create.
+
+        Returns:
+            Dict with keys: created (int), skipped (int), failed (list of dicts),
+            source_note (Note).
+        """
+        source_note = self.repository.get(source_id)
+        if not source_note:
+            raise NoteNotFoundError(
+                source_id, f"Source note with ID '{source_id}' not found"
+            )
+
+        # Batch-fetch all unique target IDs
+        target_ids = list({spec.target_id for spec in link_specs})
+        target_map: Dict[str, Note] = {}
+        for tid in target_ids:
+            t = self.repository.get(tid)
+            if t:
+                target_map[tid] = t
+
+        created = 0
+        skipped = 0
+        failed: List[Dict[str, str]] = []
+        reverse_updates: List[tuple] = []  # (target_note, link_type, description)
+
+        inverse_map = {
+            LinkType.REFERENCE: LinkType.REFERENCE,
+            LinkType.EXTENDS: LinkType.EXTENDED_BY,
+            LinkType.EXTENDED_BY: LinkType.EXTENDS,
+            LinkType.REFINES: LinkType.REFINED_BY,
+            LinkType.REFINED_BY: LinkType.REFINES,
+            LinkType.CONTRADICTS: LinkType.CONTRADICTED_BY,
+            LinkType.CONTRADICTED_BY: LinkType.CONTRADICTS,
+            LinkType.QUESTIONS: LinkType.QUESTIONED_BY,
+            LinkType.QUESTIONED_BY: LinkType.QUESTIONS,
+            LinkType.SUPPORTS: LinkType.SUPPORTED_BY,
+            LinkType.SUPPORTED_BY: LinkType.SUPPORTS,
+            LinkType.RELATED: LinkType.RELATED,
+        }
+
+        for spec in link_specs:
+            if spec.target_id not in target_map:
+                failed.append(
+                    {"target_id": spec.target_id, "error": "Target note not found"}
+                )
+                continue
+
+            try:
+                lt = LinkType(spec.link_type)
+            except ValueError:
+                failed.append(
+                    {
+                        "target_id": spec.target_id,
+                        "error": f"Invalid link type: {spec.link_type}",
+                    }
+                )
+                continue
+
+            # Check for duplicate
+            already_exists = any(
+                link.target_id == spec.target_id and link.link_type == lt
+                for link in source_note.links
+            )
+            if already_exists:
+                skipped += 1
+                continue
+
+            source_note.add_link(spec.target_id, lt, spec.description)
+            created += 1
+
+            if spec.bidirectional:
+                inv_type = inverse_map.get(lt, lt)
+                reverse_updates.append(
+                    (target_map[spec.target_id], inv_type, spec.description)
+                )
+
+        # Write source once
+        if created > 0:
+            source_note = self.repository.update(source_note)
+
+        # Write reverse links (one write per target)
+        for target_note, inv_type, desc in reverse_updates:
+            already = any(
+                link.target_id == source_id and link.link_type == inv_type
+                for link in target_note.links
+            )
+            if not already:
+                target_note.add_link(source_id, inv_type, desc)
+                self.repository.update(target_note)
+
+        return {
+            "created": created,
+            "skipped": skipped,
+            "failed": failed,
+            "source_note": source_note,
+        }
+
+    def remove_links_batch(
+        self,
+        source_id: str,
+        target_ids: List[str],
+        bidirectional: bool = False,
+    ) -> Dict[str, Any]:
+        """Remove multiple links from a single source note in one operation.
+
+        Args:
+            source_id: ID of the source note.
+            target_ids: List of target note IDs to unlink.
+            bidirectional: Whether to also remove reverse links.
+
+        Returns:
+            Dict with keys: removed (int), source_note (Note).
+        """
+        source_note = self.repository.get(source_id)
+        if not source_note:
+            raise NoteNotFoundError(
+                source_id, f"Source note with ID '{source_id}' not found"
+            )
+
+        removed = 0
+        for tid in target_ids:
+            before = len(source_note.links)
+            source_note.remove_link(tid)
+            if len(source_note.links) < before:
+                removed += 1
+
+        if removed > 0:
+            source_note = self.repository.update(source_note)
+
+        if bidirectional:
+            for tid in target_ids:
+                target_note = self.repository.get(tid)
+                if target_note:
+                    before = len(target_note.links)
+                    target_note.remove_link(source_id)
+                    if len(target_note.links) < before:
+                        self.repository.update(target_note)
+
+        return {"removed": removed, "source_note": source_note}
 
     def get_linked_notes(
         self, note_id: str, direction: str = "outgoing", limit: Optional[int] = None
