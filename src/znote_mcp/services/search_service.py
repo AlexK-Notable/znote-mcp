@@ -218,20 +218,9 @@ class SearchService:
             if not raw_results:
                 return []
 
-            # 4. Retrieve full Note objects
-            result_ids = [nid for nid, _ in raw_results]
-            notes = self.zettel_service.get_notes_by_ids(result_ids)
-            note_map = {n.id: n for n in notes}
-            dist_map = {nid: dist for nid, dist in raw_results}
-
-            # 5. Optionally rerank with cross-encoder
-            if use_reranker and self._embedding_service.has_reranker and len(notes) > 1:
-                return self._rerank_results(
-                    query, result_ids, note_map, dist_map, limit
-                )
-
-            # 6. Without reranker: score = 1 / (1 + distance)
-            return self._build_distance_results(result_ids, note_map, dist_map, limit)
+            return self._finalize_semantic_results(
+                raw_results, query, limit, use_reranker
+            )
 
         except Exception as e:
             logger.warning(f"Semantic search failed: {e}")
@@ -310,30 +299,18 @@ class SearchService:
         if not embeddings:
             return []
 
-        # Compute L2 distances
-        scored: List[Tuple[str, float]] = []
-        for note_id, emb in embeddings.items():
-            dist = float(np.linalg.norm(query_embedding - emb))
-            scored.append((note_id, dist))
+        # Vectorized L2 distance computation
+        ids = list(embeddings.keys())
+        matrix = np.stack(list(embeddings.values()))  # shape: (n, 768)
+        dists = np.linalg.norm(matrix - query_embedding, axis=1)  # shape: (n,)
 
         # Sort by distance ascending (closest first)
-        scored.sort(key=lambda x: x[1])
-
-        # Take top candidates
+        order = np.argsort(dists)
         fetch_limit = limit * 3 if use_reranker else limit
-        scored = scored[:fetch_limit]
+        order = order[:fetch_limit]
+        scored = [(ids[i], float(dists[i])) for i in order]
 
-        # Retrieve full Note objects
-        result_ids = [nid for nid, _ in scored]
-        notes = self.zettel_service.get_notes_by_ids(result_ids)
-        note_map = {n.id: n for n in notes}
-        dist_map = {nid: dist for nid, dist in scored}
-
-        # Optionally rerank
-        if use_reranker and self._embedding_service.has_reranker and len(notes) > 1:
-            return self._rerank_results(query, result_ids, note_map, dist_map, limit)
-
-        return self._build_distance_results(result_ids, note_map, dist_map, limit)
+        return self._finalize_semantic_results(scored, query, limit, use_reranker)
 
     def _knn_postfilter_search(
         self,
@@ -384,17 +361,9 @@ class SearchService:
         rerank_limit = limit * 3 if use_reranker else limit
         raw_results = raw_results[:rerank_limit]
 
-        # Retrieve full Note objects
-        result_ids = [nid for nid, _ in raw_results]
-        notes = self.zettel_service.get_notes_by_ids(result_ids)
-        note_map = {n.id: n for n in notes}
-        dist_map = {nid: dist for nid, dist in raw_results}
-
-        # Optionally rerank
-        if use_reranker and self._embedding_service.has_reranker and len(notes) > 1:
-            return self._rerank_results(query, result_ids, note_map, dist_map, limit)
-
-        return self._build_distance_results(result_ids, note_map, dist_map, limit)
+        return self._finalize_semantic_results(
+            raw_results, query, limit, use_reranker
+        )
 
     @staticmethod
     def _reciprocal_rank_fusion(
@@ -532,34 +501,13 @@ class SearchService:
             and self._embedding_service.has_reranker
             and len(fused_top) > 1
         ):
-            doc_ids: List[str] = []
-            doc_texts: List[str] = []
-            for note_id, _ in fused_top:
-                note = note_map.get(note_id)
-                if note is None:
-                    continue
-                doc_ids.append(note_id)
-                doc_texts.append(f"{note.title}\n{note.content}")
-
-            if doc_texts:
-                try:
-                    ranked = self._embedding_service.rerank(
-                        query, doc_texts, top_k=limit
-                    )
-                    results = []
-                    for idx, rerank_score in ranked:
-                        nid = doc_ids[idx]
-                        results.append(
-                            SemanticSearchResult(
-                                note=note_map[nid],
-                                distance=0.0,
-                                score=rerank_score,
-                                reranked=True,
-                            )
-                        )
-                    return results
-                except Exception as e:
-                    logger.warning(f"hybrid_search: reranking failed: {e}")
+            fused_ids = [nid for nid, _ in fused_top if nid in note_map]
+            try:
+                return self._rerank_results(
+                    query, fused_ids, note_map, limit=limit
+                )
+            except Exception as e:
+                logger.warning(f"hybrid_search: reranking failed: {e}")
 
         # --- Build RRF-scored results ---
         results = []
@@ -639,6 +587,36 @@ class SearchService:
             logger.warning(f"find_related failed for note {note_id}: {e}")
             return []
 
+    def _finalize_semantic_results(
+        self,
+        scored: List[Tuple[str, float]],
+        query: str,
+        limit: int,
+        use_reranker: bool,
+    ) -> List[SemanticSearchResult]:
+        """Retrieve notes for scored pairs and optionally rerank.
+
+        Shared tail for unfiltered KNN, brute-force, and KNN+postfilter paths.
+
+        Args:
+            scored: List of (note_id, distance) tuples, sorted by distance.
+            query: Original query text (for reranking).
+            limit: Maximum results to return.
+            use_reranker: Whether to refine with cross-encoder reranker.
+        """
+        if not scored:
+            return []
+
+        result_ids = [nid for nid, _ in scored]
+        notes = self.zettel_service.get_notes_by_ids(result_ids)
+        note_map = {n.id: n for n in notes}
+        dist_map = dict(scored)
+
+        if use_reranker and self._embedding_service.has_reranker and len(notes) > 1:
+            return self._rerank_results(query, result_ids, note_map, dist_map, limit)
+
+        return self._build_distance_results(result_ids, note_map, dist_map, limit)
+
     @staticmethod
     def _build_distance_results(
         result_ids: List[str],
@@ -671,16 +649,17 @@ class SearchService:
         query: str,
         result_ids: List[str],
         note_map: Dict[str, Note],
-        dist_map: Dict[str, float],
-        limit: int,
+        dist_map: Optional[Dict[str, float]] = None,
+        limit: int = 10,
     ) -> List[SemanticSearchResult]:
-        """Rerank KNN candidates using the cross-encoder reranker.
+        """Rerank candidates using the cross-encoder reranker.
 
         Args:
             query: The search query or seed text.
-            result_ids: Ordered list of note IDs from KNN search.
+            result_ids: Ordered list of note IDs.
             note_map: Mapping of note ID → Note object.
-            dist_map: Mapping of note ID → L2 distance.
+            dist_map: Mapping of note ID → L2 distance. When None,
+                distance defaults to 0.0 (e.g. for hybrid/RRF results).
             limit: Max results to return after reranking.
 
         Returns:
@@ -709,7 +688,7 @@ class SearchService:
             results.append(
                 SemanticSearchResult(
                     note=note,
-                    distance=dist_map[nid],
+                    distance=dist_map[nid] if dist_map else 0.0,
                     score=rerank_score,
                     reranked=True,
                 )

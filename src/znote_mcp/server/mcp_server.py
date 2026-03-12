@@ -181,6 +181,38 @@ class ZettelkastenMcpServer:
             return f"   Tags: {', '.join(tag.name for tag in note.tags)}\n"
         return ""
 
+    def _format_scored_results(
+        self,
+        results: list,
+        header: str,
+        compact: bool,
+        output: str,
+    ) -> str:
+        """Format SemanticSearchResult list with scores, tags, and optional preview."""
+        result_text = f"Found {len(results)} {header}:\n\n"
+        for i, result in enumerate(results, 1):
+            note = result.note
+            result_text += self._format_note_heading(note, i)
+            result_text += f"   Score: {result.score:.3f}"
+            if result.reranked:
+                result_text += " (reranked)"
+            result_text += "\n"
+            if note.source_user:
+                result_text += f"   Source: {note.source_user}\n"
+            result_text += self._format_note_tags(note)
+            if not compact:
+                content_preview = note.content[:150].replace("\n", " ")
+                if len(note.content) > 150:
+                    content_preview += "..."
+                result_text += f"   Preview: {content_preview}\n"
+            result_text += "\n"
+        notices = self._format_resilience_notices()
+        result_text = notices + result_text
+        if output == "ids":
+            ids = [r.note.id for r in results]
+            result_text = self._append_ids_line(result_text, ids)
+        return result_text
+
     @staticmethod
     def _parse_link_specs(
         links_raw: str | list, max_links: int = 20, strict: bool = False
@@ -1004,31 +1036,9 @@ class ZettelkastenMcpServer:
                                 msg = f"No semantically similar notes found in project '{project}'."
                             return notices + msg
 
-                        result_text = (
-                            f"Found {len(results)} semantically similar notes:\n\n"
+                        return self._format_scored_results(
+                            results, "semantically similar notes", compact, output
                         )
-                        for i, result in enumerate(results, 1):
-                            note = result.note
-                            result_text += self._format_note_heading(note, i)
-                            result_text += f"   Score: {result.score:.3f}"
-                            if result.reranked:
-                                result_text += " (reranked)"
-                            result_text += "\n"
-                            if note.source_user:
-                                result_text += f"   Source: {note.source_user}\n"
-                            result_text += self._format_note_tags(note)
-                            if not compact:
-                                content_preview = note.content[:150].replace("\n", " ")
-                                if len(note.content) > 150:
-                                    content_preview += "..."
-                                result_text += f"   Preview: {content_preview}\n"
-                            result_text += "\n"
-                        notices = self._format_resilience_notices()
-                        result_text = notices + result_text
-                        if output == "ids":
-                            ids = [r.note.id for r in results]
-                            result_text = self._append_ids_line(result_text, ids)
-                        return result_text
 
                     elif mode == "hybrid":
                         if not query or not query.strip():
@@ -1051,31 +1061,9 @@ class ZettelkastenMcpServer:
                                 msg = f"No matching notes found in project '{project}'."
                             return notices + msg
 
-                        result_text = (
-                            f"Found {len(results)} notes (hybrid search):\n\n"
+                        return self._format_scored_results(
+                            results, "notes (hybrid search)", compact, output
                         )
-                        for i, result in enumerate(results, 1):
-                            note = result.note
-                            result_text += self._format_note_heading(note, i)
-                            result_text += f"   Score: {result.score:.3f}"
-                            if result.reranked:
-                                result_text += " (reranked)"
-                            result_text += "\n"
-                            if note.source_user:
-                                result_text += f"   Source: {note.source_user}\n"
-                            result_text += self._format_note_tags(note)
-                            if not compact:
-                                content_preview = note.content[:150].replace("\n", " ")
-                                if len(note.content) > 150:
-                                    content_preview += "..."
-                                result_text += f"   Preview: {content_preview}\n"
-                            result_text += "\n"
-                        notices = self._format_resilience_notices()
-                        result_text = notices + result_text
-                        if output == "ids":
-                            ids = [r.note.id for r in results]
-                            result_text = self._append_ids_line(result_text, ids)
-                        return result_text
 
                     elif mode == "text":
                         # Perform search
