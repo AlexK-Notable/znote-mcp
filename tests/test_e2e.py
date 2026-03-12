@@ -331,10 +331,10 @@ class TestE2ESearch:
             content="JavaScript is a versatile programming language.",
         )
 
-        fts_search = get_mcp_tool(e2e_mcp_server, "zk_fts_search")
+        search = get_mcp_tool(e2e_mcp_server, "zk_search_notes")
 
-        # Search for Python
-        result = fts_search(query="python", limit=10)
+        # Search for Python (mode="text" with highlight replaces zk_fts_search)
+        result = search(query="python", mode="text", highlight=True, limit=10)
         assert "Python" in result
         # JavaScript should not appear prominently
         assert "Python Programming Guide" in result

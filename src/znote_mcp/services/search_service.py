@@ -137,12 +137,20 @@ class SearchService:
         limit: int = 10,
         use_reranker: bool = True,
         exclude_ids: Optional[List[str]] = None,
+        tags: Optional[List[str]] = None,
+        note_type: Optional[NoteType] = None,
+        project: Optional[str] = None,
     ) -> List[SemanticSearchResult]:
         """Search notes by semantic similarity using embeddings.
 
         Embeds the query text, runs a KNN search via sqlite-vec, retrieves
         full Note objects, and optionally refines ranking with the cross-encoder
         reranker.
+
+        When tag, note_type, or project filters are provided, uses selectivity-
+        based routing:
+        - Small candidate set (<=threshold): brute-force distance computation
+        - Large candidate set (>threshold): KNN with adaptive over-fetch + post-filter
 
         Gracefully returns an empty list when:
         - No embedding service is configured
@@ -155,6 +163,9 @@ class SearchService:
             use_reranker: Whether to refine results with the reranker.
                 Only applies if a reranker provider is configured.
             exclude_ids: Note IDs to exclude from results.
+            tags: Filter results to notes with any of these tags.
+            note_type: Filter results to this note type.
+            project: Filter results to this project.
 
         Returns:
             List of SemanticSearchResult, ordered by relevance (best first).
@@ -169,7 +180,34 @@ class SearchService:
             # 1. Embed the query
             query_vector = self._embedding_service.embed(query)
 
-            # 2. KNN search — fetch extra candidates for reranking
+            # 2. Determine filter strategy
+            strategy, candidate_ids = self._resolve_filter_strategy(
+                tags, note_type, project
+            )
+
+            if strategy == "brute_force":
+                if not candidate_ids:
+                    return []
+                return self._brute_force_semantic_search(
+                    query_vector,
+                    candidate_ids,
+                    limit,
+                    use_reranker,
+                    query,
+                    exclude_ids=exclude_ids,
+                )
+
+            if strategy == "knn_postfilter":
+                return self._knn_postfilter_search(
+                    query_vector,
+                    candidate_ids,
+                    limit,
+                    use_reranker,
+                    query,
+                    exclude_ids=exclude_ids,
+                )
+
+            # 3. Unfiltered: existing KNN path
             fetch_limit = limit * 3 if use_reranker else limit
             raw_results = self.zettel_service.vec_similarity_search(
                 query_vector,
@@ -180,24 +218,361 @@ class SearchService:
             if not raw_results:
                 return []
 
-            # 3. Retrieve full Note objects
+            # 4. Retrieve full Note objects
             result_ids = [nid for nid, _ in raw_results]
             notes = self.zettel_service.get_notes_by_ids(result_ids)
             note_map = {n.id: n for n in notes}
             dist_map = {nid: dist for nid, dist in raw_results}
 
-            # 4. Optionally rerank with cross-encoder
+            # 5. Optionally rerank with cross-encoder
             if use_reranker and self._embedding_service.has_reranker and len(notes) > 1:
                 return self._rerank_results(
                     query, result_ids, note_map, dist_map, limit
                 )
 
-            # 5. Without reranker: score = 1 / (1 + distance)
+            # 6. Without reranker: score = 1 / (1 + distance)
             return self._build_distance_results(result_ids, note_map, dist_map, limit)
 
         except Exception as e:
             logger.warning(f"Semantic search failed: {e}")
             return []
+
+    def _resolve_filter_strategy(
+        self,
+        tags: Optional[List[str]],
+        note_type: Optional[NoteType],
+        project: Optional[str],
+    ) -> Tuple[str, Set[str]]:
+        """Determine search strategy based on filter selectivity.
+
+        Returns:
+            ("unfiltered", set()) - no filters, use standard KNN
+            ("brute_force", candidate_ids) - small candidate set, compute distances directly
+            ("knn_postfilter", candidate_ids) - large candidate set, KNN + intersection
+        """
+        if not tags and note_type is None and not project:
+            return ("unfiltered", set())
+
+        # Build filter kwargs for search_note_ids
+        kwargs: Dict[str, Any] = {}
+        if tags:
+            kwargs["tags"] = tags
+        if note_type is not None:
+            kwargs["note_type"] = note_type
+        if project:
+            kwargs["project"] = project
+
+        candidate_ids = set(self.zettel_service.search_note_ids(**kwargs))
+
+        if not candidate_ids:
+            return ("brute_force", set())
+
+        threshold = config.semantic_filter_brute_force_threshold
+        if len(candidate_ids) <= threshold:
+            return ("brute_force", candidate_ids)
+
+        return ("knn_postfilter", candidate_ids)
+
+    def _brute_force_semantic_search(
+        self,
+        query_embedding: Any,
+        candidate_ids: Set[str],
+        limit: int,
+        use_reranker: bool,
+        query: str,
+        exclude_ids: Optional[List[str]] = None,
+    ) -> List[SemanticSearchResult]:
+        """Compute semantic similarity via brute-force for small candidate sets.
+
+        Loads embeddings for the candidate notes, computes L2 distance against
+        the query embedding, and returns the top results.
+
+        Args:
+            query_embedding: Query vector (np.ndarray).
+            candidate_ids: Set of note IDs to search within.
+            limit: Maximum results to return.
+            use_reranker: Whether to refine with cross-encoder reranker.
+            query: Original query text (for reranking).
+            exclude_ids: Note IDs to exclude from results.
+        """
+        import numpy as np
+
+        # Apply exclusions
+        if exclude_ids:
+            candidate_ids = candidate_ids - set(exclude_ids)
+        if not candidate_ids:
+            return []
+
+        # Load embeddings for candidates
+        embeddings = self.zettel_service.get_embeddings_for_note_ids(
+            list(candidate_ids)
+        )
+        if not embeddings:
+            return []
+
+        # Compute L2 distances
+        scored: List[Tuple[str, float]] = []
+        for note_id, emb in embeddings.items():
+            dist = float(np.linalg.norm(query_embedding - emb))
+            scored.append((note_id, dist))
+
+        # Sort by distance ascending (closest first)
+        scored.sort(key=lambda x: x[1])
+
+        # Take top candidates
+        fetch_limit = limit * 3 if use_reranker else limit
+        scored = scored[:fetch_limit]
+
+        # Retrieve full Note objects
+        result_ids = [nid for nid, _ in scored]
+        notes = self.zettel_service.get_notes_by_ids(result_ids)
+        note_map = {n.id: n for n in notes}
+        dist_map = {nid: dist for nid, dist in scored}
+
+        # Optionally rerank
+        if use_reranker and self._embedding_service.has_reranker and len(notes) > 1:
+            return self._rerank_results(query, result_ids, note_map, dist_map, limit)
+
+        return self._build_distance_results(result_ids, note_map, dist_map, limit)
+
+    def _knn_postfilter_search(
+        self,
+        query_embedding: Any,
+        candidate_ids: Set[str],
+        limit: int,
+        use_reranker: bool,
+        query: str,
+        exclude_ids: Optional[List[str]] = None,
+    ) -> List[SemanticSearchResult]:
+        """KNN search with adaptive over-fetch and post-filter intersection.
+
+        For large candidate sets where brute-force would be expensive,
+        uses the KNN index with over-fetching proportional to selectivity,
+        then intersects results with the pre-filtered candidate set.
+
+        Args:
+            query_embedding: Query vector (np.ndarray).
+            candidate_ids: Set of note IDs that pass filters.
+            limit: Maximum results to return.
+            use_reranker: Whether to refine with cross-encoder reranker.
+            query: Original query text (for reranking).
+            exclude_ids: Note IDs to exclude from results.
+        """
+        # Compute selectivity-based over-fetch multiplier
+        total_embedded = self.zettel_service.repository.count_embedded_notes()
+        selectivity = len(candidate_ids) / max(total_embedded, 1)
+        over_fetch = min(max(3, int(1.0 / max(selectivity, 0.01))), 20)
+        fetch_limit = limit * over_fetch
+
+        # KNN search with over-fetch
+        raw_results = self.zettel_service.vec_similarity_search(
+            query_embedding,
+            limit=fetch_limit,
+            exclude_ids=exclude_ids,
+        )
+
+        if not raw_results:
+            return []
+
+        # Intersect with candidate IDs
+        raw_results = [(nid, dist) for nid, dist in raw_results if nid in candidate_ids]
+
+        if not raw_results:
+            return []
+
+        # Take top candidates for reranking or final output
+        rerank_limit = limit * 3 if use_reranker else limit
+        raw_results = raw_results[:rerank_limit]
+
+        # Retrieve full Note objects
+        result_ids = [nid for nid, _ in raw_results]
+        notes = self.zettel_service.get_notes_by_ids(result_ids)
+        note_map = {n.id: n for n in notes}
+        dist_map = {nid: dist for nid, dist in raw_results}
+
+        # Optionally rerank
+        if use_reranker and self._embedding_service.has_reranker and len(notes) > 1:
+            return self._rerank_results(query, result_ids, note_map, dist_map, limit)
+
+        return self._build_distance_results(result_ids, note_map, dist_map, limit)
+
+    @staticmethod
+    def _reciprocal_rank_fusion(
+        ranked_lists: List[List[str]],
+        k: int = 60,
+    ) -> List[Tuple[str, float]]:
+        """Fuse multiple ranked result lists using Reciprocal Rank Fusion.
+
+        Args:
+            ranked_lists: Each list contains note_ids ordered by relevance
+                (best first).
+            k: RRF smoothing constant (default 60, standard value).
+
+        Returns:
+            List of (note_id, rrf_score) tuples sorted by descending RRF score.
+        """
+        scores: Dict[str, float] = {}
+        for ranked_list in ranked_lists:
+            for rank_idx, note_id in enumerate(ranked_list):
+                rank = rank_idx + 1  # 1-indexed
+                scores[note_id] = scores.get(note_id, 0.0) + 1.0 / (k + rank)
+
+        fused = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        return fused
+
+    def hybrid_search(
+        self,
+        query: str,
+        limit: int = 10,
+        tags: Optional[List[str]] = None,
+        note_type: Optional[NoteType] = None,
+        project: Optional[str] = None,
+        use_reranker: bool = True,
+    ) -> List[SemanticSearchResult]:
+        """Run FTS5 and semantic search, merge results via Reciprocal Rank Fusion.
+
+        Combines BM25 text relevance with embedding-based semantic similarity
+        for higher-quality results than either path alone.
+
+        Graceful degradation:
+        - No semantic search available: FTS-only results
+        - No FTS available: semantic-only results
+        - Neither available: empty list
+
+        Args:
+            query: Natural language search query.
+            limit: Maximum number of results to return.
+            tags: Filter results to notes with any of these tags.
+            note_type: Filter results to this note type.
+            project: Filter results to this project.
+            use_reranker: Whether to refine fused results with the reranker.
+
+        Returns:
+            List of SemanticSearchResult, ordered by relevance (best first).
+        """
+        if not query or not query.strip():
+            return []
+
+        has_fts = self.zettel_service.has_fts()
+        has_semantic = self.has_semantic_search
+
+        if not has_fts and not has_semantic:
+            logger.info("hybrid_search: neither FTS nor semantic available")
+            return []
+
+        fetch_limit = limit * 3
+
+        # --- FTS path ---
+        fts_results: List[SearchResult] = []
+        if has_fts:
+            try:
+                fts_results = self.search_combined(
+                    text=query, tags=tags, note_type=note_type, limit=fetch_limit
+                )
+                # Post-filter by project (search_combined doesn't support it)
+                if project and fts_results:
+                    fts_results = [
+                        r for r in fts_results if r.note.project == project
+                    ]
+            except Exception as e:
+                logger.warning(f"hybrid_search: FTS path failed: {e}")
+
+        # --- Semantic path ---
+        sem_results: List[SemanticSearchResult] = []
+        if has_semantic:
+            try:
+                sem_results = self.semantic_search(
+                    query=query,
+                    limit=fetch_limit,
+                    tags=tags,
+                    note_type=note_type,
+                    project=project,
+                    use_reranker=False,  # RRF handles fusion
+                )
+            except Exception as e:
+                logger.warning(f"hybrid_search: semantic path failed: {e}")
+
+        # --- Single-path fallback ---
+        if not fts_results and not sem_results:
+            return []
+
+        if not sem_results:
+            # FTS-only: convert SearchResult -> SemanticSearchResult
+            logger.info("hybrid_search: FTS-only (no semantic results)")
+            return [
+                SemanticSearchResult(
+                    note=r.note, distance=0.0, score=r.score, reranked=False
+                )
+                for r in fts_results[:limit]
+            ]
+
+        if not fts_results:
+            logger.info("hybrid_search: semantic-only (no FTS results)")
+            return sem_results[:limit]
+
+        # --- RRF fusion ---
+        fts_ids = [r.note.id for r in fts_results]
+        sem_ids = [r.note.id for r in sem_results]
+
+        fused = self._reciprocal_rank_fusion([fts_ids, sem_ids])
+        fused_top = fused[: fetch_limit]
+
+        # Collect Note objects from both result sets (avoid re-fetching)
+        note_map: Dict[str, Note] = {}
+        for r in fts_results:
+            note_map[r.note.id] = r.note
+        for r in sem_results:
+            note_map[r.note.id] = r.note
+
+        # --- Optional reranking ---
+        if (
+            use_reranker
+            and has_semantic
+            and self._embedding_service is not None
+            and self._embedding_service.has_reranker
+            and len(fused_top) > 1
+        ):
+            doc_ids: List[str] = []
+            doc_texts: List[str] = []
+            for note_id, _ in fused_top:
+                note = note_map.get(note_id)
+                if note is None:
+                    continue
+                doc_ids.append(note_id)
+                doc_texts.append(f"{note.title}\n{note.content}")
+
+            if doc_texts:
+                try:
+                    ranked = self._embedding_service.rerank(
+                        query, doc_texts, top_k=limit
+                    )
+                    results = []
+                    for idx, rerank_score in ranked:
+                        nid = doc_ids[idx]
+                        results.append(
+                            SemanticSearchResult(
+                                note=note_map[nid],
+                                distance=0.0,
+                                score=rerank_score,
+                                reranked=True,
+                            )
+                        )
+                    return results
+                except Exception as e:
+                    logger.warning(f"hybrid_search: reranking failed: {e}")
+
+        # --- Build RRF-scored results ---
+        results = []
+        for note_id, rrf_score in fused_top:
+            note = note_map.get(note_id)
+            if note is None:
+                continue
+            results.append(
+                SemanticSearchResult(
+                    note=note, distance=0.0, score=rrf_score, reranked=False
+                )
+            )
+        return results[:limit]
 
     def find_related(
         self,

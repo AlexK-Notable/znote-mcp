@@ -916,19 +916,30 @@ class ZettelkastenMcpServer:
             limit: int = 10,
             output: str = "full",
             project: Optional[str] = None,
+            highlight: bool = False,
         ) -> str:
             """Search for notes by text, tags, or type.
             Args:
-                query: Text to search for in titles and content
+                query: Text to search for in titles and content.
+                    In text mode, supports advanced FTS5 syntax:
+                    - Simple terms: "python async"
+                    - Phrases: '"async await"'
+                    - Boolean: "python AND NOT java"
+                    - Prefix: "program*"
+                    - Column filter: "title:python" or "content:async"
                 tags: Comma-separated list of tags to filter by
                 note_type: Type of note to filter by
                 mode: Search mode:
                     - "auto": Automatically picks the best strategy (default).
-                      Uses semantic search when embeddings are available and no
-                      tag/type filters are set; otherwise uses text search.
+                      Uses semantic search when embeddings are available and a
+                      text query is provided; otherwise uses text search.
                     - "semantic": Embedding-based similarity search.
                       Finds conceptually related notes even without exact keyword matches.
-                      Supports project filter (post-filter with over-fetch).
+                      Supports tag, note_type, and project filters.
+                    - "hybrid": Fuses FTS5 BM25 and semantic search via Reciprocal
+                      Rank Fusion for higher-quality results than either alone.
+                      Supports tag, note_type, and project filters. Falls back
+                      gracefully when embeddings are unavailable.
                     - "text": Keyword matching in titles/content with tag/type filters.
                 limit: Maximum number of results to return
                 output: Output verbosity:
@@ -936,30 +947,38 @@ class ZettelkastenMcpServer:
                     - "compact": Omit content preview — just titles, IDs, tags, dates
                     - "ids": Append a trailing IDs line for composability with other tools
                 project: Filter results by project name. Works with all modes.
+                highlight: Include FTS5 highlighted snippets in text mode results
+                    (default False). When True, shows matching text fragments with
+                    context. Only effective in text mode.
             """
             compact = output in ("compact", "ids")
             with timed_operation(
                 "zk_search_notes", query=query[:30] if query else None, mode=mode
             ) as op:
                 try:
+                    # Parse tags and note_type for all modes
+                    tag_list = None
+                    if tags:
+                        tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+
+                    nt = None
+                    if note_type:
+                        try:
+                            nt = NoteType(note_type.lower())
+                        except ValueError:
+                            return f"Invalid note type: {note_type}. Valid types are: {', '.join(t.value for t in NoteType)}"
+
                     if mode == "auto":
-                        has_filters = tags or note_type
                         if (
                             self.search_service.has_semantic_search
                             and query
                             and query.strip()
-                            and not has_filters
                         ):
                             mode = "semantic"
                         else:
                             mode = "text"
 
                     if mode == "semantic":
-                        if tags or note_type:
-                            return (
-                                "Error: tag and note_type filters are not yet supported "
-                                "in semantic mode. Use mode='text' or mode='auto'."
-                            )
                         # Fall back to text mode when embeddings unavailable
                         if not self.search_service.has_semantic_search:
                             mode = "text"
@@ -967,17 +986,14 @@ class ZettelkastenMcpServer:
                             return "Error: query is required for semantic search."
 
                     if mode == "semantic":
-                        # Over-fetch when project filter active for post-filtering
-                        fetch_limit = limit * 5 if project else limit
                         results = self.search_service.semantic_search(
                             query=query.strip(),
-                            limit=fetch_limit,
+                            limit=limit,
                             use_reranker=True,
+                            tags=tag_list,
+                            note_type=nt,
+                            project=project,
                         )
-
-                        # Post-filter by project
-                        if project:
-                            results = [r for r in results if r.note.project == project][:limit]
 
                         op["result_count"] = len(results)
 
@@ -1014,23 +1030,131 @@ class ZettelkastenMcpServer:
                             result_text = self._append_ids_line(result_text, ids)
                         return result_text
 
+                    elif mode == "hybrid":
+                        if not query or not query.strip():
+                            return "Error: query is required for hybrid search."
+
+                        results = self.search_service.hybrid_search(
+                            query=query.strip(),
+                            limit=limit,
+                            tags=tag_list,
+                            note_type=nt,
+                            project=project,
+                        )
+
+                        op["result_count"] = len(results)
+
+                        if not results:
+                            notices = self._format_resilience_notices()
+                            msg = "No matching notes found."
+                            if project:
+                                msg = f"No matching notes found in project '{project}'."
+                            return notices + msg
+
+                        result_text = (
+                            f"Found {len(results)} notes (hybrid search):\n\n"
+                        )
+                        for i, result in enumerate(results, 1):
+                            note = result.note
+                            result_text += self._format_note_heading(note, i)
+                            result_text += f"   Score: {result.score:.3f}"
+                            if result.reranked:
+                                result_text += " (reranked)"
+                            result_text += "\n"
+                            if note.source_user:
+                                result_text += f"   Source: {note.source_user}\n"
+                            result_text += self._format_note_tags(note)
+                            if not compact:
+                                content_preview = note.content[:150].replace("\n", " ")
+                                if len(note.content) > 150:
+                                    content_preview += "..."
+                                result_text += f"   Preview: {content_preview}\n"
+                            result_text += "\n"
+                        notices = self._format_resilience_notices()
+                        result_text = notices + result_text
+                        if output == "ids":
+                            ids = [r.note.id for r in results]
+                            result_text = self._append_ids_line(result_text, ids)
+                        return result_text
+
                     elif mode == "text":
-                        # Convert tags string to list if provided
-                        tag_list = None
-                        if tags:
-                            tag_list = [t.strip() for t in tags.split(",") if t.strip()]
-
-                        # Convert note_type string to enum if provided
-                        note_type_enum = None
-                        if note_type:
-                            try:
-                                note_type_enum = NoteType(note_type.lower())
-                            except ValueError:
-                                return f"Invalid note type: {note_type}. Valid types are: {', '.join(t.value for t in NoteType)}"
-
                         # Perform search
+                        if highlight and query and query.strip():
+                            # Use FTS5 with highlighted snippets
+                            # Over-fetch when filters are active since FTS results
+                            # lack project/tag/type fields for filtering
+                            has_post_filters = project or tag_list or nt
+                            fetch_limit = limit * 5 if has_post_filters else limit
+                            fts_results = self.zettel_service.fts_search(
+                                query=query.strip(), limit=fetch_limit, highlight=True
+                            )
+
+                            # Post-filter using full Note objects when filters are active
+                            if has_post_filters and fts_results:
+                                fts_ids = [r["id"] for r in fts_results]
+                                notes_by_id = {
+                                    n.id: n
+                                    for n in self.zettel_service.get_notes_by_ids(fts_ids)
+                                }
+                                filtered = []
+                                for r in fts_results:
+                                    note = notes_by_id.get(r["id"])
+                                    if not note:
+                                        continue
+                                    if project and note.project != project:
+                                        continue
+                                    if nt and note.note_type != nt:
+                                        continue
+                                    if tag_list:
+                                        note_tags = [t.name for t in note.tags]
+                                        if not any(t in note_tags for t in tag_list):
+                                            continue
+                                    filtered.append(r)
+                                fts_results = filtered
+
+                            fts_results = fts_results[:limit]
+                            op["result_count"] = len(fts_results)
+
+                            if not fts_results:
+                                return "No matching notes found."
+
+                            # Check if fallback mode was used
+                            fallback_warning = ""
+                            if fts_results and fts_results[0].get("search_mode") == "fallback":
+                                fallback_warning = (
+                                    "Note: FTS5 search failed, using basic text matching. "
+                                    "Results may be less accurate and slower.\n\n"
+                                )
+                                op["search_mode"] = "fallback"
+                            else:
+                                op["search_mode"] = "fts5"
+
+                            # Batch-fetch source_user for imported notes
+                            fts_ids = [r["id"] for r in fts_results]
+                            source_map = (
+                                self.zettel_service.get_source_users(fts_ids) if fts_ids else {}
+                            )
+
+                            result_text = f"{fallback_warning}Found {len(fts_results)} matching notes:\n\n"
+                            for i, result in enumerate(fts_results, 1):
+                                result_text += f"{i}. {result['title']} (ID: {result['id']})\n"
+                                result_text += f"   Relevance: {abs(result['rank']):.2f}\n"
+                                src_user = source_map.get(result["id"])
+                                if src_user:
+                                    result_text += f"   Source: {src_user}\n"
+                                if "snippet" in result:
+                                    snippet = result["snippet"].replace("\n", " ")
+                                    result_text += f"   Match: {snippet}\n"
+                                result_text += "\n"
+
+                            if output == "ids":
+                                ids = [r["id"] for r in fts_results]
+                                result_text = self._append_ids_line(result_text, ids)
+                            return result_text
+
+                        # Standard text search (no highlight)
                         results = self.search_service.search_combined(
-                            text=query, tags=tag_list, note_type=note_type_enum
+                            text=query, tags=tag_list, note_type=nt
                         )
 
                         # Post-filter by project
@@ -1067,79 +1191,9 @@ class ZettelkastenMcpServer:
 
                     else:
                         return (
-                            f"Invalid mode: '{mode}'. Valid modes: auto, text, semantic"
+                            f"Invalid mode: '{mode}'. Valid modes: auto, text, semantic, hybrid"
                         )
 
-                except Exception as e:
-                    return self.format_error_response(e)
-
-        # Full-text search with FTS5
-        @self.mcp.tool(name="zk_fts_search")
-        def zk_fts_search(
-            query: str, limit: int = 10, highlight: bool = True, output: str = "full"
-        ) -> str:
-            """Full-text search using FTS5 with advanced query syntax.
-            Args:
-                query: Search query. Supports:
-                       - Simple terms: "python async"
-                       - Phrases: '"async await"'
-                       - Boolean: "python AND NOT java"
-                       - Prefix: "program*"
-                       - Column filter: "title:python"
-                limit: Maximum number of results to return
-                highlight: Include highlighted snippets in results
-                output: "full" (default) or "ids" (append trailing IDs line for composability)
-            """
-            with timed_operation(
-                "zk_fts_search", query=query[:30] if query else None
-            ) as op:
-                try:
-                    if not query or not query.strip():
-                        return "Error: Search query is required."
-
-                    results = self.zettel_service.fts_search(
-                        query=query.strip(), limit=limit, highlight=highlight
-                    )
-
-                    op["result_count"] = len(results)
-
-                    if not results:
-                        return f"No notes found matching '{query}'."
-
-                    # Check if fallback mode was used and warn the user
-                    fallback_warning = ""
-                    if results and results[0].get("search_mode") == "fallback":
-                        fallback_warning = (
-                            "⚠️ Note: FTS5 search failed, using basic text matching. "
-                            "Results may be less accurate and slower.\n\n"
-                        )
-                        op["search_mode"] = "fallback"
-                    else:
-                        op["search_mode"] = "fts5"
-
-                    # Batch-fetch source_user for imported notes
-                    fts_ids = [r["id"] for r in results]
-                    source_map = (
-                        self.zettel_service.get_source_users(fts_ids) if fts_ids else {}
-                    )
-
-                    # Format results
-                    output_text = f"{fallback_warning}Found {len(results)} notes matching '{query}':\n\n"
-                    for i, result in enumerate(results, 1):
-                        output_text += f"{i}. {result['title']} (ID: {result['id']})\n"
-                        output_text += f"   Relevance: {abs(result['rank']):.2f}\n"
-                        src_user = source_map.get(result["id"])
-                        if src_user:
-                            output_text += f"   Source: {src_user}\n"
-                        if highlight and "snippet" in result:
-                            snippet = result["snippet"].replace("\n", " ")
-                            output_text += f"   Match: {snippet}\n"
-                        output_text += "\n"
-
-                    if output == "ids":
-                        ids = [r["id"] for r in results]
-                        output_text = self._append_ids_line(output_text, ids)
-                    return output_text
                 except Exception as e:
                     return self.format_error_response(e)
 

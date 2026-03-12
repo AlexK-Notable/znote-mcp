@@ -174,6 +174,15 @@ class ZettelkastenConfig(BaseModel):
             os.getenv("ZETTELKASTEN_EMBEDDING_MEMORY_BUDGET_GB", "6.0")
         )
     )
+    # Filtered semantic search: threshold for brute-force vs KNN+post-filter routing.
+    # When the candidate set from tag/type/project filters is <= this value,
+    # brute-force distance computation is used (faster for small sets).
+    # Above this threshold, KNN with adaptive over-fetch + post-filter is used.
+    semantic_filter_brute_force_threshold: int = Field(
+        default_factory=lambda: int(
+            os.getenv("ZETTELKASTEN_SEMANTIC_FILTER_THRESHOLD", "100")
+        )
+    )
     # Chunking: notes longer than this (in tokens) get split into overlapping chunks
     embedding_chunk_size: int = Field(
         default_factory=lambda: int(

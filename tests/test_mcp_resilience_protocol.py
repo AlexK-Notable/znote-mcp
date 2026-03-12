@@ -313,7 +313,7 @@ class TestProtocolResilienceSearch:
     async def test_fts_search_unaffected_by_embedding_failure(
         self, resilience_client, controllable_providers
     ):
-        """FTS search (zk_fts_search) works perfectly even when
+        """FTS search (zk_search_notes mode=text) works perfectly even when
         embeddings are completely broken."""
         embedder, _ = controllable_providers
 
@@ -337,8 +337,8 @@ class TestProtocolResilienceSearch:
 
         # FTS should still work fine
         result = await resilience_client.call_tool(
-            "zk_fts_search",
-            {"query": "database indexing"},
+            "zk_search_notes",
+            {"query": "database indexing", "mode": "text"},
         )
         text = get_text(result)
         assert "Database Indexing" in text or "B-trees" in text

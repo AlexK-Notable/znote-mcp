@@ -4,8 +4,12 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from znote_mcp.config import config
 from znote_mcp.models.schema import LinkType, NoteType
+from znote_mcp.services.embedding_service import EmbeddingService
 from znote_mcp.services.search_service import SearchService
+from znote_mcp.services.zettel_service import ZettelService
+from znote_mcp.storage.note_repository import NoteRepository
 
 
 class TestSearchServiceDirect:
@@ -295,3 +299,121 @@ class TestSearchCombinedFts:
         result_ids = [r.note.id for r in results]
         assert tagged.id in result_ids
         assert untagged.id not in result_ids
+
+
+# =============================================================================
+# Filtered Semantic Search (integration tests with real in-memory SQLite)
+# =============================================================================
+
+
+class TestFilteredSemanticSearchIntegration:
+    """Integration tests for filtered semantic search using real in-memory DB."""
+
+    @pytest.fixture
+    def embedding_service(self, fake_embedder, fake_reranker):
+        svc = EmbeddingService(embedder=fake_embedder, reranker=fake_reranker)
+        yield svc
+        svc.shutdown()
+
+    @pytest.fixture
+    def repo(self, tmp_path):
+        notes_dir = tmp_path / "notes"
+        notes_dir.mkdir()
+        return NoteRepository(notes_dir=notes_dir, in_memory_db=True)
+
+    @pytest.fixture
+    def semantic_zettel_service(
+        self, repo, embedding_service, _enable_embeddings
+    ):
+        return ZettelService(repository=repo, embedding_service=embedding_service)
+
+    @pytest.fixture
+    def semantic_search_service(
+        self, semantic_zettel_service, embedding_service, _enable_embeddings
+    ):
+        return SearchService(
+            zettel_service=semantic_zettel_service,
+            embedding_service=embedding_service,
+        )
+
+    def test_semantic_search_with_tag_filter(
+        self, semantic_zettel_service, semantic_search_service
+    ):
+        """semantic_search() with tags param returns only matching notes."""
+        semantic_zettel_service.create_note(
+            title="Quantum Physics",
+            content="Wave particle duality and quantum mechanics.",
+            tags=["physics"],
+        )
+        semantic_zettel_service.create_note(
+            title="Bread Making",
+            content="How to bake sourdough bread from scratch.",
+            tags=["cooking"],
+        )
+
+        results = semantic_search_service.semantic_search(
+            query="quantum wave mechanics",
+            tags=["physics"],
+            limit=10,
+        )
+
+        result_titles = [r.note.title for r in results]
+        assert "Quantum Physics" in result_titles
+        assert "Bread Making" not in result_titles
+
+    def test_brute_force_path_small_candidates(
+        self, semantic_zettel_service, semantic_search_service, monkeypatch
+    ):
+        """With few candidates, brute-force path returns correct results."""
+        # Set threshold high to ensure brute-force is used
+        monkeypatch.setattr(config, "semantic_filter_brute_force_threshold", 1000)
+
+        semantic_zettel_service.create_note(
+            title="Rare Tag Note",
+            content="Content about a rare topic.",
+            tags=["rare"],
+        )
+        semantic_zettel_service.create_note(
+            title="Common Note",
+            content="Content about something common.",
+            tags=["common"],
+        )
+
+        results = semantic_search_service.semantic_search(
+            query="rare topic",
+            tags=["rare"],
+            limit=10,
+        )
+
+        assert len(results) >= 1
+        result_titles = [r.note.title for r in results]
+        assert "Rare Tag Note" in result_titles
+        assert "Common Note" not in result_titles
+
+    def test_resolve_filter_strategy_unfiltered(self, semantic_search_service):
+        """No filters returns 'unfiltered' strategy."""
+        strategy, candidate_ids = semantic_search_service._resolve_filter_strategy(
+            tags=None, note_type=None, project=None
+        )
+        assert strategy == "unfiltered"
+        assert candidate_ids == set()
+
+    def test_resolve_filter_strategy_small_set(
+        self, semantic_zettel_service, semantic_search_service, monkeypatch
+    ):
+        """Few matching notes returns 'brute_force' strategy."""
+        monkeypatch.setattr(config, "semantic_filter_brute_force_threshold", 100)
+
+        # Create a small number of notes with the target tag
+        for i in range(3):
+            semantic_zettel_service.create_note(
+                title=f"Small Set {i}",
+                content=f"Content {i}",
+                tags=["small-set"],
+            )
+
+        strategy, candidate_ids = semantic_search_service._resolve_filter_strategy(
+            tags=["small-set"], note_type=None, project=None
+        )
+        assert strategy == "brute_force"
+        assert len(candidate_ids) == 3

@@ -1853,6 +1853,8 @@ class NoteRepository(Repository[Note]):
             query = query.where(DBNote.updated_at >= kwargs["updated_after"])
         if "updated_before" in kwargs:
             query = query.where(DBNote.updated_at <= kwargs["updated_before"])
+        if "project" in kwargs:
+            query = query.where(DBNote.project == kwargs["project"])
         return query
 
     def search(
@@ -1908,6 +1910,34 @@ class NoteRepository(Repository[Note]):
 
             result = session.execute(query)
             return result.scalar() or 0
+
+    def search_note_ids(
+        self, limit: Optional[int] = None, **kwargs: Any
+    ) -> List[str]:
+        """Search for note IDs matching criteria without loading full Note objects.
+
+        Lightweight variant of search() that returns only note IDs.
+        Useful for building candidate sets for filtered semantic search.
+
+        Args:
+            limit: Maximum number of results to return. None for all matches.
+            **kwargs: Search criteria (content, title, note_type, tag, tags,
+                     linked_to, linked_from, created_after, created_before,
+                     updated_after, updated_before, project).
+
+        Returns:
+            List of matching note ID strings.
+        """
+        with self.session_factory() as session:
+            query = select(DBNote.id.distinct())
+            query = self._apply_search_filters(query, kwargs)
+
+            if limit is not None:
+                query = query.limit(limit)
+
+            rows = session.execute(query).scalars().all()
+
+        return list(rows)
 
     def fts_search(
         self,
@@ -3305,3 +3335,58 @@ class NoteRepository(Repository[Note]):
             conn.commit()
 
         return len(chunks)
+
+    def get_embeddings_for_note_ids(
+        self, note_ids: "List[str]"
+    ) -> "Dict[str, Any]":
+        """Retrieve chunk_0 embeddings for a batch of note IDs.
+
+        Used by filtered semantic search to load embeddings for brute-force
+        distance computation on small candidate sets.
+
+        Args:
+            note_ids: List of note IDs to retrieve embeddings for.
+
+        Returns:
+            Dict mapping note_id to its chunk_0 embedding as np.ndarray.
+            Empty dict if sqlite-vec is unavailable or no IDs provided.
+        """
+        if not self._vec_available or not note_ids:
+            return {}
+
+        import numpy as np
+
+        # Build chunk_0 IDs for batch lookup
+        chunk_ids = [f"{nid}::chunk_0" for nid in note_ids]
+
+        # Use embedding_metadata to find which notes have embeddings,
+        # then fetch the actual vectors from note_embeddings.
+        # Batch with IN clause; chunk for very large lists.
+        results: Dict[str, Any] = {}
+
+        with self.engine.connect() as conn:
+            # Process in batches of 500 to avoid SQLite variable limits
+            batch_size = 500
+            for i in range(0, len(chunk_ids), batch_size):
+                batch = chunk_ids[i : i + batch_size]
+                placeholders = ", ".join(f":cid_{j}" for j in range(len(batch)))
+                params = {f"cid_{j}": cid for j, cid in enumerate(batch)}
+
+                rows = conn.execute(
+                    text(
+                        f"SELECT chunk_id, embedding "
+                        f"FROM note_embeddings "
+                        f"WHERE chunk_id IN ({placeholders})"
+                    ),
+                    params,
+                ).fetchall()
+
+                for row in rows:
+                    chunk_id = row[0]
+                    blob = row[1]
+                    # Parse note_id from chunk_id
+                    sep_idx = chunk_id.rfind("::chunk_")
+                    note_id = chunk_id[:sep_idx] if sep_idx != -1 else chunk_id
+                    results[note_id] = np.frombuffer(blob, dtype=np.float32).copy()
+
+        return results

@@ -27,7 +27,8 @@ from tests.conftest_protocol import (  # noqa: F401 — fixture used by pytest
     semantic_protocol_config,
 )
 
-# All 17 tools that should be registered on the server
+# All 16 tools that should be registered on the server
+# (zk_fts_search was absorbed into zk_search_notes with mode="text" + highlight=True)
 ALL_TOOL_NAMES = {
     "zk_create_note",
     "zk_get_note",
@@ -35,7 +36,6 @@ ALL_TOOL_NAMES = {
     "zk_delete_note",
     "zk_manage_links",
     "zk_search_notes",
-    "zk_fts_search",
     "zk_manage_tags",
     "zk_cleanup_tags",
     "zk_bulk_create_notes",
@@ -65,8 +65,8 @@ class TestMCPProtocolConnection:
         assert len(tools_result.tools) > 0
 
     @pytest.mark.anyio
-    async def test_list_tools_returns_all_17_tools(self, mcp_client):
-        """All 17 registered tools are discoverable via the protocol."""
+    async def test_list_tools_returns_all_16_tools(self, mcp_client):
+        """All 16 registered tools are discoverable via the protocol."""
         tools_result = await mcp_client.list_tools()
         tool_names = {t.name for t in tools_result.tools}
         assert tool_names == ALL_TOOL_NAMES, (
@@ -222,7 +222,8 @@ class TestMCPProtocolSearch:
         )
 
         result = await mcp_client.call_tool(
-            "zk_fts_search", {"query": "quantum", "limit": 10}
+            "zk_search_notes",
+            {"query": "quantum", "mode": "text", "highlight": True, "limit": 10},
         )
         text = get_text(result)
         assert "Quantum Physics Overview" in text
@@ -770,7 +771,281 @@ class TestMCPProtocolSemantic:
 
 
 # =============================================================================
-# 10. Obsidian Path Override
+# 10. Filtered Semantic & Hybrid Search
+# =============================================================================
+
+
+class TestFilteredSemanticSearch:
+    """Filtered semantic search through the protocol.
+
+    Uses semantic_mcp_client with FakeEmbeddingProvider to test
+    tag, note_type, and project filters in semantic mode.
+    """
+
+    @pytest.mark.anyio
+    async def test_semantic_search_with_tag_filter(self, semantic_mcp_client):
+        """Semantic search with tag filter only returns matching notes."""
+        await semantic_mcp_client.call_tool(
+            "zk_create_note",
+            {
+                "title": "Quantum Mechanics",
+                "content": "Wave functions and probability amplitudes.",
+                "tags": "physics,quantum",
+            },
+        )
+        await semantic_mcp_client.call_tool(
+            "zk_create_note",
+            {
+                "title": "Cooking Pasta",
+                "content": "Boil water and add salt for best results.",
+                "tags": "cooking",
+            },
+        )
+
+        result = await semantic_mcp_client.call_tool(
+            "zk_search_notes",
+            {
+                "query": "quantum wave functions",
+                "mode": "semantic",
+                "tags": "physics",
+                "limit": 10,
+            },
+        )
+        text = get_text(result)
+        assert "Quantum Mechanics" in text
+        assert "Cooking Pasta" not in text
+
+    @pytest.mark.anyio
+    async def test_semantic_search_with_note_type_filter(self, semantic_mcp_client):
+        """Semantic search with note_type filter only returns matching types."""
+        await semantic_mcp_client.call_tool(
+            "zk_create_note",
+            {
+                "title": "Permanent Insight",
+                "content": "A lasting insight about neural networks.",
+                "note_type": "permanent",
+            },
+        )
+        await semantic_mcp_client.call_tool(
+            "zk_create_note",
+            {
+                "title": "Fleeting Thought",
+                "content": "A quick thought about neural network architectures.",
+                "note_type": "fleeting",
+            },
+        )
+
+        result = await semantic_mcp_client.call_tool(
+            "zk_search_notes",
+            {
+                "query": "neural networks",
+                "mode": "semantic",
+                "note_type": "permanent",
+                "limit": 10,
+            },
+        )
+        text = get_text(result)
+        assert "Permanent Insight" in text
+        assert "Fleeting Thought" not in text
+
+    @pytest.mark.anyio
+    async def test_semantic_search_with_project_filter(self, semantic_mcp_client):
+        """Semantic search with project filter only returns matching project notes."""
+        await semantic_mcp_client.call_tool(
+            "zk_create_note",
+            {
+                "title": "Alpha Research",
+                "content": "Research findings for alpha project.",
+                "project": "alpha",
+            },
+        )
+        await semantic_mcp_client.call_tool(
+            "zk_create_note",
+            {
+                "title": "Beta Research",
+                "content": "Research findings for beta project.",
+                "project": "beta",
+            },
+        )
+
+        result = await semantic_mcp_client.call_tool(
+            "zk_search_notes",
+            {
+                "query": "research findings",
+                "mode": "semantic",
+                "project": "alpha",
+                "limit": 10,
+            },
+        )
+        text = get_text(result)
+        assert "Alpha Research" in text
+        assert "Beta Research" not in text
+
+    @pytest.mark.anyio
+    async def test_semantic_search_filter_empty_result(self, semantic_mcp_client):
+        """Filter that matches no notes returns empty/no-results message."""
+        await semantic_mcp_client.call_tool(
+            "zk_create_note",
+            {
+                "title": "Only Note Here",
+                "content": "Content for the only note.",
+                "tags": "existing-tag",
+            },
+        )
+
+        result = await semantic_mcp_client.call_tool(
+            "zk_search_notes",
+            {
+                "query": "anything",
+                "mode": "semantic",
+                "tags": "nonexistent-tag-xyz",
+                "limit": 10,
+            },
+        )
+        text = get_text(result)
+        assert "no" in text.lower() or "0" in text
+
+
+class TestHybridSearch:
+    """Hybrid FTS+semantic search through the protocol."""
+
+    @pytest.mark.anyio
+    async def test_hybrid_search_returns_results(self, semantic_mcp_client):
+        """mode='hybrid' with a query returns results."""
+        await semantic_mcp_client.call_tool(
+            "zk_create_note",
+            {
+                "title": "Hybrid Test Note",
+                "content": "Machine learning and deep neural networks.",
+                "note_type": "permanent",
+            },
+        )
+
+        result = await semantic_mcp_client.call_tool(
+            "zk_search_notes",
+            {"query": "machine learning neural", "mode": "hybrid", "limit": 10},
+        )
+        text = get_text(result)
+        # Should return results (from either FTS or semantic path)
+        assert "Hybrid Test Note" in text or "found" in text.lower()
+
+    @pytest.mark.anyio
+    async def test_hybrid_search_with_filters(self, semantic_mcp_client):
+        """mode='hybrid' with tag filter returns filtered results."""
+        await semantic_mcp_client.call_tool(
+            "zk_create_note",
+            {
+                "title": "ML Physics",
+                "content": "Applying machine learning to physics simulations.",
+                "tags": "ml,physics",
+            },
+        )
+        await semantic_mcp_client.call_tool(
+            "zk_create_note",
+            {
+                "title": "ML Biology",
+                "content": "Applying machine learning to biological data.",
+                "tags": "ml,biology",
+            },
+        )
+
+        result = await semantic_mcp_client.call_tool(
+            "zk_search_notes",
+            {
+                "query": "machine learning",
+                "mode": "hybrid",
+                "tags": "physics",
+                "limit": 10,
+            },
+        )
+        text = get_text(result)
+        assert "ML Physics" in text
+        assert "ML Biology" not in text
+
+    @pytest.mark.anyio
+    async def test_hybrid_search_output_ids(self, semantic_mcp_client):
+        """mode='hybrid' with output='ids' includes trailing IDs line."""
+        await semantic_mcp_client.call_tool(
+            "zk_create_note",
+            {
+                "title": "Hybrid IDs Test",
+                "content": "Content for hybrid IDs test.",
+            },
+        )
+
+        result = await semantic_mcp_client.call_tool(
+            "zk_search_notes",
+            {
+                "query": "hybrid IDs test",
+                "mode": "hybrid",
+                "output": "ids",
+                "limit": 10,
+            },
+        )
+        text = get_text(result)
+        assert "IDs:" in text
+
+
+class TestAutoModeRouting:
+    """Auto-mode routing with filters and embeddings."""
+
+    @pytest.mark.anyio
+    async def test_auto_mode_routes_to_semantic_with_filters(
+        self, semantic_mcp_client
+    ):
+        """mode='auto' with tags and embeddings available routes to semantic."""
+        await semantic_mcp_client.call_tool(
+            "zk_create_note",
+            {
+                "title": "Auto Semantic Filter",
+                "content": "Content about quantum computing advances.",
+                "tags": "quantum",
+            },
+        )
+
+        result = await semantic_mcp_client.call_tool(
+            "zk_search_notes",
+            {
+                "query": "quantum computing",
+                "mode": "auto",
+                "tags": "quantum",
+                "limit": 10,
+            },
+        )
+        text = get_text(result)
+        # Auto mode with embeddings should route to semantic
+        assert "similar" in text.lower() or "Auto Semantic Filter" in text
+
+
+class TestTextSearchHighlight:
+    """Text search with highlight parameter."""
+
+    @pytest.mark.anyio
+    async def test_text_search_with_highlight(self, mcp_client):
+        """mode='text' with highlight=True returns highlighted snippets."""
+        await mcp_client.call_tool(
+            "zk_create_note",
+            {
+                "title": "Highlight Test Note",
+                "content": "This is about advanced Python programming patterns.",
+            },
+        )
+
+        result = await mcp_client.call_tool(
+            "zk_search_notes",
+            {
+                "query": "Python programming",
+                "mode": "text",
+                "highlight": True,
+                "limit": 10,
+            },
+        )
+        text = get_text(result)
+        assert "Highlight Test Note" in text
+
+
+# =============================================================================
+# 11. Obsidian Path Override
 # =============================================================================
 
 
@@ -1083,7 +1358,7 @@ class TestOutputComposability:
 
     @pytest.mark.anyio
     async def test_fts_search_output_ids(self, mcp_client):
-        """zk_fts_search with output=ids appends trailing IDs line."""
+        """Text search with highlight and output=ids appends trailing IDs line."""
         for i in range(3):
             await mcp_client.call_tool(
                 "zk_create_note",
@@ -1091,7 +1366,8 @@ class TestOutputComposability:
             )
 
         result = await mcp_client.call_tool(
-            "zk_fts_search", {"query": "FTSComp", "output": "ids"},
+            "zk_search_notes",
+            {"query": "FTSComp", "mode": "text", "highlight": True, "output": "ids"},
         )
         text = get_text(result)
         assert "\n\nIDs: " in text

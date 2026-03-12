@@ -751,6 +751,32 @@ class ZettelService:
         """
         return self.repository.count_search_results(**kwargs)
 
+    def search_note_ids(self, **kwargs: Any) -> List[str]:
+        """Search for note IDs matching criteria without loading full Note objects.
+
+        Lightweight variant of search_notes() for building candidate sets.
+
+        Args:
+            **kwargs: Same search criteria as search_notes(), plus 'project'.
+
+        Returns:
+            List of matching note ID strings.
+        """
+        return self.repository.search_note_ids(**kwargs)
+
+    def get_embeddings_for_note_ids(
+        self, note_ids: List[str]
+    ) -> "Dict[str, Any]":
+        """Retrieve chunk_0 embeddings for a batch of note IDs.
+
+        Args:
+            note_ids: List of note IDs to retrieve embeddings for.
+
+        Returns:
+            Dict mapping note_id to its chunk_0 embedding as np.ndarray.
+        """
+        return self.repository.get_embeddings_for_note_ids(note_ids)
+
     def get_notes_by_tag(self, tag: str, limit: Optional[int] = None) -> List[Note]:
         """Get notes by tag."""
         return self.repository.find_by_tag(tag, limit=limit)

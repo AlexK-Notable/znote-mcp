@@ -947,7 +947,7 @@ class TestDatetimeComparisonRegression:
 class TestFtsSearchRegression:
     """Regression tests for FTS5 search degradation.
 
-    Bug: zk_fts_search(query="2026-02-03") fell back to basic text
+    Bug: FTS search with query="2026-02-03" fell back to basic text
     matching instead of using FTS5.
     """
 
@@ -983,7 +983,7 @@ class TestFtsSearchRegression:
         self.temp_db_dir.cleanup()
 
     def test_fts_search_date_string_query(self):
-        """Reproduce: zk_fts_search(query="2026-02-03")
+        """Reproduce: FTS search with query="2026-02-03"
 
         A date string query should either use FTS5 successfully or
         at minimum return results. The fallback warning indicates
@@ -994,8 +994,8 @@ class TestFtsSearchRegression:
             content="Notes from the meeting on 2026-02-03 about project planning.",
         )
 
-        fts_search = _get_tool(self.server, "zk_fts_search")
-        result = fts_search(query="2026-02-03", limit=10, highlight=True)
+        search = _get_tool(self.server, "zk_search_notes")
+        result = search(query="2026-02-03", mode="text", limit=10, highlight=True)
         assert isinstance(result, str)
         # The note should be found regardless of search mode
         assert "Meeting Notes" in result
@@ -1038,8 +1038,8 @@ class TestFtsSearchRegression:
             content="Discussion of self-referential and meta-cognitive patterns.",
         )
 
-        fts_search = _get_tool(self.server, "zk_fts_search")
-        result = fts_search(query="self-referential", limit=10, highlight=True)
+        search = _get_tool(self.server, "zk_search_notes")
+        result = search(query="self-referential", mode="text", limit=10, highlight=True)
         assert isinstance(result, str)
 
     def test_fts_available_after_init(self):
